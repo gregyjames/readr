@@ -22,6 +22,8 @@ type RequestBody struct {
 func main(){
 	app := fiber.New()
 
+	app.Static("/articles", "/app/data/articles")
+	
 	app.Use(cors.New(cors.Config{
         AllowOrigins: "http://localhost:8080", // Vue dev server
         AllowHeaders: "Origin, Content-Type, Accept",
