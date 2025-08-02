@@ -68,8 +68,8 @@ image: "%s"
 [Source](%s)
 `, title, body.URL, imagePath, body.URL)
 
-		filename := fmt.Sprintf("articles/%d.md", time.Now().Unix())
-		os.MkdirAll("articles", os.ModePerm)
+		filename := fmt.Sprintf("/app/data/articles/%d.md", time.Now().Unix())
+		os.MkdirAll("/app/data/articles", os.ModePerm)
 		os.WriteFile(filename, []byte(markdown), 0644)
 
 		return c.SendString("Article saved.")
@@ -93,15 +93,23 @@ func extractTitle(n *html.Node) string {
 }
 
 func extractMainImage(n *html.Node) string {
-	var src string
+	// Check OpenGraph image
+	var ogImage string
 	var crawler func(*html.Node)
 	crawler = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "img" {
+		if n.Type == html.ElementNode && n.Data == "meta" {
+			var prop, content string
 			for _, attr := range n.Attr {
-				if attr.Key == "src" && strings.HasPrefix(attr.Val, "http") {
-					src = attr.Val
-					return
+				if attr.Key == "property" && attr.Val == "og:image" {
+					prop = attr.Val
 				}
+				if attr.Key == "content" {
+					content = attr.Val
+				}
+			}
+			if prop == "og:image" && content != "" {
+				ogImage = content
+				return
 			}
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -109,8 +117,30 @@ func extractMainImage(n *html.Node) string {
 		}
 	}
 	crawler(n)
-	return src
+	if ogImage != "" {
+		return ogImage
+	}
+
+	// Fall back to first <img>
+	var firstImg string
+	var findImg func(*html.Node)
+	findImg = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "img" {
+			for _, attr := range n.Attr {
+				if attr.Key == "src" && attr.Val != "" {
+					firstImg = attr.Val
+					return
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			findImg(c)
+		}
+	}
+	findImg(n)
+	return firstImg
 }
+
 
 func downloadImage(url string) string {
 	resp, err := http.Get(url)
@@ -120,14 +150,14 @@ func downloadImage(url string) string {
 	defer resp.Body.Close()
 
 	name := filepath.Base(strings.Split(url, "?")[0])
-	os.MkdirAll("images", os.ModePerm)
+	os.MkdirAll("/app/data/images", os.ModePerm)
 
-	out, err := os.Create("images/" + name)
+	out, err := os.Create("/app/data/images/" + name)
 	if err != nil {
 		return ""
 	}
 	defer out.Close()
 
 	io.Copy(out, resp.Body)
-	return "/images/" + name
+	return "/app/data/images/" + name
 }
