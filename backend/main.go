@@ -18,7 +18,6 @@ import (
 	"github.com/go-shiori/go-readability"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
-	"golang.org/x/net/html"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	_ "modernc.org/sqlite"
@@ -130,18 +129,13 @@ func main(){
 	filename := fmt.Sprintf("/app/data/articles/%d.md", filenameID)
 	os.MkdirAll("/app/data/articles", os.ModePerm)
 
-	markdown := fmt.Sprintf(`---
-title: "%s"
-url: "%s"
-image: "%s"
----
-
+	markdown := fmt.Sprintf(`
 [Source](%s)
 
 ![Cover Image](%s)
 
 %s
-`, title, body.URL, imagePath, body.URL, imagePath, markdownContent)
+`, body.URL, imagePath, markdownContent)
 
 	err = os.WriteFile(filename, []byte(markdown), 0644)
 	if err != nil {
@@ -164,71 +158,6 @@ image: "%s"
 
 	app.Listen(":3000")
 }
-
-func extractTitle(n *html.Node) string {
-	var title string
-	var crawler func(*html.Node)
-	crawler = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "title" && n.FirstChild != nil {
-			title = n.FirstChild.Data
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			crawler(c)
-		}
-	}
-	crawler(n)
-	return strings.TrimSpace(title)
-}
-
-func extractMainImage(n *html.Node) string {
-	// Check OpenGraph image
-	var ogImage string
-	var crawler func(*html.Node)
-	crawler = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "meta" {
-			var prop, content string
-			for _, attr := range n.Attr {
-				if attr.Key == "property" && attr.Val == "og:image" {
-					prop = attr.Val
-				}
-				if attr.Key == "content" {
-					content = attr.Val
-				}
-			}
-			if prop == "og:image" && content != "" {
-				ogImage = content
-				return
-			}
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			crawler(c)
-		}
-	}
-	crawler(n)
-	if ogImage != "" {
-		return ogImage
-	}
-
-	// Fall back to first <img>
-	var firstImg string
-	var findImg func(*html.Node)
-	findImg = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "img" {
-			for _, attr := range n.Attr {
-				if attr.Key == "src" && attr.Val != "" {
-					firstImg = attr.Val
-					return
-				}
-			}
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			findImg(c)
-		}
-	}
-	findImg(n)
-	return firstImg
-}
-
 
 func downloadImage(url string) string {
 	resp, err := http.Get(url)
