@@ -1,18 +1,25 @@
 # Stage 1: build
 FROM node:lts AS builder
 WORKDIR /app
+
+# Install deps
 COPY package*.json ./
 RUN npm install
+
+# Optional: prune
 RUN wget https://gobinaries.com/tj/node-prune --output-document - | /bin/sh && node-prune
+
+# Copy rest of source and build
 COPY . .
 RUN npm ci
+RUN npm run build  # ✅ This is the critical missing line
 
 # Stage 2: runtime
 FROM node:lts-alpine
 ENV NODE_ENV=production
 WORKDIR /app
 
-# Only copy built output and production deps
+# Copy built output
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package*.json ./
