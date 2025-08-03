@@ -18,6 +18,7 @@ import (
 	"github.com/go-shiori/go-readability"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"golang.org/x/net/html"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	_ "modernc.org/sqlite"
@@ -108,9 +109,37 @@ func main(){
 		return c.Status(500).SendString("Failed to parse readable content")
 	}
 
+	filenameID := time.Now().Unix()
+	os.MkdirAll(fmt.Sprintf("/app/data/images/%d", filenameID), os.ModePerm)
+	doc, _ := html.Parse(bytes.NewReader(htmlBytes))
+	images := extractImageSources(doc)
 	
 	converter := markdown.NewConverter("", true, &markdown.Options{})
+	
 	markdownContent, err := converter.ConvertString(article.Content)
+
+	for _, imgURL := range images {
+		imgResp, err := http.Get(imgURL)
+		if err != nil || imgResp.StatusCode != 200 {
+			fmt.Println("Failed to download:", imgURL)
+			continue
+		}
+		defer imgResp.Body.Close()
+
+		// Extract filename
+		parts := strings.Split(imgURL, "/")
+		filename := parts[len(parts)-1]
+		savePath := fmt.Sprintf("/app/data/images/%d/", filenameID) + filename
+
+		// Save file
+		out, _ := os.Create(savePath)
+		io.Copy(out, imgResp.Body)
+		out.Close()
+
+		// Step 3: Replace image URLs in Markdown
+		markdownContent = strings.ReplaceAll(markdownContent, imgURL, fmt.Sprintf("http://localhost:3000/images/%d/", filenameID)+filename)
+	}
+	
 	if err != nil {
 		return c.Status(500).SendString("Failed to convert HTML to markdown")
 	}
@@ -121,11 +150,10 @@ func main(){
 	imagePath := ""
 
 	if imageURL != "" {
-		imagePath = downloadImage(imageURL)
+		imagePath = downloadImage(imageURL, filenameID)
 	}
 
 	// Generate markdown with clean content
-	filenameID := time.Now().Unix()
 	filename := fmt.Sprintf("/app/data/articles/%d.md", filenameID)
 	os.MkdirAll("/app/data/articles", os.ModePerm)
 
@@ -159,7 +187,7 @@ func main(){
 	app.Listen(":3000")
 }
 
-func downloadImage(url string) string {
+func downloadImage(url string, dirname int64) string {
 	resp, err := http.Get(url)
 	if err != nil {
 		return ""
@@ -167,14 +195,34 @@ func downloadImage(url string) string {
 	defer resp.Body.Close()
 
 	name := filepath.Base(strings.Split(url, "?")[0])
-	os.MkdirAll("/app/data/images", os.ModePerm)
+	directory := fmt.Sprintf("/app/data/images/%d/", dirname)
+	os.MkdirAll(directory, os.ModePerm)
 
-	out, err := os.Create("/app/data/images/" + name)
+	out, err := os.Create(directory + name)
 	if err != nil {
 		return ""
 	}
 	defer out.Close()
 
 	io.Copy(out, resp.Body)
-	return "http://localhost:3000/images/" + name
+	return fmt.Sprintf("http://localhost:3000/images/%d/", dirname) + name
+}
+
+func extractImageSources(n *html.Node) []string {
+	var srcs []string
+	var crawler func(*html.Node)
+	crawler = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "img" {
+			for _, attr := range n.Attr {
+				if attr.Key == "src" {
+					srcs = append(srcs, attr.Val)
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			crawler(c)
+		}
+	}
+	crawler(n)
+	return srcs
 }
