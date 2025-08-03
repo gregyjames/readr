@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import BookmarkIcon from './assets/book.svg'
+import HomeIcon from './assets/home.svg'
+import AddIcon from './assets/add.svg'
 import { ref } from 'vue'
 
 const showModal = ref(false)
@@ -11,6 +13,10 @@ const submitForm = async () => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url: url.value }),
   })
+  showModal.value = false
+}
+
+function closeModal() {
   showModal.value = false
 }
 </script>
@@ -29,18 +35,18 @@ const submitForm = async () => {
 
         <!-- Menu -->
         <div class="flex space-x-6">
-          <router-link to="/" class="text-white hover:underline">Home</router-link>
-          <a @click="showModal = true" class="text-white hover:underline">Add</a>
+          <router-link to="/" class="text-white hover:bg-green-700 p-2 rounded"><HomeIcon class="w-6 h-6 text-white" /></router-link>
+          <a @click="showModal = true" class="text-white hover:bg-green-700 p-2 rounded"><AddIcon class="w-6 h-6 text-white" /></a>
         </div>
       </div>
     </div>
   </nav>
   <transition name="fade-blur">
-    <div v-if="showModal" class="fixed inset-0 bg-black/65 bg-blur backdrop-blur-sm flex justify-center items-center z-50 transition-opacity duration-300 ease-out">
+    <div v-if="showModal" @click.self="closeModal" class="fixed inset-0 bg-black/65 bg-blur backdrop-blur-sm flex justify-center items-center z-50 transition-opacity duration-300 ease-out">
       <!-- Modal content -->
       <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6 relative">
         <button
-          @click="showModal = false"
+          @click.self="closeModal"
           class="absolute top-2 right-2 text-gray-400 hover:text-gray-800 text-xl font-bold"
           aria-label="Close">×</button>
         <h2 class="text-xl font-semibold mb-4">Add an article</h2>
@@ -87,6 +93,6 @@ const submitForm = async () => {
 .fade-blur-enter-to,
 .fade-blur-leave-from {
   opacity: 1;
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(8px);
 }
 </style>
