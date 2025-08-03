@@ -3,7 +3,7 @@
 ![Docker Image Size (tag)](https://img.shields.io/docker/image-size/gjames8/readr-backend/latest?label=Backend)
 
 # Readr
-A minimal, self hosted read it later app written powered by Vue/Tailwind and Go. All documents are stored as markdown files in a shared volume and tracked by the backend in a SQLLite database. Why? Because Pocket screwed me over **one** too many times. 
+A minimal, self hosted read it later app written powered by Vue/Tailwind and Go. All documents are stored as markdown files in a shared volume and tracked by the backend in a SQLLite database. Why make this? Because Pocket screwed me over **one** too many times. 
 
 ## Features
 - Fast and fairly lightweight (53mb frontend/5mb backend)
