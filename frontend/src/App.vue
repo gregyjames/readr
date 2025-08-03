@@ -2,10 +2,15 @@
 import BookmarkIcon from './assets/book.svg'
 import HomeIcon from './assets/home.svg'
 import AddIcon from './assets/add.svg'
+import CardIcon from './assets/card.svg'
+import ListIcon from './assets/list.svg'
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+const router = useRouter()
 
 const showModal = ref(false)
 const url = ref('')
+const viewMode = ref<'card' | 'list'>('card')
 
 const submitForm = async () => {
   await fetch('http://localhost:3000/add', {
@@ -18,6 +23,12 @@ const submitForm = async () => {
 
 function closeModal() {
   showModal.value = false
+}
+
+const toggleViewMode = () => {
+  viewMode.value = viewMode.value === 'card' ? 'list' : 'card'
+  localStorage.setItem('viewMode', viewMode.value)
+  router.push({ name: 'home', query: { view: viewMode.value } })
 }
 </script>
 
@@ -37,6 +48,14 @@ function closeModal() {
         <div class="flex space-x-6">
           <router-link to="/" class="text-white hover:bg-green-700 p-2 rounded"><HomeIcon class="w-6 h-6 text-white" /></router-link>
           <a @click="showModal = true" class="text-white hover:bg-green-700 p-2 rounded"><AddIcon class="w-6 h-6 text-white" /></a>
+          <button @click="toggleViewMode" class="p-2 rounded flex items-center gap-2 bg-green-600 text-white hover:bg-green-700 transition">
+            <span v-if="viewMode === 'card'">
+              <ListIcon class="w-6 h-6 text-white"/>
+            </span>
+            <span v-else>
+              <CardIcon class="w-6 h-6 text-white"/>
+            </span>
+          </button>
         </div>
       </div>
     </div>

@@ -3,7 +3,7 @@ import Home from './components/Home.vue'
 import Article from './components/Article.vue'
 
 const routes = [
-  { path: '/', component: Home },
+  { path: '/', name: 'home', component: Home },
   { path: '/articles/:id', component: Article, props: true },
 ]
 

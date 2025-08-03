@@ -1,8 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import axios from 'axios'
-import CardIcon from '../assets/card.svg'
-import ListIcon from '../assets/list.svg'
 
 interface Article {
   ID: number
@@ -14,28 +12,42 @@ interface Article {
 defineProps<{ msg: string }>()
 
 const articles = ref<Article[]>([])
+
+import { useRoute, useRouter} from 'vue-router'
+const route = useRoute()
+const router = useRouter()
+
 const viewMode = ref<'card' | 'list'>('card')
 
 onMounted(async () => {
   const res = await axios.get('http://127.0.0.1:3000/getarticles')
   articles.value = res.data
+
+  const queryView = route.query.view
+  const storedView = localStorage.getItem('viewMode')
+
+  if (queryView === 'card' || queryView === 'list') {
+    viewMode.value = queryView
+  } else if (storedView === 'card' || storedView === 'list') {
+    viewMode.value = storedView
+    router.replace({ query: { view: storedView } }) // sync URL
+  } else {
+    router.replace({ query: { view: 'card' } }) // default
+  }
+})
+
+watch(() => route.query.view, (newView) => {
+  if (newView === 'card' || newView === 'list') {
+    viewMode.value = newView
+    localStorage.setItem('viewMode', newView)
+  }
 })
 </script>
 
 <template>
   <div>
     <div class="flex pt-20 justify-between items-center mb-6">
-      <button @click="viewMode = viewMode === 'card' ? 'list' : 'card'"
-        class="px-3 py-2 flex items-center gap-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition">
-        <span v-if="viewMode === 'card'">
-          <!-- List icon to indicate switch -->
-          <ListIcon class="w-6 h-6 text-white"/>
-        </span>
-        <span v-else>
-          <!-- Card icon to indicate switch -->
-          <CardIcon class="w-6 h-6 text-white"/>
-        </span>
-      </button>
+      
     </div>
 
     <!-- Card View -->
