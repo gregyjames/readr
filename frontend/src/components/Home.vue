@@ -38,6 +38,18 @@ onMounted(async () => {
   }
 })
 
+const deleteArticle = async (id: number) => {
+  if (!confirm("Are you sure you want to delete this article?")) return
+
+  try {
+    await axios.delete(`http://127.0.0.1:3000/delete/${id}`)
+    articles.value = articles.value.filter(article => article.ID !== id)
+  } catch (err) {
+    console.error('Failed to delete article', err)
+  }
+}
+
+
 watch(() => route.query.view, (newView) => {
   if (newView === 'card' || newView === 'list') {
     viewMode.value = newView
@@ -67,7 +79,14 @@ const filteredArticles = computed(() => {
     </div>
     <!-- Card View -->
     <div v-if="viewMode === 'card'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-      <div v-for="article in filteredArticles" :key="article.ID" class="flex-1 bg-white rounded-xl shadow-md overflow-hidden border border-gray-500 ">
+      <div v-for="article in filteredArticles" :key="article.ID" class="relative flex-1 bg-white rounded-xl shadow-md overflow-hidden border border-gray-500 ">
+        <button
+          @click="deleteArticle(article.ID)"
+          class="absolute top-2 right-2 text-black opacity-20 hover:bg-red-600 hover:opacity-100 hover:text-white rounded-full w-7 h-7 flex items-center justify-center text-sm z-10"
+          title="Delete"
+        >
+        ×
+        </button>
         <div class="md:flex h-full">
           <div class="w-full md:w-48 aspect-square flex-shrink-0">
             <img :src="article.image" alt="Cover" class="w-full h-full object-cover" />
@@ -94,14 +113,21 @@ const filteredArticles = computed(() => {
 
     <!-- List View -->
     <div v-else class="space-y-10 mt-10">
-      <div v-for="article in filteredArticles" :key="article.ID" class="flex bg-white rounded-xl shadow-sm p-4 border border-gray-500 ">
+      <div v-for="article in filteredArticles" :key="article.ID" class="relative flex bg-white rounded-xl shadow-sm pr-10 pt-4 px-4 pb-4 border border-gray-500 ">
+        <button
+          @click="deleteArticle(article.ID)"
+          class="absolute top-2 right-2 opacity-20 text-black hover:bg-red-600 hover:opacity-100 hover:text-white rounded-full w-7 h-7 flex items-center justify-center text-sm z-10 mb-2"
+          title="Delete"
+        >
+        ×
+        </button>
         <img :src="article.image" alt="Cover" class="w-24 h-24 object-cover rounded-md mr-4" />
         <div>
           <router-link
             :to="`${article.article}`"
             class="text-lg font-medium text-black hover:underline"
           >
-            {{ article.title }}
+            {{ article.title.length > 40 ? article.title.slice(0, 40) + '…' : article.title }}
           </router-link>
           <p class="text-gray-500 text-sm text-left">
             {{ article.article }}

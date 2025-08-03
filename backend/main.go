@@ -31,6 +31,7 @@ type RequestBody struct {
 
 type Article struct {
 	gorm.Model
+	ID int64
 	Article  string `json:"article"`
 	Image string `json:"image"`
 	Title   string `json:"title"`
@@ -70,6 +71,36 @@ func main(){
 		//return c.SendString("Hello, World!")
 		return c.JSON(fiber.Map{"message": "Hello from Go!"})
 	})
+
+	app.Delete("/delete/:id", func(c *fiber.Ctx) error {
+		id := c.Params("id")
+
+		if err := db.Delete(&Article{}, id).Error; err != nil {
+			return c.Status(500).JSON(fiber.Map{
+				"error": "Failed to delete article",
+			})
+		}
+
+		deleteFileError := os.Remove(fmt.Sprintf("/app/data/articles/%s.md", id)) 
+		if deleteFileError != nil {
+			return c.Status(500).JSON(fiber.Map{
+				"error": "Failed to delete article file",
+			})
+		}
+
+		deleteImagesError := os.RemoveAll(fmt.Sprintf("/app/data/images/%s/", id))
+		if deleteImagesError != nil{
+			return c.Status(500).JSON(fiber.Map{
+				"error": "Failed to delete article images",
+			})
+		}
+
+		return c.JSON(fiber.Map{
+			"status":  "success",
+			"message": fmt.Sprintf("Article %s deleted", id),
+			})
+		})
+
 
 	app.Get("/getarticles", func(c *fiber.Ctx) error {
 		var articles []Article
@@ -180,6 +211,7 @@ func main(){
 		Image:   imagePath,
 		Article: fmt.Sprintf("/articles/%d.md", filenameID),
 		Tags: tagsString,
+		ID: filenameID,
 	})
 
 	return c.JSON(fiber.Map{
