@@ -1,17 +1,21 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	markdown "github.com/JohannesKaufmann/html-to-markdown"
+	"github.com/go-shiori/go-readability"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"golang.org/x/net/html"
@@ -76,55 +80,88 @@ func main(){
 	})
 
 	app.Post("/add", func(c *fiber.Ctx) error {
-		var body RequestBody
+	var body RequestBody
 
-		if err := json.Unmarshal(c.Body(), &body); err != nil {
-			return c.Status(400).SendString("Invalid JSON")
-		}
+	if err := json.Unmarshal(c.Body(), &body); err != nil {
+		return c.Status(400).SendString("Invalid JSON")
+	}
 
-		resp, err := http.Get(body.URL)
-		if err != nil || resp.StatusCode != 200 {
-			return c.Status(500).SendString("Failed to fetch the page")
-		}
-		defer resp.Body.Close()
+	resp, err := http.Get(body.URL)
+	if err != nil || resp.StatusCode != 200 {
+		return c.Status(500).SendString("Failed to fetch the page")
+	}
+	defer resp.Body.Close()
 
-		doc, err := html.Parse(resp.Body)
-		if err != nil {
-			return c.Status(500).SendString("Failed to parse HTML")
-		}
+	// Read HTML body into bytes (for readability)
+	htmlBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return c.Status(500).SendString("Failed to read HTML body")
+	}
 
-		title := extractTitle(doc)
-		imageURL := extractMainImage(doc)
-		imagePath := ""
+	parsedURL, err := url.Parse(body.URL)
+	if err != nil {
+		return c.Status(400).SendString("Invalid URL")
+	}
 
-		if imageURL != "" {
-			imagePath = downloadImage(imageURL)
-		}
+	// Parse with readability
+	article, err := readability.FromReader(bytes.NewReader(htmlBytes), parsedURL)
+	if err != nil {
+		return c.Status(500).SendString("Failed to parse readable content")
+	}
 
-		// Create markdown content
-		markdown := fmt.Sprintf(`---
+	
+	converter := markdown.NewConverter("", true, &markdown.Options{})
+	markdownContent, err := converter.ConvertString(article.Content)
+	if err != nil {
+		return c.Status(500).SendString("Failed to convert HTML to markdown")
+	}
+
+	// Extract title & image
+	title := article.Title
+	imageURL := article.Image
+	imagePath := ""
+
+	if imageURL != "" {
+		imagePath = downloadImage(imageURL)
+	}
+
+	// Generate markdown with clean content
+	filenameID := time.Now().Unix()
+	filename := fmt.Sprintf("/app/data/articles/%d.md", filenameID)
+	os.MkdirAll("/app/data/articles", os.ModePerm)
+
+	markdown := fmt.Sprintf(`---
 title: "%s"
 url: "%s"
 image: "%s"
 ---
 
 [Source](%s)
-![Image](%s "Article Image")
-`, title, body.URL, imagePath, body.URL, imagePath)
 
-		filename_id := time.Now().Unix()
-		filename := fmt.Sprintf("/app/data/articles/%d.md", filename_id)
-		os.MkdirAll("/app/data/articles", os.ModePerm)
-		os.WriteFile(filename, []byte(markdown), 0644)
-		
-		db.Create(&Article{
-			Title: title,
-			Image: imagePath,
-			Article: fmt.Sprintf("/articles/%d.md", filename_id),
-		})
+![Cover Image](%s)
 
-		return c.SendString("Article saved.")
+%s
+`, title, body.URL, imagePath, body.URL, imagePath, markdownContent)
+
+	err = os.WriteFile(filename, []byte(markdown), 0644)
+	if err != nil {
+		return c.Status(500).SendString("Failed to save markdown file")
+	}
+
+	// Save article entry in DB
+	db.Create(&Article{
+		Title:   title,
+		Image:   imagePath,
+		Article: fmt.Sprintf("/articles/%d.md", filenameID),
 	})
+
+	return c.JSON(fiber.Map{
+		"status":  "success",
+		"message": "Article saved",
+		"id":      filenameID,
+	})
+})
+
 	app.Listen(":3000")
 }
 

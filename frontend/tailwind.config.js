@@ -1,13 +1,13 @@
+// tailwind.config.js
 module.exports = {
-  darkMode: 'class',
-  purge: [
-    './src/**/*.html',
-    './src/**/*.vue',
-    './src/**/*.jsx',
+  content: [
+    './index.html',
+    './src/**/*.{vue,js,ts,jsx,tsx}',
   ],
-  theme: {},
-  variants: {},
+  theme: {
+    extend: {},
+  },
   plugins: [
-    require('@tailwindcss/typography')
+    require('@tailwindcss/typography'),
   ],
 }
