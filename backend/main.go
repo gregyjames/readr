@@ -26,6 +26,7 @@ import (
 
 type RequestBody struct {
 	URL string `json:"url"`
+	Tags []string `json:"tags"`
 }
 
 type Article struct {
@@ -33,6 +34,7 @@ type Article struct {
 	Article  string `json:"article"`
 	Image string `json:"image"`
 	Title   string `json:"title"`
+	Tags    string `json:"tags"`
 }
 
 func main(){
@@ -170,11 +172,14 @@ func main(){
 		return c.Status(500).SendString("Failed to save markdown file")
 	}
 
+	tagsString := strings.Join(body.Tags, ",")
+
 	// Save article entry in DB
 	db.Create(&Article{
 		Title:   title,
 		Image:   imagePath,
 		Article: fmt.Sprintf("/articles/%d.md", filenameID),
+		Tags: tagsString,
 	})
 
 	return c.JSON(fiber.Map{

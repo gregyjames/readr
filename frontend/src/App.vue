@@ -11,12 +11,17 @@ const router = useRouter()
 const showModal = ref(false)
 const url = ref('')
 const viewMode = ref<'card' | 'list'>('card')
+const tags = ref<string[]>([])
+const tagInput = ref('')
 
 const submitForm = async () => {
   await fetch('http://localhost:3000/add', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: url.value }),
+    body: JSON.stringify({ 
+      url: url.value,
+      Tags: tags.value
+    }),
   })
   showModal.value = false
 }
@@ -29,6 +34,18 @@ const toggleViewMode = () => {
   viewMode.value = viewMode.value === 'card' ? 'list' : 'card'
   localStorage.setItem('viewMode', viewMode.value)
   router.push({ name: 'home', query: { view: viewMode.value } })
+}
+
+function addTag() {
+  const trimmed = tagInput.value.trim()
+  if (trimmed && !tags.value.includes(trimmed)) {
+    tags.value.push(trimmed)
+  }
+  tagInput.value = ''
+}
+
+function removeTag(tag: string) {
+  tags.value = tags.value.filter(t => t !== tag)
 }
 </script>
 
@@ -79,10 +96,25 @@ const toggleViewMode = () => {
               id="url"
               required
               placeholder="https://example.com"
-              class="w-full px-4 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              class="w-full px-4 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:outline-none"
             />
           </div>
-
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Tags</label>
+            <div class="flex flex-wrap gap-2 mb-2">
+              <span v-for="tag in tags" :key="tag" class="bg-blue-100 text-green-800 text-sm px-2 py-1 rounded flex items-center gap-1">
+                {{ tag }}
+                <button type="button" @click="removeTag(tag)" class="text-green-600 hover:text-red-500 text-xs">✕</button>
+              </span>
+            </div>
+            <input
+              v-model="tagInput"
+              @keydown.enter.prevent="addTag"
+              type="text"
+              placeholder="Type tag and press Enter"
+              class="w-full px-4 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:outline-none"
+            />
+          </div>
           <button
             type="submit"
             class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 w-full"

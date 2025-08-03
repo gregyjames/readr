@@ -7,6 +7,7 @@ interface Article {
   title: string
   article: string
   image: string
+  tags: string
 }
 
 defineProps<{ msg: string }>()
@@ -67,6 +68,11 @@ watch(() => route.query.view, (newView) => {
             <p class="mt-2 text-gray-500 text-sm">
               {{ article.article }}
             </p>
+            <div class="mt-3 flex flex-wrap gap-2 justify-center">
+              <span v-for="tag in article.tags.split(',').slice(0, 5)" :key="tag" class="bg-green-100 text-green-800 text-xs font-semibold px-2.5 py-0.5 rounded">
+                {{ tag.trim() }}
+              </span>
+            </div>
           </div>
         </div>
       </div>
