@@ -70,11 +70,10 @@ function removeTag(tag: string) {
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div class="flex justify-between items-center h-16">
         <div class="flex items-center space-x-2">
-          <!-- SVG or Image Logo -->
-          <BookmarkIcon class="w-6 h-6 text-white" />
-      
-          <!-- Text -->
-          <span class="text-white text-lg font-semibold">Readr</span>
+          <router-link to="/" class="flex items-center text-white hover:bg-green-700 p-2 rounded">
+            <BookmarkIcon class="w-6 h-6 text-white" />
+            <span class="text-white text-lg font-semibold">Readr</span>
+          </router-link>
         </div>
 
         <!-- Menu -->
