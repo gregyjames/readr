@@ -11,11 +11,12 @@ A minimal, self hosted read it later app written powered by Vue/Tailwind and Go.
 - Beautiful typography and syntax hilighting (imo)
 
 ## Todo
-- [ ] Add proxy for backend so it's not hardcoded
-- [ ] Dark mode
-- [ ] Make more responsive
+- [ ] Add proxy for backend so it's not hardcoded (do not change port)
+- [ ] Dark mode (should have been the first thing I added, do I even code bro)
+  - [ ] I think my tailwind usage **might** be f***** (when dark set to class, it's always showing up) so I need to fix that first.
+- [ ] Make more responsive (the children long for the responsive grids)
 - [ ] Image compression?
-- [ ] Authentication? Protect endpoints?
+- [ ] Authentication? Protect endpoints? 
 - [ ] Add an edit mode for tags/article details
 
 ## Sample
