@@ -6,6 +6,8 @@ import CardIcon from './assets/card.svg'
 import ListIcon from './assets/list.svg'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import emitter from './event-bus.ts'
+
 const router = useRouter()
 
 const showModal = ref(false)
@@ -13,6 +15,7 @@ const url = ref('')
 const viewMode = ref<'card' | 'list'>('card')
 const tags = ref<string[]>([])
 const tagInput = ref('')
+
 
 const submitForm = async () => {
   await fetch('http://localhost:3000/add', {
@@ -23,6 +26,7 @@ const submitForm = async () => {
       Tags: tags.value
     }),
   })
+  emitter.emit('article-added')
   showModal.value = false
 }
 
@@ -102,7 +106,7 @@ function removeTag(tag: string) {
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Tags</label>
             <div class="flex flex-wrap gap-2 mb-2">
-              <span v-for="tag in tags" :key="tag" class="bg-blue-100 text-green-800 text-sm px-2 py-1 rounded flex items-center gap-1">
+              <span v-for="tag in tags" :key="tag" class="bg-green-200 text-green-800 text-sm px-2 py-1 rounded flex items-center gap-1">
                 {{ tag }}
                 <button type="button" @click="removeTag(tag)" class="text-green-600 hover:text-red-500 text-xs">✕</button>
               </span>
@@ -126,7 +130,7 @@ function removeTag(tag: string) {
     </div>
   </transition>
   <div class="container w-full">
-    <router-view />
+    <router-view  />
   </div>
 </template>
 

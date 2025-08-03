@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import axios from 'axios'
+import emitter from '../event-bus.ts'
 
 interface Article {
   ID: number
@@ -21,10 +22,13 @@ const router = useRouter()
 const viewMode = ref<'card' | 'list'>('card')
 const selectedTag = ref<string | null>(null)
 
-onMounted(async () => {
+const fetchArticles = async () => {
   const res = await axios.get('http://127.0.0.1:3000/getarticles')
   articles.value = res.data
+}
 
+onMounted(async () => {
+  await fetchArticles()
   const queryView = route.query.view
   const storedView = localStorage.getItem('viewMode')
 
@@ -36,6 +40,12 @@ onMounted(async () => {
   } else {
     router.replace({ query: { view: 'card' } }) // default
   }
+
+  emitter.on('article-added', fetchArticles)
+})
+
+onBeforeUnmount(() => {
+  emitter.off('article-added', fetchArticles)
 })
 
 const deleteArticle = async (id: number) => {
