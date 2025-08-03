@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import axios from 'axios'
 
 interface Article {
@@ -19,6 +19,7 @@ const route = useRoute()
 const router = useRouter()
 
 const viewMode = ref<'card' | 'list'>('card')
+const selectedTag = ref<string | null>(null)
 
 onMounted(async () => {
   const res = await axios.get('http://127.0.0.1:3000/getarticles')
@@ -43,17 +44,30 @@ watch(() => route.query.view, (newView) => {
     localStorage.setItem('viewMode', newView)
   }
 })
+
+const filteredArticles = computed(() => {
+  if (!selectedTag.value) return articles.value
+  return articles.value.filter(article =>
+    article.tags?.split(',').map(tag => tag.trim()).includes(selectedTag.value!)
+  )
+})
+
 </script>
 
 <template>
   <div>
-    <div class="flex pt-20 justify-between items-center mb-6">
-      
-    </div>
 
+    <div v-if="selectedTag" class="flex justify-end items-center mb-4">
+      <p class="text-sm mr-2 text-gray-600">
+        Filtering by tag: <strong>{{ selectedTag }}</strong>
+      </p>
+      <button @click="selectedTag = null" class="text-green-600 hover:underline text-sm">
+        Clear filter
+      </button>
+    </div>
     <!-- Card View -->
     <div v-if="viewMode === 'card'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-      <div v-for="article in articles" :key="article.ID" class="flex-1 bg-white rounded-xl shadow-md overflow-hidden border border-gray-500 ">
+      <div v-for="article in filteredArticles" :key="article.ID" class="flex-1 bg-white rounded-xl shadow-md overflow-hidden border border-gray-500 ">
         <div class="md:flex h-full">
           <div class="w-full md:w-48 aspect-square flex-shrink-0">
             <img :src="article.image" alt="Cover" class="w-full h-full object-cover" />
@@ -69,7 +83,7 @@ watch(() => route.query.view, (newView) => {
               {{ article.article }}
             </p>
             <div class="mt-3 flex flex-wrap gap-2 justify-center">
-              <span v-for="tag in article.tags.split(',').slice(0, 5)" :key="tag" class="bg-green-100 text-green-800 text-xs font-semibold px-2.5 py-0.5 rounded">
+              <span v-for="tag in article.tags.split(',').slice(0, 5)" :key="tag" @click="selectedTag = tag.trim()" class="bg-green-100 text-green-800 text-xs font-semibold px-2.5 py-0.5 rounded">
                 {{ tag.trim() }}
               </span>
             </div>
@@ -79,8 +93,8 @@ watch(() => route.query.view, (newView) => {
     </div>
 
     <!-- List View -->
-    <div v-else class="space-y-4">
-      <div v-for="article in articles" :key="article.ID" class="flex bg-white rounded-xl shadow-sm p-4 border border-gray-500 ">
+    <div v-else class="space-y-10 mt-10">
+      <div v-for="article in filteredArticles" :key="article.ID" class="flex bg-white rounded-xl shadow-sm p-4 border border-gray-500 ">
         <img :src="article.image" alt="Cover" class="w-24 h-24 object-cover rounded-md mr-4" />
         <div>
           <router-link
@@ -92,6 +106,11 @@ watch(() => route.query.view, (newView) => {
           <p class="text-gray-500 text-sm text-left">
             {{ article.article }}
           </p>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <span v-for="tag in article.tags.split(',').slice(0, 5)" :key="tag" @click="selectedTag = tag.trim()" class="bg-green-100 text-green-800 text-xs font-semibold px-2.5 py-0.5 rounded">
+              {{ tag.trim() }}
+            </span>
+          </div>
         </div>
       </div>
     </div>
