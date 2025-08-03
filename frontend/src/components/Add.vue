@@ -1,13 +1,20 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 const url = ref('')
+const isLoading = ref(false)
 
 const submitForm = async () => {
-  await fetch('http://localhost:3000/add', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: url.value }),
-  })
+  isLoading.value = true
+  try{
+    await fetch('http://localhost:3000/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: url.value }),
+    })
+  }
+  finally{
+    isLoading.value = false
+  }
 }
 </script>
 
@@ -36,7 +43,13 @@ const submitForm = async () => {
         </p>
 
         <!-- Submit Button -->
-        <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 transition">Submit</button>
+        <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 transition" :disabled="isLoading">Submit</button>
+
+        <span v-if="!isLoading">Submit</span>
+        <svg v-else class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8z"/>
+        </svg>
   </form>
 
 </template>
