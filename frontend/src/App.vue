@@ -11,7 +11,7 @@ import BookmarkIcon from './assets/book.svg'
           <BookmarkIcon class="w-6 h-6 text-white" />
       
           <!-- Text -->
-          <span class="text-white text-lg font-semibold">Readly</span>
+          <span class="text-white text-lg font-semibold">Readr</span>
         </div>
 
         <!-- Menu -->
