@@ -53,7 +53,7 @@ onMounted(async () => {
               {{ article.title }}
             </router-link>
             <p class="mt-2 text-gray-500 text-sm">
-              {{ article.article.slice(0, 120) }}...
+              {{ article.article }}
             </p>
           </div>
         </div>
@@ -62,7 +62,7 @@ onMounted(async () => {
 
     <!-- List View -->
     <div v-else class="space-y-4">
-      <div v-for="article in articles" :key="article.ID" class="flex items-center bg-white rounded-xl shadow-sm p-4 border border-gray-500 ">
+      <div v-for="article in articles" :key="article.ID" class="flex bg-white rounded-xl shadow-sm p-4 border border-gray-500 ">
         <img :src="article.image" alt="Cover" class="w-24 h-24 object-cover rounded-md mr-4" />
         <div>
           <router-link
@@ -71,8 +71,8 @@ onMounted(async () => {
           >
             {{ article.title }}
           </router-link>
-          <p class="text-gray-500 text-sm">
-            {{ article.article.slice(0, 120) }}...
+          <p class="text-gray-500 text-sm text-left">
+            {{ article.article }}
           </p>
         </div>
       </div>
