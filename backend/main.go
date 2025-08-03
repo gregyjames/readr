@@ -26,10 +26,9 @@ type RequestBody struct {
 
 type Article struct {
 	gorm.Model
-	ID uint `gorm:"unique"`
-	Article  string
-	Image string
-	Title   string
+	Article  string `json:"article"`
+	Image string `json:"image"`
+	Title   string `json:"title"`
 }
 
 func main(){
@@ -66,7 +65,7 @@ func main(){
 		return c.JSON(fiber.Map{"message": "Hello from Go!"})
 	})
 
-	app.Get("/articles", func(c *fiber.Ctx) error {
+	app.Get("/getarticles", func(c *fiber.Ctx) error {
 		var articles []Article
 		if err := db.Find(&articles).Error; err != nil {
 			return c.Status(500).JSON(fiber.Map{
@@ -75,7 +74,7 @@ func main(){
 		}
 		return c.JSON(articles)
 	})
-	
+
 	app.Post("/add", func(c *fiber.Ctx) error {
 		var body RequestBody
 
@@ -119,7 +118,6 @@ image: "%s"
 		os.WriteFile(filename, []byte(markdown), 0644)
 		
 		db.Create(&Article{
-			ID: uint(filename_id),
 			Title: title,
 			Image: imagePath,
 			Article: fmt.Sprintf("/articles/%d.md", filename_id),
