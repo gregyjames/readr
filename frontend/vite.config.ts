@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [
     vue(),
     tailwindcss(),
-    svgLoader()
+    svgLoader(),
   ],
   resolve: {
     alias: {

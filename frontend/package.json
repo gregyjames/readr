@@ -12,11 +12,13 @@
     "@tailwindcss/vite": "^4.1.11",
     "axios": "^1.11.0",
     "crypto-browserify": "^3.12.1",
+    "marked": "^16.1.1",
     "tailwindcss": "^4.1.11",
     "vue": "^3.5.17",
     "vue-router": "^4.5.1"
   },
   "devDependencies": {
+    "@tailwindcss/typography": "^0.5.16",
     "@types/node": "^24.1.0",
     "@vitejs/plugin-vue": "^6.0.0",
     "@vue/tsconfig": "^0.7.0",

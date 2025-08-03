@@ -23,6 +23,7 @@ func main(){
 	app := fiber.New()
 
 	app.Static("/articles", "/app/data/articles")
+	app.Static("/images", "/app/data/images")
 	
 	app.Use(cors.New(cors.Config{
         AllowOrigins: "http://localhost:8080", // Vue dev server
@@ -68,7 +69,8 @@ image: "%s"
 ---
 
 [Source](%s)
-`, title, body.URL, imagePath, body.URL)
+![Image](%s "Article Image")
+`, title, body.URL, imagePath, body.URL, imagePath)
 
 		filename := fmt.Sprintf("/app/data/articles/%d.md", time.Now().Unix())
 		os.MkdirAll("/app/data/articles", os.ModePerm)
@@ -161,5 +163,5 @@ func downloadImage(url string) string {
 	defer out.Close()
 
 	io.Copy(out, resp.Body)
-	return "/app/data/images/" + name
+	return "http://localhost:3000/images/" + name
 }
