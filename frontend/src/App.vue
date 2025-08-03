@@ -15,19 +15,31 @@ const url = ref('')
 const viewMode = ref<'card' | 'list'>('card')
 const tags = ref<string[]>([])
 const tagInput = ref('')
-
+const isSubmitting = ref(false)
 
 const submitForm = async () => {
-  await fetch('http://localhost:3000/add', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ 
-      url: url.value,
-      Tags: tags.value
-    }),
-  })
-  emitter.emit('article-added')
-  showModal.value = false
+  isSubmitting.value = true
+  try{
+    await fetch('http://localhost:3000/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        url: url.value,
+        Tags: tags.value
+      }),
+    })
+    emitter.emit('article-added')
+    showModal.value = false
+    url.value = ''
+    tags.value = []
+    tagInput.value = ''
+  }
+  catch (err) {
+    console.error('Submit failed', err)
+  }
+  finally{
+    isSubmitting.value = false
+  }
 }
 
 function closeModal() {
@@ -87,7 +99,8 @@ function removeTag(tag: string) {
       <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6 relative">
         <button
           @click.self="closeModal"
-          class="absolute top-2 right-2 text-gray-400 hover:text-gray-800 text-xl font-bold"
+          :disabled="isSubmitting"
+          class="absolute top-2 right-2 text-gray-400 hover:text-gray-800 text-xl font-bold disabled:opacity-10 disabled:text-gray-700"
           aria-label="Close">×</button>
         <h2 class="text-xl font-semibold mb-4">Add an article</h2>
 
@@ -121,9 +134,10 @@ function removeTag(tag: string) {
           </div>
           <button
             type="submit"
-            class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 w-full"
+            :disabled="isSubmitting"
+            class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 w-full transition disabled:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Submit
+            {{ isSubmitting ? 'Submitting...' : 'Submit' }}
           </button>
         </form>
       </div>
