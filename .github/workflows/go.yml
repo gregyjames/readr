@@ -1,4 +1,4 @@
-name: Go CI
+name: build-and-test-go
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build-and-test:
+  build-and-test-go:
     runs-on: ubuntu-latest
 
     steps:
