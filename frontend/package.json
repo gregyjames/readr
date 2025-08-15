@@ -18,7 +18,7 @@
     "vue": "^3.5.17",
     "vue-router": "^4.5.1",
     "vue-tsc": "^3.0.5",
-    "vite": "^7.1.1",
+    "vite": "^7.1.2",
     "vite-svg-loader": "^5.1.0"
   },
   "devDependencies": {
