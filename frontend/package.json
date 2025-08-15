@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.1.11",
+    "@tailwindcss/vite": "^4.1.12",
     "axios": "^1.11.0",
     "crypto-browserify": "^3.12.1",
     "highlight.js": "^11.11.1",
