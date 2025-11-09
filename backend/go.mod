@@ -6,10 +6,10 @@ require (
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/go-shiori/go-readability v0.0.0-20250217085726-9f5bf5ca7612
 	github.com/gofiber/fiber/v2 v2.52.9
-	golang.org/x/net v0.43.0
+	golang.org/x/net v0.46.0
 	gorm.io/driver/sqlite v1.6.0
-	gorm.io/gorm v1.30.2
-	modernc.org/sqlite v1.38.2
+	gorm.io/gorm v1.31.1
+	modernc.org/sqlite v1.40.0
 )
 
 require (
@@ -35,9 +35,9 @@ require (
 	github.com/valyala/fasthttp v1.51.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
-	golang.org/x/sys v0.35.0 // indirect
-	golang.org/x/text v0.28.0 // indirect
-	modernc.org/libc v1.66.3 // indirect
+	golang.org/x/sys v0.37.0 // indirect
+	golang.org/x/text v0.30.0 // indirect
+	modernc.org/libc v1.66.10 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
