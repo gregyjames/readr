@@ -5,7 +5,7 @@ go 1.24.3
 require (
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/go-shiori/go-readability v0.0.0-20250217085726-9f5bf5ca7612
-	github.com/gofiber/fiber/v2 v2.52.9
+	github.com/gofiber/fiber/v2 v2.52.10
 	golang.org/x/net v0.46.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.1
