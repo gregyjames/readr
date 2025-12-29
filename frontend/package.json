@@ -23,7 +23,7 @@
     "vite-svg-loader": "^5.1.0"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.1.17",
+    "@tailwindcss/postcss": "^4.1.18",
     "@tailwindcss/typography": "^0.5.16",
     "@types/node": "^24.9.2",
     "@vitejs/plugin-vue": "^6.0.3",
