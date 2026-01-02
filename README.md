@@ -6,7 +6,7 @@
 A minimal, self hosted read it later app written powered by Vue/Tailwind and Go. All documents are stored as markdown files in a shared volume and tracked by the backend in a SQLLite database. Why make this? Because Pocket screwed me over **one** too many times. 
 
 ## Features
-- Fast and fairly lightweight (53mb frontend/5mb backend)
+- Fast and super lightweight (2mb frontend/5mb backend)
 - Automatically save and convert articles and their images as markdown
 - Beautiful typography and syntax hilighting (imo)
 
