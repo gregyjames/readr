@@ -5,15 +5,15 @@
 
 version: 2
 updates:
-  - package-ecosystem: "npm"
-    # Look for `package.json` and `lock` files in the `root` directory
+  - package-ecosystem: "bun"
+    # Look for `package.json` and `bun.lock` files in the frontend directory
     directory: "/frontend/"
-    # Check the npm registry for updates every day (weekdays)
+    # Check the Bun registry for updates every day (weekdays)
     schedule:
-      interval: "daily"
+      interval: "monthly"
   - package-ecosystem: "gomod"
-    # Look for `package.json` and `lock` files in the `root` directory
+    # Look for `go.mod` and `go.sum` files in the backend directory
     directory: "/backend/"
-    # Check the npm registry for updates every day (weekdays)
+    # Check the Go modules registry for updates monthly
     schedule:
       interval: "monthly"
