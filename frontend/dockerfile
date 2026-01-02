@@ -1,28 +1,35 @@
-# Stage 1: build
-FROM node:lts AS builder
+# Stage 1: build frontend
+FROM oven/bun:latest AS frontend-builder
 WORKDIR /app
 
-# Install deps
-COPY package*.json ./
-RUN npm install
-
-# Optional: prune
-RUN wget https://gobinaries.com/tj/node-prune --output-document - | /bin/sh && node-prune
+# Install deps (use --frozen-lockfile in production once bun.lockb is committed)
+COPY package.json bun.lockb* ./
+RUN bun install --frozen-lockfile 2>/dev/null || bun install
 
 # Copy rest of source and build
 COPY . .
-RUN npm ci
-RUN npm run build  # ✅ This is the critical missing line
+RUN bun run build
 
-# Stage 2: runtime
-FROM node:lts-alpine
-ENV NODE_ENV=production
+# Stage 2: build static server binary
+FROM golang:alpine AS server-builder
 WORKDIR /app
 
-# Copy built output
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/package*.json ./
+# Copy server source
+COPY server.go ./
+
+# Build static binary (CGO_ENABLED=0 for fully static binary)
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o server server.go
+
+# Stage 3: runtime (scratch - minimal size)
+FROM scratch
+
+# Copy compiled server binary
+COPY --from=server-builder /app/server /server
+
+# Copy built static files
+COPY --from=frontend-builder /app/dist /dist
 
 EXPOSE 8080
-CMD ["npx", "serve", "-s", "dist", "-l", "8080"]
+ENV PORT=8080
+ENV DIST_DIR=/dist
+ENTRYPOINT ["/server"]

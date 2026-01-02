@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.gitignore
+.DS_Store
+*.log
+.vscode
+.idea
+*.md
+README.md
+server.ts
+bun.lockb
+
