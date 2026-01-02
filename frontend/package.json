@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "packageManager": "bun@latest",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
@@ -18,7 +19,6 @@
     "vue": "^3.5.26",
     "vue-router": "^4.6.4",
     "vue-tsc": "^3.2.1",
-    "vite": "^7.2.2",
     "vite": "^7.3.0",
     "vite-svg-loader": "^5.1.0"
   },
