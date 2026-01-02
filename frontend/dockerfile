@@ -3,7 +3,7 @@ FROM oven/bun:latest AS frontend-builder
 WORKDIR /app
 
 # Install deps (use --frozen-lockfile in production once bun.lockb is committed)
-COPY package.json bun.lockb* ./
+COPY package.json bun.lock* ./
 RUN bun install --frozen-lockfile 2>/dev/null || bun install
 
 # Copy rest of source and build
