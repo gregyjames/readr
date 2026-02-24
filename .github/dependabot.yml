@@ -2,7 +2,6 @@
 # package ecosystems to update and where the package manifests are located.
 # Please see the documentation for all configuration options:
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
-
 version: 2
 updates:
   - package-ecosystem: "bun"
@@ -10,10 +9,18 @@ updates:
     directory: "/frontend/"
     # Check the Bun registry for updates every day (weekdays)
     schedule:
-      interval: "monthly"
+      interval: "weekly"
+    groups:
+      bun-dependencies:
+        patterns:
+          - "*"
   - package-ecosystem: "gomod"
     # Look for `go.mod` and `go.sum` files in the backend directory
     directory: "/backend/"
     # Check the Go modules registry for updates monthly
     schedule:
-      interval: "monthly"
+      interval: "weekly"
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
