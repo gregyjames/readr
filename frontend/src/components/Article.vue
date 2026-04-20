@@ -25,8 +25,6 @@ onMounted(async () => {
   document.querySelectorAll('pre code').forEach((block) => {
     hljs.highlightElement(block as HTMLElement)
   })
-
-  console.log(markdownContent.value)
 })
 </script>
 
