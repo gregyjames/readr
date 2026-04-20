@@ -66,13 +66,15 @@ func main(){
 	}
 	
 	db.AutoMigrate(&Article{})
-	
-	app.Get("/", func(c *fiber.Ctx) error {
+
+	api := app.Group("/api")
+
+	api.Get("/", func(c *fiber.Ctx) error {
 		//return c.SendString("Hello, World!")
 		return c.JSON(fiber.Map{"message": "Hello from Go!"})
 	})
 
-	app.Delete("/delete/:id", func(c *fiber.Ctx) error {
+	api.Delete("/delete/:id", func(c *fiber.Ctx) error {
 		id := c.Params("id")
 
 		if err := db.Delete(&Article{}, id).Error; err != nil {
@@ -102,7 +104,7 @@ func main(){
 		})
 
 
-	app.Get("/getarticles", func(c *fiber.Ctx) error {
+	api.Get("/getarticles", func(c *fiber.Ctx) error {
 		var articles []Article
 		if err := db.Find(&articles).Error; err != nil {
 			return c.Status(500).JSON(fiber.Map{
@@ -112,7 +114,7 @@ func main(){
 		return c.JSON(articles)
 	})
 
-	app.Post("/add", func(c *fiber.Ctx) error {
+	api.Post("/add", func(c *fiber.Ctx) error {
 	var body RequestBody
 
 	if err := json.Unmarshal(c.Body(), &body); err != nil {
@@ -170,7 +172,7 @@ func main(){
 		out.Close()
 
 		// Step 3: Replace image URLs in Markdown
-		markdownContent = strings.ReplaceAll(markdownContent, imgURL, fmt.Sprintf("http://localhost:3000/images/%d/", filenameID)+filename)
+		markdownContent = strings.ReplaceAll(markdownContent, imgURL, fmt.Sprintf("/images/%d/", filenameID)+filename)
 	}
 	
 	if err != nil {
@@ -242,7 +244,7 @@ func downloadImage(url string, dirname int64) string {
 	defer out.Close()
 
 	io.Copy(out, resp.Body)
-	return fmt.Sprintf("http://localhost:3000/images/%d/", dirname) + name
+	return fmt.Sprintf("/images/%d/", dirname) + name
 }
 
 func extractImageSources(n *html.Node) []string {

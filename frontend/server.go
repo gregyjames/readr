@@ -3,8 +3,11 @@ package main
 import (
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func main() {
@@ -18,6 +21,18 @@ func main() {
 		distDir = "dist"
 	}
 
+	backendURLStr := os.Getenv("BACKEND_URL")
+	if backendURLStr == "" {
+		backendURLStr = "http://backend:3000"
+	}
+
+	backendURL, err := url.Parse(backendURLStr)
+	if err != nil {
+		log.Fatalf("Invalid backend URL: %v", err)
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(backendURL)
+
 	// Create file system from dist directory
 	fileSystem := http.Dir(distDir)
 	fileServer := http.FileServer(fileSystem)
@@ -25,6 +40,12 @@ func main() {
 	// Custom handler for SPA routing
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
+
+		// Forward requests to backend APIs and assets
+		if strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/images/") || strings.HasPrefix(path, "/articles/") {
+			proxy.ServeHTTP(w, r)
+			return
+		}
 
 		// Check if file exists
 		fullPath := filepath.Join(distDir, path)

@@ -10,7 +10,7 @@ const route = useRoute()
 
 onMounted(async () => {
   const articleID = route.params.id
-  const articleURL = `http://localhost:3000/articles/${articleID}`
+  const articleURL = `/articles/${articleID}`
 
   const res = await fetch(articleURL)
   const raw = await res.text()

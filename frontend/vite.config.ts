@@ -14,5 +14,12 @@ export default defineConfig({
     alias: {
       crypto: 'crypto-browserify',
     },
+  },
+  server: {
+    proxy: {
+      '/api': 'http://localhost:3000',
+      '/images': 'http://localhost:3000',
+      '/articles': 'http://localhost:3000'
+    }
   }
 })
