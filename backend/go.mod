@@ -6,6 +6,7 @@ require (
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/go-shiori/go-readability v0.0.0-20250217085726-9f5bf5ca7612
 	github.com/gofiber/fiber/v2 v2.52.12
+	go.uber.org/zap v1.27.1
 	golang.org/x/net v0.53.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.1
@@ -34,6 +35,7 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.51.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect
+	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 	modernc.org/libc v1.72.0 // indirect
