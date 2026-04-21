@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	markdown "github.com/JohannesKaufmann/html-to-markdown"
@@ -207,27 +208,43 @@ func main(){
 	
 	markdownContent, err := converter.ConvertString(article.Content)
 
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	replacements := make([]string, 0, len(images)*2)
+
 	for _, imgURL := range images {
-		imgResp, err := http.Get(imgURL)
-		if err != nil || imgResp.StatusCode != 200 {
-			logger.Warn("Failed to download image", zap.String("imgURL", imgURL))
-			continue
-		}
-		defer imgResp.Body.Close()
+		wg.Add(1)
+		go func(url string) {
+			defer wg.Done()
+			imgResp, err := http.Get(url)
+			if err != nil || imgResp.StatusCode != 200 {
+				logger.Warn("Failed to download image", zap.String("imgURL", url))
+				return
+			}
+			defer imgResp.Body.Close()
 
-		// Extract filename
-		parts := strings.Split(imgURL, "/")
-		filename := parts[len(parts)-1]
-		savePath := fmt.Sprintf("/app/data/images/%d/", filenameID) + filename
+			// Extract filename
+			parts := strings.Split(url, "/")
+			filename := parts[len(parts)-1]
+			savePath := fmt.Sprintf("/app/data/images/%d/", filenameID) + filename
 
-		// Save file
-		out, _ := os.Create(savePath)
-		io.Copy(out, imgResp.Body)
-		out.Close()
+			// Save file
+			out, err := os.Create(savePath)
+			if err != nil {
+				return
+			}
+			io.Copy(out, imgResp.Body)
+			out.Close()
 
-		// Step 3: Replace image URLs in Markdown
-		markdownContent = strings.ReplaceAll(markdownContent, imgURL, fmt.Sprintf("/images/%d/", filenameID)+filename)
+			mu.Lock()
+			replacements = append(replacements, url, fmt.Sprintf("/images/%d/", filenameID)+filename)
+			mu.Unlock()
+		}(imgURL)
 	}
+	wg.Wait()
+
+	replacer := strings.NewReplacer(replacements...)
+	markdownContent = replacer.Replace(markdownContent)
 	
 	if err != nil {
 		logger.Error("Failed to convert HTML to markdown", zap.Error(err))
