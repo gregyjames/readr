@@ -59,6 +59,80 @@ func BenchmarkDownloadImagesSequential(b *testing.B) {
 	}
 }
 
+func TestDownloadImagesParallel(t *testing.T) {
+	// Setup a mock server
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("fake image data"))
+	}))
+	defer ts.Close()
+
+	images := []string{
+		ts.URL + "/img1.png",
+		ts.URL + "/img2.png",
+	}
+
+	tempDir, err := os.MkdirTemp("", "test_parallel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	markdownContent := "Here is img1: " + images[0] + " and img2: " + images[1]
+	filenameID := int64(999)
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	replacements := make([]string, 0, len(images)*2)
+
+	for _, imgURL := range images {
+		wg.Add(1)
+		go func(url string) {
+			defer wg.Done()
+			imgResp, err := http.Get(url)
+			if err != nil || imgResp.StatusCode != 200 {
+				return
+			}
+			defer imgResp.Body.Close()
+
+			parts := strings.Split(url, "/")
+			filename := parts[len(parts)-1]
+			savePath := tempDir + "/" + filename
+
+			out, err := os.Create(savePath)
+			if err != nil {
+				return
+			}
+			io.Copy(out, imgResp.Body)
+			out.Close()
+
+			mu.Lock()
+			replacements = append(replacements, url, fmt.Sprintf("/images/%d/", filenameID)+filename)
+			mu.Unlock()
+		}(imgURL)
+	}
+	wg.Wait()
+
+	replacer := strings.NewReplacer(replacements...)
+	updatedContent := replacer.Replace(markdownContent)
+
+	// Verify replacements
+	if !strings.Contains(updatedContent, "/images/999/img1.png") {
+		t.Errorf("Expected content to contain /images/999/img1.png, got: %s", updatedContent)
+	}
+	if !strings.Contains(updatedContent, "/images/999/img2.png") {
+		t.Errorf("Expected content to contain /images/999/img2.png, got: %s", updatedContent)
+	}
+
+	// Verify files exist
+	if _, err := os.Stat(tempDir + "/img1.png"); os.IsNotExist(err) {
+		t.Error("img1.png was not saved")
+	}
+	if _, err := os.Stat(tempDir + "/img2.png"); os.IsNotExist(err) {
+		t.Error("img2.png was not saved")
+	}
+}
+
 func BenchmarkDownloadImagesParallel(b *testing.B) {
 	// Setup a mock server
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
