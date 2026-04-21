@@ -6,8 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -38,8 +39,33 @@ type Article struct {
 	Tags    string `json:"tags"`
 }
 
+var logger *zap.Logger
+
+func initLogger() {
+	config := zap.NewProductionEncoderConfig()
+	config.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+		enc.AppendString("[" + t.Format("1/2/06") + "]")
+	}
+	config.EncodeLevel = func(l zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
+		enc.AppendString("[" + strings.ToUpper(l.String()) + "]")
+	}
+	config.ConsoleSeparator = " "
+
+	core := zapcore.NewCore(
+		zapcore.NewConsoleEncoder(config),
+		zapcore.AddSync(os.Stdout),
+		zap.InfoLevel,
+	)
+	logger = zap.New(core)
+}
+
 func main(){
-	app := fiber.New()
+	initLogger()
+	defer logger.Sync()
+
+	app := fiber.New(fiber.Config{
+		DisableStartupMessage: true,
+	})
 
 	app.Static("/articles", "/app/data/articles")
 	app.Static("/images", "/app/data/images")
@@ -48,21 +74,36 @@ func main(){
         AllowOrigins: "http://localhost:8080", // Vue dev server
         AllowHeaders: "Origin, Content-Type, Accept",
     }))
+
+	app.Use(func(c *fiber.Ctx) error {
+		start := time.Now()
+		err := c.Next()
+		duration := time.Since(start)
+
+		logger.Info("Request handled",
+			zap.String("method", c.Method()),
+			zap.String("path", c.Path()),
+			zap.Int("status", c.Response().StatusCode()),
+			zap.Duration("latency", duration),
+		)
+
+		return err
+	})
 	
-	fmt.Println(sql.Drivers())
+	logger.Info("Available SQL drivers", zap.Strings("drivers", sql.Drivers()))
 	
 	sqlDB, err := sql.Open("sqlite", "/app/data/data.sqlite")
 	if err != nil {
-		log.Fatal("sql.Open failed:", err)
+		logger.Fatal("sql.Open failed", zap.Error(err))
 	}
 
 	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{})
 	if err != nil {
-		log.Fatal("GORM failed:", err)
+		logger.Fatal("GORM failed", zap.Error(err))
 	}
 
 	if err != nil {
-		panic(fmt.Sprintf("failed to connect database: %s", err.Error()))
+		logger.Fatal("failed to connect database", zap.Error(err))
 	}
 	
 	db.AutoMigrate(&Article{})
@@ -76,8 +117,10 @@ func main(){
 
 	api.Delete("/delete/:id", func(c *fiber.Ctx) error {
 		id := c.Params("id")
+		logger.Info("Attempting to delete article", zap.String("id", id))
 
 		if err := db.Delete(&Article{}, id).Error; err != nil {
+			logger.Error("Failed to delete article from DB", zap.String("id", id), zap.Error(err))
 			return c.Status(500).JSON(fiber.Map{
 				"error": "Failed to delete article",
 			})
@@ -85,6 +128,7 @@ func main(){
 
 		deleteFileError := os.Remove(fmt.Sprintf("/app/data/articles/%s.md", id)) 
 		if deleteFileError != nil {
+			logger.Error("Failed to delete article file", zap.String("id", id), zap.Error(deleteFileError))
 			return c.Status(500).JSON(fiber.Map{
 				"error": "Failed to delete article file",
 			})
@@ -92,11 +136,13 @@ func main(){
 
 		deleteImagesError := os.RemoveAll(fmt.Sprintf("/app/data/images/%s/", id))
 		if deleteImagesError != nil{
+			logger.Error("Failed to delete article images", zap.String("id", id), zap.Error(deleteImagesError))
 			return c.Status(500).JSON(fiber.Map{
 				"error": "Failed to delete article images",
 			})
 		}
 
+		logger.Info("Article deleted successfully", zap.String("id", id))
 		return c.JSON(fiber.Map{
 			"status":  "success",
 			"message": fmt.Sprintf("Article %s deleted", id),
@@ -107,6 +153,7 @@ func main(){
 	api.Get("/getarticles", func(c *fiber.Ctx) error {
 		var articles []Article
 		if err := db.Find(&articles).Error; err != nil {
+			logger.Error("Failed to retrieve articles from DB", zap.Error(err))
 			return c.Status(500).JSON(fiber.Map{
 				"error": "Failed to retrieve articles",
 			})
@@ -118,11 +165,15 @@ func main(){
 	var body RequestBody
 
 	if err := json.Unmarshal(c.Body(), &body); err != nil {
+		logger.Error("Failed to unmarshal request body", zap.Error(err))
 		return c.Status(400).SendString("Invalid JSON")
 	}
 
+	logger.Info("Adding new article", zap.String("url", body.URL))
+
 	resp, err := http.Get(body.URL)
 	if err != nil || resp.StatusCode != 200 {
+		logger.Error("Failed to fetch the page", zap.String("url", body.URL), zap.Error(err))
 		return c.Status(500).SendString("Failed to fetch the page")
 	}
 	defer resp.Body.Close()
@@ -130,17 +181,20 @@ func main(){
 	// Read HTML body into bytes (for readability)
 	htmlBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
+		logger.Error("Failed to read HTML body", zap.String("url", body.URL), zap.Error(err))
 		return c.Status(500).SendString("Failed to read HTML body")
 	}
 
 	parsedURL, err := url.Parse(body.URL)
 	if err != nil {
+		logger.Error("Invalid URL", zap.String("url", body.URL), zap.Error(err))
 		return c.Status(400).SendString("Invalid URL")
 	}
 
 	// Parse with readability
 	article, err := readability.FromReader(bytes.NewReader(htmlBytes), parsedURL)
 	if err != nil {
+		logger.Error("Failed to parse readable content", zap.String("url", body.URL), zap.Error(err))
 		return c.Status(500).SendString("Failed to parse readable content")
 	}
 
@@ -156,7 +210,7 @@ func main(){
 	for _, imgURL := range images {
 		imgResp, err := http.Get(imgURL)
 		if err != nil || imgResp.StatusCode != 200 {
-			fmt.Println("Failed to download:", imgURL)
+			logger.Warn("Failed to download image", zap.String("imgURL", imgURL))
 			continue
 		}
 		defer imgResp.Body.Close()
@@ -176,6 +230,7 @@ func main(){
 	}
 	
 	if err != nil {
+		logger.Error("Failed to convert HTML to markdown", zap.Error(err))
 		return c.Status(500).SendString("Failed to convert HTML to markdown")
 	}
 
@@ -202,20 +257,25 @@ func main(){
 
 	err = os.WriteFile(filename, []byte(markdown), 0644)
 	if err != nil {
+		logger.Error("Failed to save markdown file", zap.String("filename", filename), zap.Error(err))
 		return c.Status(500).SendString("Failed to save markdown file")
 	}
 
 	tagsString := strings.Join(body.Tags, ",")
 
 	// Save article entry in DB
-	db.Create(&Article{
+	if err := db.Create(&Article{
 		Title:   title,
 		Image:   imagePath,
 		Article: fmt.Sprintf("/articles/%d.md", filenameID),
 		Tags: tagsString,
 		ID: filenameID,
-	})
+	}).Error; err != nil {
+		logger.Error("Failed to save article in DB", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to save article in DB"})
+	}
 
+	logger.Info("Article added successfully", zap.Int64("id", filenameID), zap.String("url", body.URL))
 	return c.JSON(fiber.Map{
 		"status":  "success",
 		"message": "Article saved",
@@ -229,6 +289,7 @@ func main(){
 func downloadImage(url string, dirname int64) string {
 	resp, err := http.Get(url)
 	if err != nil {
+		logger.Error("Failed to download image", zap.String("url", url), zap.Error(err))
 		return ""
 	}
 	defer resp.Body.Close()
@@ -239,6 +300,7 @@ func downloadImage(url string, dirname int64) string {
 
 	out, err := os.Create(directory + name)
 	if err != nil {
+		logger.Error("Failed to create image file", zap.String("path", directory+name), zap.Error(err))
 		return ""
 	}
 	defer out.Close()
