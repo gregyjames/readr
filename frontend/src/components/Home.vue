@@ -9,6 +9,7 @@ interface Article {
   article: string
   image: string
   tags: string
+  parsedTags: string[]
 }
 
 defineProps<{ msg: string }>()
@@ -24,7 +25,10 @@ const selectedTag = ref<string | null>(null)
 
 const fetchArticles = async () => {
   const res = await axios.get('/api/getarticles')
-  articles.value = res.data
+  articles.value = res.data.map((article: any) => ({
+    ...article,
+    parsedTags: article.tags ? article.tags.split(',').map((tag: string) => tag.trim()) : []
+  }))
 }
 
 onMounted(async () => {
@@ -70,7 +74,7 @@ watch(() => route.query.view, (newView) => {
 const filteredArticles = computed(() => {
   if (!selectedTag.value) return articles.value
   return articles.value.filter(article =>
-    article.tags?.split(',').map(tag => tag.trim()).includes(selectedTag.value!)
+    article.parsedTags.includes(selectedTag.value!)
   )
 })
 
@@ -112,8 +116,8 @@ const filteredArticles = computed(() => {
               {{ article.article }}
             </p>
             <div class="mt-3 flex flex-wrap gap-2 justify-center">
-              <span v-for="tag in article.tags.split(',').slice(0, 5)" :key="tag" @click="selectedTag = tag.trim()" class="bg-green-100 text-green-800 text-xs font-semibold px-2.5 py-0.5 rounded">
-                {{ tag.trim() }}
+              <span v-for="tag in article.parsedTags.slice(0, 5)" :key="tag" @click="selectedTag = tag" class="bg-green-100 text-green-800 text-xs font-semibold px-2.5 py-0.5 rounded">
+                {{ tag }}
               </span>
             </div>
           </div>
@@ -143,8 +147,8 @@ const filteredArticles = computed(() => {
             {{ article.article }}
           </p>
           <div class="mt-3 flex flex-wrap gap-2">
-            <span v-for="tag in article.tags.split(',').slice(0, 5)" :key="tag" @click="selectedTag = tag.trim()" class="bg-green-100 text-green-800 text-xs font-semibold px-2.5 py-0.5 rounded">
-              {{ tag.trim() }}
+            <span v-for="tag in article.parsedTags.slice(0, 5)" :key="tag" @click="selectedTag = tag" class="bg-green-100 text-green-800 text-xs font-semibold px-2.5 py-0.5 rounded">
+              {{ tag }}
             </span>
           </div>
         </div>
