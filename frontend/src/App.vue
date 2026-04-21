@@ -20,7 +20,7 @@ const isSubmitting = ref(false)
 const submitForm = async () => {
   isSubmitting.value = true
   try{
-    await fetch('http://localhost:3000/add', {
+    await fetch('/api/add', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 

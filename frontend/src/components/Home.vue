@@ -23,7 +23,7 @@ const viewMode = ref<'card' | 'list'>('card')
 const selectedTag = ref<string | null>(null)
 
 const fetchArticles = async () => {
-  const res = await axios.get('http://127.0.0.1:3000/getarticles')
+  const res = await axios.get('/api/getarticles')
   articles.value = res.data
 }
 
@@ -52,7 +52,7 @@ const deleteArticle = async (id: number) => {
   if (!confirm("Are you sure you want to delete this article?")) return
 
   try {
-    await axios.delete(`http://127.0.0.1:3000/delete/${id}`)
+    await axios.delete(`/api/delete/${id}`)
     articles.value = articles.value.filter(article => article.ID !== id)
   } catch (err) {
     console.error('Failed to delete article', err)
