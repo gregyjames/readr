@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,12 +33,25 @@ type RequestBody struct {
 }
 
 type Article struct {
-	gorm.Model
-	ID int64
-	Article  string `json:"article"`
-	Image string `json:"image"`
-	Title   string `json:"title"`
-	Tags    string `json:"tags"`
+	ID        int64              `gorm:"primaryKey;autoIncrement:false" json:"id"`
+	Title     string             `json:"title"`
+	Content   string             `json:"article"` // Mapping to 'article' for frontend compatibility
+	Tags      []Tag              `gorm:"many2many:article_tags;" json:"tags"`
+	Attributes []ArticleAttribute `json:"attributes"`
+	CreatedAt time.Time          `json:"created_at"`
+	UpdatedAt time.Time          `json:"updated_at"`
+}
+
+type Tag struct {
+	ID   uint   `gorm:"primaryKey" json:"id"`
+	Name string `gorm:"uniqueIndex" json:"name"`
+}
+
+type ArticleAttribute struct {
+	ID        uint   `gorm:"primaryKey" json:"id"`
+	ArticleID int64  `gorm:"index:idx_article_attr,unique" json:"article_id"`
+	Key       string `gorm:"index:idx_article_attr,unique" json:"key"`
+	Value     string `json:"value"`
 }
 
 var logger *zap.Logger
@@ -107,7 +121,7 @@ func main(){
 		logger.Fatal("failed to connect database", zap.Error(err))
 	}
 	
-	db.AutoMigrate(&Article{})
+	db.AutoMigrate(&Article{}, &Tag{}, &ArticleAttribute{})
 
 	api := app.Group("/api")
 
@@ -120,7 +134,7 @@ func main(){
 		id := c.Params("id")
 		logger.Info("Attempting to delete article", zap.String("id", id))
 
-		if err := db.Delete(&Article{}, id).Error; err != nil {
+		if err := db.Select("Tags", "Attributes").Delete(&Article{ID: mustParseInt64(id)}).Error; err != nil {
 			logger.Error("Failed to delete article from DB", zap.String("id", id), zap.Error(err))
 			return c.Status(500).JSON(fiber.Map{
 				"error": "Failed to delete article",
@@ -153,7 +167,7 @@ func main(){
 
 	api.Get("/getarticles", func(c *fiber.Ctx) error {
 		var articles []Article
-		if err := db.Find(&articles).Error; err != nil {
+		if err := db.Preload("Tags").Preload("Attributes").Find(&articles).Error; err != nil {
 			logger.Error("Failed to retrieve articles from DB", zap.Error(err))
 			return c.Status(500).JSON(fiber.Map{
 				"error": "Failed to retrieve articles",
@@ -278,16 +292,28 @@ func main(){
 		return c.Status(500).SendString("Failed to save markdown file")
 	}
 
-	tagsString := strings.Join(body.Tags, ",")
+	var tags []Tag
+	for _, tagName := range body.Tags {
+		var tag Tag
+		db.FirstOrCreate(&tag, Tag{Name: strings.TrimSpace(tagName)})
+		tags = append(tags, tag)
+	}
+
+	attributes := []ArticleAttribute{
+		{Key: "source_url", Value: body.URL},
+		{Key: "image_path", Value: imagePath},
+	}
 
 	// Save article entry in DB
-	if err := db.Create(&Article{
-		Title:   title,
-		Image:   imagePath,
-		Article: fmt.Sprintf("/articles/%d.md", filenameID),
-		Tags: tagsString,
-		ID: filenameID,
-	}).Error; err != nil {
+	newArticle := Article{
+		ID:         filenameID,
+		Title:      title,
+		Content:    fmt.Sprintf("/articles/%d.md", filenameID),
+		Tags:       tags,
+		Attributes: attributes,
+	}
+
+	if err := db.Create(&newArticle).Error; err != nil {
 		logger.Error("Failed to save article in DB", zap.Error(err))
 		return c.Status(500).JSON(fiber.Map{"error": "Failed to save article in DB"})
 	}
@@ -301,6 +327,15 @@ func main(){
 })
 
 	app.Listen(":3000")
+}
+
+func mustParseInt64(s string) int64 {
+	i, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		logger.Error("Failed to parse int64", zap.String("input", s), zap.Error(err))
+		return 0
+	}
+	return i
 }
 
 func downloadImage(url string, dirname int64) string {
