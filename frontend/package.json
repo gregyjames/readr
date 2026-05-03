@@ -11,10 +11,10 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.4",
-    "axios": "^1.15.2",
+    "axios": "^1.16.0",
     "crypto-browserify": "^3.12.1",
     "highlight.js": "^11.11.1",
-    "marked": "^18.0.2",
+    "marked": "^18.0.3",
     "mitt": "^3.0.1",
     "vue": "^3.5.33",
     "vue-router": "^5.0.6",
@@ -29,7 +29,7 @@
     "@vitejs/plugin-vue": "^6.0.6",
     "@vue/tsconfig": "^0.9.1",
     "autoprefixer": "^10.5.0",
-    "postcss": "^8.5.10",
+    "postcss": "^8.5.13",
     "tailwindcss": "^4.2.4",
     "typescript": "~6.0.3"
   }
