@@ -3,13 +3,24 @@ import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import axios from 'axios'
 import emitter from '../event-bus.ts'
 
+interface Tag {
+  id: number
+  name: string
+}
+
+interface Attribute {
+  key: string
+  value: string
+}
+
 interface Article {
-  ID: number
+  id: number
   title: string
   article: string
-  image: string
-  tags: string
+  tags: Tag[]
+  attributes: Attribute[]
   parsedTags: string[]
+  image: string
 }
 
 defineProps<{ msg: string }>()
@@ -25,10 +36,14 @@ const selectedTag = ref<string | null>(null)
 
 const fetchArticles = async () => {
   const res = await axios.get('/api/getarticles')
-  articles.value = res.data.map((article: any) => ({
-    ...article,
-    parsedTags: article.tags ? article.tags.split(',').map((tag: string) => tag.trim()) : []
-  }))
+  articles.value = res.data.map((article: any) => {
+    const imageAttr = article.attributes?.find((attr: Attribute) => attr.key === 'image_path')
+    return {
+      ...article,
+      image: imageAttr ? imageAttr.value : '',
+      parsedTags: article.tags ? article.tags.map((tag: Tag) => tag.name) : []
+    }
+  })
 }
 
 onMounted(async () => {
@@ -57,7 +72,7 @@ const deleteArticle = async (id: number) => {
 
   try {
     await axios.delete(`/api/delete/${id}`)
-    articles.value = articles.value.filter(article => article.ID !== id)
+    articles.value = articles.value.filter(article => article.id !== id)
   } catch (err) {
     console.error('Failed to delete article', err)
   }
@@ -93,9 +108,9 @@ const filteredArticles = computed(() => {
     </div>
     <!-- Card View -->
     <div v-if="viewMode === 'card'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-      <div v-for="article in filteredArticles" :key="article.ID" class="relative flex-1 bg-white rounded-xl shadow-md overflow-hidden border border-gray-500 ">
+      <div v-for="article in filteredArticles" :key="article.id" class="relative flex-1 bg-white rounded-xl shadow-md overflow-hidden border border-gray-500 ">
         <button
-          @click="deleteArticle(article.ID)"
+          @click="deleteArticle(article.id)"
           class="absolute top-2 right-2 text-black opacity-20 hover:bg-red-600 hover:opacity-100 hover:text-white rounded-full w-7 h-7 flex items-center justify-center text-sm z-10"
           title="Delete"
         >
@@ -127,9 +142,9 @@ const filteredArticles = computed(() => {
 
     <!-- List View -->
     <div v-else class="space-y-10 mt-10">
-      <div v-for="article in filteredArticles" :key="article.ID" class="relative flex bg-white rounded-xl shadow-sm pr-10 pt-4 px-4 pb-4 border border-gray-500 ">
+      <div v-for="article in filteredArticles" :key="article.id" class="relative flex bg-white rounded-xl shadow-sm pr-10 pt-4 px-4 pb-4 border border-gray-500 ">
         <button
-          @click="deleteArticle(article.ID)"
+          @click="deleteArticle(article.id)"
           class="absolute top-2 right-2 opacity-20 text-black hover:bg-red-600 hover:opacity-100 hover:text-white rounded-full w-7 h-7 flex items-center justify-center text-sm z-10 mb-2"
           title="Delete"
         >
