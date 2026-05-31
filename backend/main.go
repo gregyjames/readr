@@ -17,7 +17,7 @@ import (
 	"time"
 
 	markdown "github.com/JohannesKaufmann/html-to-markdown"
-	"github.com/go-shiori/go-readability"
+	"codeberg.org/readeck/go-readability"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"golang.org/x/net/html"
