@@ -9,8 +9,8 @@ require (
 	go.uber.org/zap v1.28.0
 	golang.org/x/net v0.56.0
 	gorm.io/driver/sqlite v1.6.0
-	gorm.io/gorm v1.31.1
-	modernc.org/sqlite v1.52.0
+	gorm.io/gorm v1.31.2
+	modernc.org/sqlite v1.53.0
 )
 
 require (
@@ -38,7 +38,7 @@ require (
 	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
-	modernc.org/libc v1.72.3 // indirect
+	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
