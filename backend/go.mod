@@ -5,9 +5,9 @@ go 1.25.0
 require (
 	codeberg.org/readeck/go-readability v0.0.0-20251125211941-0f57a445e5f1
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
-	github.com/gofiber/fiber/v2 v2.52.14
+	github.com/gofiber/fiber/v2 v2.52.15
 	go.uber.org/zap v1.28.0
-	golang.org/x/net v0.57.0
+	golang.org/x/net v0.58.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.2
 	modernc.org/sqlite v1.56.0
@@ -37,7 +37,7 @@ require (
 	github.com/valyala/tcplisten v1.0.0 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
