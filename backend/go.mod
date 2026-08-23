@@ -10,7 +10,7 @@ require (
 	golang.org/x/net v0.58.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.2
-	modernc.org/sqlite v1.56.0
+	modernc.org/sqlite v1.57.0
 )
 
 require (
