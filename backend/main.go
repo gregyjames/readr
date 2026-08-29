@@ -52,6 +52,18 @@ type LinkRequest struct {
 	SelectedText string `json:"selectedText"`
 }
 
+type GraphNode struct {
+	Id    string `json:"id"`
+	Label string `json:"label"`
+	Group string `json:"group"` // "article" or "tag"
+}
+
+type GraphEdge struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+
 var logger *zap.Logger
 
 func initLogger() {
@@ -298,6 +310,66 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 		return c.JSON(fiber.Map{"status": "success", "linkId": link.ID})
 	})
+
+	api.Get("/graph", func(c *fiber.Ctx) error {
+		var articles []Article
+		if err := db.Find(&articles).Error; err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to fetch articles"})
+		}
+
+		var links []ArticleLink
+		if err := db.Find(&links).Error; err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to fetch links"})
+		}
+
+		nodes := []GraphNode{}
+		edges := []GraphEdge{}
+		tagSet := make(map[string]bool)
+
+		for _, article := range articles {
+			nodes = append(nodes, GraphNode{
+				Id:    fmt.Sprintf("article-%d", article.ID),
+				Label: article.Title,
+				Group: "article",
+			})
+
+			// Process tags
+			if article.Tags != "" {
+				tags := strings.Split(article.Tags, ",")
+				for _, tag := range tags {
+					tag = strings.TrimSpace(tag)
+					if tag == "" {
+						continue
+					}
+					if !tagSet[tag] {
+						nodes = append(nodes, GraphNode{
+							Id:    fmt.Sprintf("tag-%s", tag),
+							Label: tag,
+							Group: "tag",
+						})
+						tagSet[tag] = true
+					}
+					edges = append(edges, GraphEdge{
+						From: fmt.Sprintf("article-%d", article.ID),
+						To:   fmt.Sprintf("tag-%s", tag),
+					})
+				}
+			}
+		}
+
+		for _, link := range links {
+			edges = append(edges, GraphEdge{
+				From: fmt.Sprintf("article-%d", link.SourceID),
+				To:   fmt.Sprintf("article-%d", link.TargetID),
+			})
+		}
+
+		return c.JSON(fiber.Map{
+			"nodes": nodes,
+			"edges": edges,
+		})
+	})
+
 
 
 	api.Post("/add", func(c *fiber.Ctx) error {
