@@ -23,6 +23,7 @@ const router = useRouter()
 
 const viewMode = ref<'card' | 'list'>('card')
 const selectedTag = ref<string | null>(null)
+const sortOrder = ref<'latest' | 'oldest'>('latest')
 
 const fetchArticles = async () => {
   const res = await axios.get('/api/getarticles')
@@ -102,13 +103,16 @@ watch(() => route.query.view, (newView) => {
 })
 
 watch(viewMode, () => nextTick(initReveal))
+watch(sortOrder, () => nextTick(initReveal))
 
 const filteredArticles = computed(() => {
-  if (!selectedTag.value) return articles.value
-  return articles.value.filter(article =>
-    article.parsedTags.includes(selectedTag.value!)
-  )
+  let list = selectedTag.value
+    ? articles.value.filter(a => a.parsedTags.includes(selectedTag.value!))
+    : [...articles.value]
+  list.sort((a, b) => sortOrder.value === 'latest' ? b.ID - a.ID : a.ID - b.ID)
+  return list
 })
+
 </script>
 
 <template>
@@ -165,7 +169,32 @@ const filteredArticles = computed(() => {
     </div>
 
     <!-- Timeline List View -->
-    <div v-else class="timeline-root max-w-3xl mx-auto">
+    <div v-else>
+      <!-- sort control -->
+      <div class="flex justify-end mb-6">
+        <div class="inline-flex items-center bg-gray-100/70 dark:bg-white/5 rounded-full p-1 gap-0.5">
+          <button
+            @click="sortOrder = 'latest'"
+            :class="[
+              'text-xs font-semibold px-4 py-1.5 rounded-full transition-all duration-200',
+              sortOrder === 'latest'
+                ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+            ]"
+          >Latest</button>
+          <button
+            @click="sortOrder = 'oldest'"
+            :class="[
+              'text-xs font-semibold px-4 py-1.5 rounded-full transition-all duration-200',
+              sortOrder === 'oldest'
+                ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+            ]"
+          >Oldest</button>
+        </div>
+      </div>
+
+      <div class="timeline-root max-w-3xl mx-auto">
       <!-- spine line -->
       <div class="timeline-spine" aria-hidden="true"></div>
 
@@ -225,7 +254,8 @@ const filteredArticles = computed(() => {
           </div>
         </div>
       </div>
-    </div>
+    </div>  <!-- end timeline-root -->
+    </div>  <!-- end v-else -->
   </div>
 </template>
 
