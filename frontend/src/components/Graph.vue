@@ -81,7 +81,7 @@ const renderGraph = () => {
       const nodeId = params.nodes[0] as string
       if (nodeId.startsWith('article-')) {
         const id = nodeId.replace('article-', '')
-        router.push(`/${id}`)
+        router.push(`/articles/${id}`)
       }
     }
   })

@@ -13,7 +13,7 @@ interface Article {
   parsedTags: string[]
 }
 
-defineProps<{ msg: string }>()
+defineProps<{ msg?: string }>()
 
 const articles = ref<Article[]>([])
 

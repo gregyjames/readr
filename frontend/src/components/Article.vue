@@ -154,7 +154,7 @@ const loadLocalGraph = async () => {
           const nodeId = params.nodes[0] as string
           if (nodeId.startsWith('article-')) {
             const id = nodeId.replace('article-', '')
-            router.push(`/${id}`)
+            router.push(`/articles/${id}`)
           }
         }
       })
@@ -182,7 +182,7 @@ const loadContent = async (forceRefresh = false) => {
       const display = parts.length > 1 ? parts[1] : parts[0]
       
       const targetArticle = allArticles.value.find(a => a.title === targetTitle)
-      const url = targetArticle ? `/${targetArticle.ID}` : '#'
+      const url = targetArticle ? `/articles/${targetArticle.ID}` : '#'
       
       return `<a href="${url}" class="wikilink font-semibold text-emerald-600 dark:text-emerald-400 no-underline hover:underline hover:text-emerald-700 dark:hover:text-emerald-300 transition-colors bg-emerald-50/50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded-md border border-emerald-100 dark:border-emerald-800/50">${display}</a>`
     })
