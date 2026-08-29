@@ -500,26 +500,29 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			imagePath = downloadImage(imageURL, filenameID)
 		}
 
-		// Generate markdown with clean content
+		tagsString := strings.Join(body.Tags, ",")
+
+		// Build YAML frontmatter so metadata survives outside the DB (e.g. Obsidian sync)
+		savedDate := time.Unix(filenameID, 0).UTC().Format("2006-01-02")
+		frontmatter := fmt.Sprintf("---\ntitle: %q\nsource: %q\ntags: [%s]\ncover: %q\nsaved: %s\n---\n",
+			title,
+			body.URL,
+			tagsString,
+			imagePath,
+			savedDate,
+		)
+
+		markdownDoc := frontmatter + "\n" + markdownContent
+
 		articlesDir := filepath.Join(dataDirectory, "articles")
 		filename := filepath.Join(articlesDir, fmt.Sprintf("%d.md", filenameID))
 		os.MkdirAll(articlesDir, os.ModePerm)
-
-		markdownDoc := fmt.Sprintf(`
-[Source](%s)
-
-![Cover Image](%s)
-
-%s
-`, body.URL, imagePath, markdownContent)
 
 		err = os.WriteFile(filename, []byte(markdownDoc), 0644)
 		if err != nil {
 			logger.Error("Failed to save markdown file", zap.String("filename", filename), zap.Error(err))
 			return c.Status(500).SendString("Failed to save markdown file")
 		}
-
-		tagsString := strings.Join(body.Tags, ",")
 
 		// Save article entry in DB
 		if err := db.Create(&Article{
