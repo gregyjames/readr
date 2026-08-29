@@ -39,7 +39,7 @@ const getOptions = (isDark: boolean) => ({
   edges: {
     color: isDark ? '#333333' : '#e2e8f0',
     width: 1.5,
-    smooth: { type: 'continuous' }
+    smooth: { enabled: true, type: 'continuous', roundness: 0.5 }
   },
   physics: {
     barnesHut: { gravitationalConstant: -3000, centralGravity: 0.4, springLength: 120, damping: 0.15 }

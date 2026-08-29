@@ -197,7 +197,7 @@ const loadLocalGraph = async () => {
     if (localNetwork) {
       localNetwork.setData({ nodes: localNodes, edges: connectedEdges })
       localNetwork.setOptions(options)
-      localNetwork.once('afterDrawing', () => { localNetwork?.fit({ animation: { duration: 500 } }); });
+      localNetwork.once('afterDrawing', () => { localNetwork?.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } }); });
     } else {
       localNetwork = new Network(localGraphContainer.value, { nodes: localNodes, edges: connectedEdges }, options)
       
