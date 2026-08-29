@@ -249,7 +249,10 @@ const loadContent = async (forceRefresh = false) => {
       return `<a href="${url}" class="wikilink font-semibold text-emerald-600 dark:text-emerald-400 no-underline hover:underline hover:text-emerald-700 dark:hover:text-emerald-300 transition-colors bg-emerald-50/50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded-md border border-emerald-100 dark:border-emerald-800/50">${display}</a>`
     })
 
-    markdownContent.value = await marked.parse(parsedRaw, {
+    // Strip YAML frontmatter (--- ... ---) so it never renders in the article view                                                                                 
+    const strippedRaw = parsedRaw.replace(/^---[\s\S]*?---\n?/, '')  
+
+    markdownContent.value = await marked.parse(strippedRaw, {
       gfm: false,
       async: true
     })
