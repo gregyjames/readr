@@ -674,5 +674,52 @@ func TestGetGraph_DuplicateTagsAndCaseSensitivity(t *testing.T) {
 	}
 }
 
+func TestGetGraph_LocalSubgraph(t *testing.T) {
+	db := initTestDB()
+	db.Exec("DELETE FROM articles")
+	db.Exec("DELETE FROM article_links")
+
+	db.Create(&Article{ID: 1, Title: "Article 1", Tags: "ai"})
+	db.Create(&Article{ID: 2, Title: "Article 2", Tags: "ml"})
+	db.Create(&Article{ID: 3, Title: "Article 3", Tags: "robotics"})
+	db.Create(&ArticleLink{ID: 1, SourceID: 1, TargetID: 2})
+	db.Create(&ArticleLink{ID: 2, SourceID: 2, TargetID: 3})
+
+	app := setupApp(db)
+
+	req := httptest.NewRequest("GET", "/api/graph/local/1", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Failed to execute request: %v", err)
+	}
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("Expected 200, got %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Nodes []GraphNode `json:"nodes"`
+		Edges []GraphEdge `json:"edges"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// 1-hop from Article 1: Article 1, Article 2, Tag "ai", Tag "ml"
+	nodeMap := make(map[string]bool)
+	for _, n := range result.Nodes {
+		nodeMap[n.Id] = true
+	}
+
+	if !nodeMap["article-1"] || !nodeMap["article-2"] || !nodeMap["tag-ai"] {
+		t.Errorf("Expected local subgraph to contain article-1, article-2, tag-ai; got %+v", nodeMap)
+	}
+
+	if nodeMap["article-3"] {
+		t.Errorf("article-3 is 2 hops away and should not be in 1-hop subgraph")
+	}
+}
+
+
 
 

@@ -192,22 +192,9 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		DisableStartupMessage: true,
 	})
 
-	dataDirectory := getDataDir()
-	app.Static("/articles", filepath.Join(dataDirectory, "articles"))
-	app.Static("/images", filepath.Join(dataDirectory, "images"))
-
-	repo := repository.NewGormRepository(db)
-	graphEngine := graph.NewEngine(repo)
-	ingester := ingest.NewIngester(
-		ingest.NewHTTPFetcher(30*time.Second),
-		ingest.NewContentExtractor(),
-		ingest.NewDiskStorage(dataDirectory),
-		repo,
-	)
-
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "http://localhost:8080", // Vue dev server
-		AllowHeaders: "Origin, Content-Type, Accept",
+		AllowOrigins: "*",
+		AllowHeaders: "Origin, Content-Type, Accept, Cache-Control, Pragma",
 	}))
 
 	app.Use(func(c *fiber.Ctx) error {
@@ -224,6 +211,24 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 		return err
 	})
+
+	dataDirectory := getDataDir()
+	app.Get("/articles/:filename", func(c *fiber.Ctx) error {
+		filename := c.Params("filename")
+		clean := filepath.Clean(filename)
+		filePath := filepath.Join(dataDirectory, "articles", clean)
+		return c.SendFile(filePath)
+	})
+	app.Static("/images", filepath.Join(dataDirectory, "images"))
+
+	repo := repository.NewGormRepository(db)
+	graphEngine := graph.NewEngine(repo)
+	ingester := ingest.NewIngester(
+		ingest.NewHTTPFetcher(30*time.Second),
+		ingest.NewContentExtractor(),
+		ingest.NewDiskStorage(dataDirectory),
+		repo,
+	)
 
 	api := app.Group("/api")
 
@@ -300,6 +305,21 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		if err != nil {
 			logger.Error("Failed to fetch graph", zap.Error(err))
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to fetch graph"})
+		}
+		return c.JSON(graphData)
+	})
+
+	api.Get("/graph/local/:id", func(c *fiber.Ctx) error {
+		idParam := c.Params("id")
+		var articleID int64
+		if _, err := fmt.Sscanf(idParam, "%d", &articleID); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "Invalid article ID"})
+		}
+
+		graphData, err := graphEngine.BuildLocalGraph(c.Context(), articleID, 1)
+		if err != nil {
+			logger.Error("Failed to fetch local graph", zap.Int64("id", articleID), zap.Error(err))
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to fetch local graph"})
 		}
 		return c.JSON(graphData)
 	})
