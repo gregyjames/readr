@@ -2,6 +2,7 @@
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import axios from 'axios'
 import emitter from '../event-bus.ts'
+import BookmarkIcon from '../assets/book.svg'
 
 interface Article {
   ID: number
@@ -82,75 +83,85 @@ const filteredArticles = computed(() => {
 
 <template>
   <div>
-
-    <div v-if="selectedTag" class="flex justify-end items-center mb-4">
-      <p class="text-sm mr-2 text-gray-600">
-        Filtering by tag: <strong>{{ selectedTag }}</strong>
-      </p>
-      <button @click="selectedTag = null" class="text-green-600 hover:underline text-sm">
+    <div v-if="selectedTag" class="flex justify-between items-center mb-10 px-2">
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-gray-500">Filtered by</span>
+        <span class="bg-gray-900 text-white text-sm font-medium px-4 py-1.5 rounded-full shadow-sm">{{ selectedTag }}</span>
+      </div>
+      <button @click="selectedTag = null" class="text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors">
         Clear filter
       </button>
     </div>
+
+    <!-- Empty State -->
+    <div v-if="filteredArticles.length === 0" class="flex flex-col items-center justify-center py-32 px-4 text-center">
+      <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-6">
+        <BookmarkIcon class="w-8 h-8 text-gray-400" />
+      </div>
+      <h3 class="text-xl font-medium text-gray-900 mb-2">No articles found</h3>
+      <p class="text-gray-500 max-w-sm mx-auto">You haven't added any articles yet, or none match your current filter.</p>
+    </div>
+
     <!-- Card View -->
-    <div v-if="viewMode === 'card'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-      <div v-for="article in filteredArticles" :key="article.ID" class="relative flex-1 bg-white rounded-xl shadow-md overflow-hidden border border-gray-500 ">
+    <div v-else-if="viewMode === 'card'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+      <div v-for="article in filteredArticles" :key="article.ID" class="group relative bg-white rounded-3xl shadow-[0_4px_24px_rgba(0,0,0,0.02)] border border-gray-100 hover:shadow-[0_12px_48px_rgba(0,0,0,0.06)] hover:-translate-y-1 transition-all duration-400 ease-out overflow-hidden flex flex-col">
         <button
-          @click="deleteArticle(article.ID)"
-          class="absolute top-2 right-2 text-black opacity-20 hover:bg-red-600 hover:opacity-100 hover:text-white rounded-full w-7 h-7 flex items-center justify-center text-sm z-10"
+          @click.prevent="deleteArticle(article.ID)"
+          class="absolute top-4 right-4 bg-white/90 backdrop-blur text-gray-900 opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white rounded-full w-8 h-8 flex items-center justify-center text-lg z-10 transition-all shadow-sm"
           title="Delete"
         >
-        ×
+        &times;
         </button>
-        <div class="md:flex h-full">
-          <div class="w-full md:w-48 aspect-square flex-shrink-0">
-            <img :src="article.image" alt="Cover" class="w-full h-full object-cover" />
+        <div class="w-full aspect-[4/3] overflow-hidden bg-gray-50 relative">
+          <img v-if="article.image" :src="article.image" alt="Cover" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out" />
+        </div>
+        <div class="p-6 flex flex-col flex-grow">
+          <div class="flex flex-wrap gap-1.5 mb-4">
+            <button v-for="tag in article.parsedTags.slice(0, 3)" :key="tag" @click.prevent="selectedTag = tag" class="bg-gray-100/80 hover:bg-gray-200 text-gray-700 text-[11px] font-medium px-2.5 py-1 rounded-full uppercase tracking-wider transition-colors z-20 relative cursor-pointer">
+              {{ tag }}
+            </button>
           </div>
-          <div class="p-6 flex flex-col justify-center">
-            <router-link
-              :to="`${article.article}`"
-              class="block mt-1 text-lg leading-tight font-medium text-black hover:underline"
-            >
-              {{ article.title }}
-            </router-link>
-            <p class="mt-2 text-gray-500 text-sm">
-              {{ article.article }}
-            </p>
-            <div class="mt-3 flex flex-wrap gap-2 justify-center">
-              <span v-for="tag in article.parsedTags.slice(0, 5)" :key="tag" @click="selectedTag = tag" class="bg-green-100 text-green-800 text-xs font-semibold px-2.5 py-0.5 rounded">
-                {{ tag }}
-              </span>
-            </div>
-          </div>
+          <router-link
+            :to="`${article.article}`"
+            class="block text-xl leading-tight font-semibold text-gray-900 hover:text-emerald-600 transition-colors mb-3 tracking-tight before:absolute before:inset-0"
+          >
+            {{ article.title }}
+          </router-link>
+          <p class="text-gray-500 text-sm line-clamp-2 mt-auto">
+            {{ article.article }}
+          </p>
         </div>
       </div>
     </div>
 
     <!-- List View -->
-    <div v-else class="space-y-10 mt-10">
-      <div v-for="article in filteredArticles" :key="article.ID" class="relative flex bg-white rounded-xl shadow-sm pr-10 pt-4 px-4 pb-4 border border-gray-500 ">
+    <div v-else class="space-y-6 max-w-4xl mx-auto">
+      <div v-for="article in filteredArticles" :key="article.ID" class="group relative flex flex-col sm:flex-row bg-white rounded-3xl p-4 shadow-[0_4px_24px_rgba(0,0,0,0.02)] border border-gray-100 hover:shadow-[0_12px_48px_rgba(0,0,0,0.06)] hover:-translate-y-1 transition-all duration-400 ease-out">
         <button
-          @click="deleteArticle(article.ID)"
-          class="absolute top-2 right-2 opacity-20 text-black hover:bg-red-600 hover:opacity-100 hover:text-white rounded-full w-7 h-7 flex items-center justify-center text-sm z-10 mb-2"
+          @click.prevent="deleteArticle(article.ID)"
+          class="absolute top-4 right-4 bg-white/90 backdrop-blur text-gray-900 opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white rounded-full w-8 h-8 flex items-center justify-center text-lg z-20 transition-all shadow-sm"
           title="Delete"
         >
-        ×
+        &times;
         </button>
-        <img :src="article.image" alt="Cover" class="w-24 h-24 object-cover rounded-md mr-4" />
-        <div>
+        <div class="w-full sm:w-48 aspect-[16/9] sm:aspect-square flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 mb-4 sm:mb-0 relative z-10">
+          <img v-if="article.image" :src="article.image" alt="Cover" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out" />
+        </div>
+        <div class="flex flex-col justify-center sm:pl-8 sm:pr-12">
+          <div class="flex flex-wrap gap-1.5 mb-3">
+            <button v-for="tag in article.parsedTags.slice(0, 4)" :key="tag" @click.prevent="selectedTag = tag" class="bg-gray-100/80 hover:bg-gray-200 text-gray-700 text-[11px] font-medium px-2.5 py-1 rounded-full uppercase tracking-wider transition-colors z-20 relative cursor-pointer">
+              {{ tag }}
+            </button>
+          </div>
           <router-link
             :to="`${article.article}`"
-            class="text-lg font-medium text-black hover:underline"
+            class="text-2xl font-semibold text-gray-900 hover:text-emerald-600 transition-colors tracking-tight mb-2 before:absolute before:inset-0"
           >
-            {{ article.title.length > 40 ? article.title.slice(0, 40) + '…' : article.title }}
+            {{ article.title }}
           </router-link>
-          <p class="text-gray-500 text-sm text-left">
+          <p class="text-gray-500 text-sm line-clamp-2">
             {{ article.article }}
           </p>
-          <div class="mt-3 flex flex-wrap gap-2">
-            <span v-for="tag in article.parsedTags.slice(0, 5)" :key="tag" @click="selectedTag = tag" class="bg-green-100 text-green-800 text-xs font-semibold px-2.5 py-0.5 rounded">
-              {{ tag }}
-            </span>
-          </div>
         </div>
       </div>
     </div>

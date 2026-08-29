@@ -29,5 +29,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="prose prose-base prose-p:text-justify prose-headings:text-black mx-auto max-w-3xl prose-pre:text-left" v-html="markdownContent" />
+  <article class="w-full max-w-2xl mx-auto py-10">
+    <div class="prose prose-lg prose-p:text-gray-700 prose-p:leading-relaxed prose-p:font-serif prose-headings:font-sans prose-headings:font-bold prose-headings:tracking-tight prose-headings:text-gray-900 prose-a:text-emerald-600 prose-a:no-underline hover:prose-a:underline prose-img:rounded-3xl prose-img:shadow-sm prose-pre:text-left prose-pre:bg-[#111] prose-pre:rounded-2xl" v-html="markdownContent" />
+  </article>
 </template>
