@@ -113,6 +113,9 @@ func LinkArticles(db *gorm.DB, req LinkRequest) (*ArticleLink, error) {
 	if req.SourceID == 0 || req.TargetID == 0 {
 		return nil, &LinkError{StatusCode: fiber.StatusBadRequest, Message: "Source and target IDs are required"}
 	}
+	if req.SourceID == req.TargetID {
+		return nil, &LinkError{StatusCode: fiber.StatusBadRequest, Message: "An article cannot link to itself"}
+	}
 
 	// 1. Validate target article exists
 	var target Article
@@ -357,8 +360,11 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			targetTitle := strings.TrimSpace(match[1])
 			var target Article
 			if err := db.Where("LOWER(title) = LOWER(?)", targetTitle).First(&target).Error; err == nil {
-				link := ArticleLink{SourceID: article.ID, TargetID: target.ID}
-				db.Create(&link)
+				// Prevent self-linking
+				if article.ID != target.ID {
+					link := ArticleLink{SourceID: article.ID, TargetID: target.ID}
+					db.Create(&link)
+				}
 			}
 		}
 
