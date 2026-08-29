@@ -128,7 +128,8 @@ const loadLocalGraph = async () => {
         size: 10, 
         font: { color: isDark ? '#fff' : '#000', size: 10, face: 'Outfit' },
         borderWidth: 2,
-        color: { border: isDark ? '#1a1a1a' : '#fff', background: '#10b981' }
+        color: { border: isDark ? '#1a1a1a' : '#fff', background: '#10b981' },
+        widthConstraint: { maximum: 120 }
       },
       groups: {
         article: { color: { background: '#10b981', border: isDark ? '#059669' : '#34d399' } },
@@ -146,8 +147,15 @@ const loadLocalGraph = async () => {
     if (localNetwork) {
       localNetwork.setData({ nodes: localNodes, edges: connectedEdges })
       localNetwork.setOptions(options)
+      localNetwork.once('afterDrawing', () => { localNetwork?.fit({ animation: { duration: 500 } }); });
     } else {
       localNetwork = new Network(localGraphContainer.value, { nodes: localNodes, edges: connectedEdges }, options)
+      
+      localNetwork.once('stabilizationIterationsDone', () => {
+        localNetwork?.fit({
+          animation: { duration: 800, easingFunction: 'easeOutQuart' }
+        });
+      });
       
       localNetwork.on('click', (params) => {
         if (params.nodes.length > 0) {

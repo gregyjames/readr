@@ -18,6 +18,7 @@ const getOptions = (isDark: boolean) => ({
     shape: 'dot',
     size: 14,
     font: { color: isDark ? '#f8f8f8' : '#111', size: 13, face: 'Outfit' },
+    widthConstraint: { maximum: 160 },
     borderWidth: 2,
     color: {
       border: isDark ? '#1a1a1a' : '#ffffff',
@@ -75,6 +76,12 @@ const renderGraph = () => {
   }
 
   network = new Network(container.value, data, options)
+
+  network.once('stabilizationIterationsDone', () => {
+    network?.fit({
+      animation: { duration: 800, easingFunction: 'easeOutQuart' }
+    });
+  });
 
   network.on('click', (params) => {
     if (params.nodes.length > 0) {
