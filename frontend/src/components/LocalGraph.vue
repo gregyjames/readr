@@ -95,7 +95,8 @@ async function initLocalGraph() {
 
       return {
         id: node.id,
-        label: isArticle ? (isCurrent ? node.label : node.label) : node.label,
+        label: isArticle ? undefined : node.label,
+        title: node.label,
         shape: isArticle ? 'dot' : 'box',
         size: isCurrent ? 14 : 10,
         margin: isArticle ? 10 : 8,
@@ -145,6 +146,7 @@ async function initLocalGraph() {
       },
       interaction: {
         hover: true,
+        tooltipDelay: 100,
         zoomView: true,
         dragView: true,
       },
