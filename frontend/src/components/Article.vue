@@ -14,6 +14,35 @@ const route = useRoute()
 const getArticleId = () => String(route.params.id || '').replace('.md', '')
 const router = useRouter()
 const markdownContent = ref('')
+const rawMarkdown = ref('')
+const isEditing = ref(false)
+const editContent = ref('')
+const isSaving = ref(false)
+
+const startEditing = () => {
+  editContent.value = rawMarkdown.value
+  isEditing.value = true
+}
+
+const cancelEditing = () => {
+  isEditing.value = false
+  editContent.value = ''
+}
+
+const saveEdit = async () => {
+  isSaving.value = true
+  try {
+    await axios.post(`/api/edit/${getArticleId()}`, { content: editContent.value })
+    isEditing.value = false
+    await loadContent(true)
+  } catch (err) {
+    console.error('Failed to save', err)
+    alert('Failed to save edit')
+  } finally {
+    isSaving.value = false
+  }
+}
+
 const articleError = ref('')
 const showLinker = ref(false)
 const linkerPos = ref({ top: 0, left: 0 })
@@ -204,6 +233,7 @@ const loadContent = async (forceRefresh = false) => {
 
     const res = await axios.get(fetchUrl)
     const raw = String(res.data)
+    rawMarkdown.value = raw
     
     const parsedRaw = raw.replace(/\[\[(.*?)\]\]/g, (_, p1) => {
       const parts = p1.split('|')
@@ -294,7 +324,24 @@ onBeforeUnmount(() => {
   <div class="flex flex-col lg:flex-row w-full max-w-7xl mx-auto items-start relative px-4 lg:px-8">
     <article class="w-full lg:w-2/3 max-w-2xl mx-auto py-16 transition-colors duration-300">
       
-      <div class="prose prose-lg md:prose-xl dark:prose-invert prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-p:leading-relaxed prose-p:font-serif prose-headings:font-sans prose-headings:font-bold prose-headings:tracking-tight prose-headings:text-gray-900 dark:prose-headings:text-gray-50 prose-a:text-emerald-600 dark:prose-a:text-emerald-400 prose-a:no-underline hover:prose-a:underline prose-img:rounded-3xl prose-img:shadow-sm prose-pre:text-left prose-pre:bg-[#111] dark:prose-pre:bg-[#1a1a1a] prose-pre:rounded-[2rem] transition-colors duration-300" v-html="markdownContent" />
+      
+      <div class="flex justify-end mb-4">
+        <button v-if="!isEditing" @click="startEditing" class="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-bold hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors active:scale-95">Edit Markdown</button>
+      </div>
+      
+      <div v-if="isEditing" class="mb-8 w-full animate-in fade-in slide-in-from-top-4 duration-300">
+        <textarea v-model="editContent" rows="15" class="w-full p-6 bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-gray-800 rounded-2xl text-gray-900 dark:text-gray-100 font-mono text-sm leading-relaxed focus:ring-4 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none resize-y transition-all shadow-inner"></textarea>
+        <div class="flex justify-end gap-3 mt-4">
+          <button @click="cancelEditing" :disabled="isSaving" class="px-5 py-2.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 font-bold text-sm transition-colors disabled:opacity-50">Cancel</button>
+          <button @click="saveEdit" :disabled="isSaving" class="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-sm rounded-xl transition-colors active:scale-95 shadow-sm disabled:opacity-50 flex items-center gap-2">
+            <svg v-if="isSaving" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+            {{ isSaving ? 'Saving...' : 'Save Changes' }}
+          </button>
+        </div>
+      </div>
+
+      <div v-else class="prose prose-lg md:prose-xl dark:prose-invert prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-p:leading-relaxed prose-p:font-serif prose-headings:font-sans prose-headings:font-bold prose-headings:tracking-tight prose-headings:text-gray-900 dark:prose-headings:text-gray-50 prose-a:text-emerald-600 dark:prose-a:text-emerald-400 prose-a:no-underline hover:prose-a:underline prose-img:rounded-3xl prose-img:shadow-sm prose-pre:text-left prose-pre:bg-[#111] dark:prose-pre:bg-[#1a1a1a] prose-pre:rounded-[2rem] transition-colors duration-300" v-html="markdownContent" />
+
       
       <div v-if="backlinks.length > 0" class="mt-24 pt-12 border-t border-gray-200/50 dark:border-white/10">
         <h3 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 mb-6 flex items-center gap-3">

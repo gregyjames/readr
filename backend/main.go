@@ -378,6 +378,29 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 
 
+		api.Post("/edit/:id", func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		
+		var req struct {
+			Content string `json:"content"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request"})
+		}
+
+		var article Article
+		if err := db.First(&article, id).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Article not found"})
+		}
+
+		sourcePath := filepath.Join(dataDirectory, "articles", fmt.Sprintf("%s.md", id))
+		if err := os.WriteFile(sourcePath, []byte(req.Content), 0644); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save article"})
+		}
+		
+		return c.JSON(fiber.Map{"status": "success"})
+	})
+
 	api.Post("/add", func(c *fiber.Ctx) error {
 		var body RequestBody
 
