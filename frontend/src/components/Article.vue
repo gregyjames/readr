@@ -19,6 +19,113 @@ const isEditing = ref(false)
 const editContent = ref('')
 const isSaving = ref(false)
 
+interface PropertyItem {
+  key: string
+  label: string
+  value: any
+  type: 'title' | 'source' | 'tags' | 'date' | 'image' | 'text'
+}
+
+const properties = ref<PropertyItem[]>([])
+
+function parseFrontmatter(raw: string): PropertyItem[] {
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return []
+  const block = match[1]
+  const lines = block.split(/\r?\n/)
+  const result: PropertyItem[] = []
+
+  for (const line of lines) {
+    const colonIdx = line.indexOf(':')
+    if (colonIdx === -1) continue
+    const key = line.slice(0, colonIdx).trim()
+    if (!key) continue
+    let val = line.slice(colonIdx + 1).trim()
+    
+    // Strip surrounding quotes
+    val = val.replace(/^["']|["']$/g, '')
+
+    let type: PropertyItem['type'] = 'text'
+    let parsedValue: any = val
+
+    if (key.toLowerCase() === 'tags') {
+      type = 'tags'
+      parsedValue = val
+        .replace(/^\[|\]$/g, '')
+        .split(',')
+        .map(t => t.trim().replace(/^["']|["']$/g, ''))
+        .filter(Boolean)
+    } else if (key.toLowerCase() === 'source' || /^https?:\/\//i.test(val)) {
+      type = 'source'
+    } else if (key.toLowerCase() === 'saved' || key.toLowerCase() === 'date' || /^\d{4}-\d{2}-\d{2}/.test(val)) {
+      type = 'date'
+    } else if (key.toLowerCase() === 'cover' || key.toLowerCase() === 'image') {
+      type = 'image'
+    } else if (key.toLowerCase() === 'title') {
+      type = 'title'
+    }
+
+    result.push({
+      key,
+      label: key.charAt(0).toUpperCase() + key.slice(1),
+      value: parsedValue,
+      type
+    })
+  }
+
+  return result
+}
+
+const knownProperties = computed(() => {
+  const meta = {
+    title: '',
+    source: '',
+    tags: [] as string[],
+    date: '',
+    cover: '',
+    custom: [] as { key: string; label: string; value: any }[]
+  }
+
+  for (const p of properties.value) {
+    if (p.type === 'title') meta.title = p.value
+    else if (p.type === 'source') meta.source = p.value
+    else if (p.type === 'tags') meta.tags = Array.isArray(p.value) ? p.value : [p.value]
+    else if (p.type === 'date') meta.date = p.value
+    else if (p.type === 'image') meta.cover = p.value
+    else meta.custom.push({ key: p.key, label: p.label, value: p.value })
+  }
+
+  return meta
+})
+
+const currentArticle = computed(() => {
+  const id = Number(getArticleId())
+  return allArticles.value.find(a => a.ID === id)
+})
+
+const articleTitle = computed(() => {
+  return knownProperties.value.title || currentArticle.value?.title || ''
+})
+
+function formatDisplayDate(dateStr: string): string {
+  if (!dateStr) return ''
+  try {
+    const d = new Date(dateStr)
+    if (isNaN(d.getTime())) return dateStr
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  } catch {
+    return dateStr
+  }
+}
+
+function getHostname(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return url
+  }
+}
+
 const startEditing = () => {
   editContent.value = rawMarkdown.value
   isEditing.value = true
@@ -237,6 +344,7 @@ const loadContent = async (forceRefresh = false) => {
     const res = await axios.get(fetchUrl)
     const raw = String(res.data)
     rawMarkdown.value = raw
+    properties.value = parseFrontmatter(raw)
     
     const parsedRaw = raw.replace(/\[\[(.*?)\]\]/g, (_, p1) => {
       const parts = p1.split('|')
@@ -331,12 +439,9 @@ onBeforeUnmount(() => {
     <article class="w-full lg:w-2/3 max-w-2xl mx-auto py-16 transition-colors duration-300">
       
       
-      <div class="flex justify-end mb-4">
-        <button v-if="!isEditing" @click="startEditing" class="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-bold hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors active:scale-95">Edit Markdown</button>
-      </div>
-      
+      <!-- If Editing Markdown -->
       <div v-if="isEditing" class="mb-8 w-full animate-in fade-in slide-in-from-top-4 duration-300">
-        <textarea v-model="editContent" rows="15" class="w-full p-6 bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-gray-800 rounded-2xl text-gray-900 dark:text-gray-100 font-mono text-sm leading-relaxed focus:ring-4 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none resize-y transition-all shadow-inner"></textarea>
+        <textarea v-model="editContent" rows="18" class="w-full p-6 bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-gray-800 rounded-2xl text-gray-900 dark:text-gray-100 font-mono text-sm leading-relaxed focus:ring-4 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none resize-y transition-all shadow-inner"></textarea>
         <div class="flex justify-end gap-3 mt-4">
           <button @click="cancelEditing" :disabled="isSaving" class="px-5 py-2.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 font-bold text-sm transition-colors disabled:opacity-50">Cancel</button>
           <button @click="saveEdit" :disabled="isSaving" class="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-sm rounded-xl transition-colors active:scale-95 shadow-sm disabled:opacity-50 flex items-center gap-2">
@@ -346,7 +451,81 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div v-else class="prose prose-lg md:prose-xl dark:prose-invert prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-p:leading-relaxed prose-p:font-serif prose-headings:font-sans prose-headings:font-bold prose-headings:tracking-tight prose-headings:text-gray-900 dark:prose-headings:text-gray-50 prose-a:text-emerald-600 dark:prose-a:text-emerald-400 prose-a:no-underline hover:prose-a:underline prose-img:rounded-3xl prose-img:shadow-sm prose-pre:text-left prose-pre:bg-[#111] dark:prose-pre:bg-[#1a1a1a] prose-pre:rounded-[2rem] transition-colors duration-300" v-html="markdownContent" />
+      <div v-else>
+        <!-- Editorial Provenance Masthead -->
+        <header v-if="properties.length > 0" class="mb-10 pb-8 border-b border-gray-200/60 dark:border-white/10">
+          <!-- Top Row: Source Publisher, Date, and Edit Button -->
+          <div class="flex items-center justify-between gap-4">
+            <div class="flex flex-wrap items-center gap-3">
+              <!-- Source Badge -->
+              <a
+                v-if="knownProperties.source"
+                :href="knownProperties.source"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="group inline-flex items-center gap-2 px-3 py-1 rounded-full bg-gray-100/80 dark:bg-white/5 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-gray-700 dark:text-gray-300 hover:text-emerald-700 dark:hover:text-emerald-300 border border-gray-200/50 dark:border-white/5 text-xs font-medium tracking-tight transition-all duration-200 active:scale-95"
+              >
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 group-hover:scale-125 transition-transform"></span>
+                <span class="font-medium">{{ getHostname(knownProperties.source) }}</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+              </a>
+
+              <!-- Captured Date -->
+              <div v-if="knownProperties.date" class="text-xs text-gray-400 dark:text-gray-500 font-medium flex items-center gap-1.5">
+                <span class="hidden sm:inline">Saved</span>
+                <span>{{ formatDisplayDate(knownProperties.date) }}</span>
+              </div>
+            </div>
+
+            <!-- Edit Control -->
+            <button
+              @click="startEditing"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-white/5 transition-all active:scale-95 cursor-pointer"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+              <span>Edit</span>
+            </button>
+          </div>
+
+          <!-- Bottom Row: Topic tags & custom metadata -->
+          <div v-if="knownProperties.tags.length > 0 || knownProperties.custom.length > 0" class="flex flex-wrap items-center gap-2 mt-4">
+            <!-- Topic Chips -->
+            <span
+              v-for="tag in knownProperties.tags"
+              :key="tag"
+              class="inline-flex items-center text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md bg-gray-100/90 dark:bg-white/5 text-gray-700 dark:text-gray-300 border border-gray-200/50 dark:border-white/5"
+            >
+              {{ tag }}
+            </span>
+
+            <!-- Custom Attributes (if any) -->
+            <div
+              v-for="custom in knownProperties.custom"
+              :key="custom.key"
+              class="inline-flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-md bg-gray-50 dark:bg-white/[0.02] border border-gray-200/40 dark:border-white/5 text-gray-600 dark:text-gray-400 font-mono"
+            >
+              <span class="text-[10px] text-gray-400 uppercase tracking-wider">{{ custom.label }}:</span>
+              <span class="font-medium text-gray-800 dark:text-gray-200">{{ custom.value }}</span>
+            </div>
+          </div>
+        </header>
+
+        <!-- Standalone edit button for legacy articles without frontmatter -->
+        <div v-else class="flex justify-end mb-6">
+          <button @click="startEditing" class="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-bold hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors active:scale-95">Edit Markdown</button>
+        </div>
+
+        <!-- Article Main Title -->
+        <h1 v-if="articleTitle" class="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-gray-900 dark:text-gray-50 mb-8 font-sans leading-[1.18]">
+          {{ articleTitle }}
+        </h1>
+
+        <!-- Markdown Prose Body -->
+        <div
+          class="prose prose-lg md:prose-xl dark:prose-invert prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-p:leading-relaxed prose-p:font-serif prose-headings:font-sans prose-headings:font-bold prose-headings:tracking-tight prose-headings:text-gray-900 dark:prose-headings:text-gray-50 prose-a:text-emerald-600 dark:prose-a:text-emerald-400 prose-a:no-underline hover:prose-a:underline prose-img:rounded-3xl prose-img:shadow-sm prose-pre:text-left prose-pre:bg-[#111] dark:prose-pre:bg-[#1a1a1a] prose-pre:rounded-[2rem] transition-colors duration-300"
+          v-html="markdownContent"
+        />
+      </div>
 
       
       <div v-if="backlinks.length > 0" class="mt-24 pt-12 border-t border-gray-200/50 dark:border-white/10">
