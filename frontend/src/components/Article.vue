@@ -344,7 +344,7 @@ const loadContent = async () => {
     const articleID = getArticleId()
     if (!articleID) return
 
-    const articleURL = `/articles/${articleID}.md`
+    const articleURL = `/api/articles/${articleID}.md`
     // Always append cache buster to prevent stale browser cache after navigation
     const fetchUrl = `${articleURL}?t=${Date.now()}`
 
@@ -601,7 +601,7 @@ onBeforeUnmount(() => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="link in backlinks" :key="link.ID" :data-id="link.ID" class="backlink-row group border-b last:border-0 border-gray-100 dark:border-white/5 hover:bg-gray-50/80 dark:hover:bg-white/5 transition-all duration-300 cursor-pointer active:scale-[0.99]" @click="router.push(`/articles/${link.ID}.md`)">
+              <tr v-for="link in backlinks" :key="link.ID" :data-id="link.ID" class="backlink-row group border-b last:border-0 border-gray-100 dark:border-white/5 hover:bg-gray-50/80 dark:hover:bg-white/5 transition-all duration-300 cursor-pointer active:scale-[0.99]" @click="router.push(`/articles/${link.ID}`)">
                 <td class="px-8 py-5">
                   <span class="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">{{ link.title }}</span>
                 </td>

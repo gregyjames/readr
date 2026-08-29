@@ -109,7 +109,7 @@ const renderGraph = () => {
       
       if (node && node.group === 'article') {
         const articleId = node.id.replace('article-', '')
-        router.push(`/articles/${articleId}.md`)
+        router.push(`/articles/${articleId}`)
       }
     }
   })

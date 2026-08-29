@@ -223,7 +223,7 @@ async function initLocalGraph() {
         if (selectedId.startsWith('article-')) {
           const targetId = selectedId.replace('article-', '');
           if (targetId !== String(numericId)) {
-            router.push(`/articles/${targetId}.md`);
+            router.push(`/articles/${targetId}`);
           }
         }
       }
