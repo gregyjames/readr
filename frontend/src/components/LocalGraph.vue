@@ -1,5 +1,5 @@
 <template>
-  <aside class="hidden lg:block w-1/3 sticky top-32 h-[420px] bg-white/40 dark:bg-black/20 backdrop-blur-3xl rounded-[2rem] border border-gray-200/50 dark:border-white/5 ml-12 overflow-hidden mt-16 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.4)]">
+  <aside class="hidden lg:block w-1/3 sticky top-32 h-[420px] bg-white/40 dark:bg-black/20 backdrop-blur-3xl rounded-[2rem] border border-gray-200/50 dark:border-white/5 ml-12 overflow-hidden mt-16 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.4)] relative group">
     <div class="px-7 py-5 border-b border-gray-100 dark:border-white/5 font-bold tracking-tight text-gray-900 dark:text-gray-100 text-sm flex items-center justify-between">
       <div class="flex items-center gap-2">
         <div class="w-2 h-2 rounded-full bg-emerald-500"></div>
@@ -7,6 +7,37 @@
       </div>
       <span class="text-xs text-stone-400 font-mono font-normal">1-hop</span>
     </div>
+
+    <!-- Floating Zoom Controls -->
+    <div class="absolute bottom-4 right-4 z-10 flex flex-col gap-1 bg-white/90 dark:bg-stone-900/90 backdrop-blur-md p-1 rounded-xl border border-stone-200/60 dark:border-stone-800/80 shadow-md opacity-70 hover:opacity-100 transition-opacity">
+      <button
+        @click="zoomIn"
+        class="w-7 h-7 flex items-center justify-center rounded-lg text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors cursor-pointer text-base font-bold select-none leading-none"
+        title="Zoom In"
+      >
+        +
+      </button>
+      <button
+        @click="zoomOut"
+        class="w-7 h-7 flex items-center justify-center rounded-lg text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors cursor-pointer text-base font-bold select-none leading-none"
+        title="Zoom Out"
+      >
+        −
+      </button>
+      <button
+        @click="fitView"
+        class="w-7 h-7 flex items-center justify-center rounded-lg text-stone-500 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors cursor-pointer select-none"
+        title="Fit View"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 3 21 3 21 9"></polyline>
+          <polyline points="9 21 3 21 3 15"></polyline>
+          <line x1="21" y1="3" x2="14" y2="10"></line>
+          <line x1="3" y1="21" x2="10" y2="14"></line>
+        </svg>
+      </button>
+    </div>
+
     <div ref="networkContainer" class="w-full h-[360px]"></div>
   </aside>
 </template>
@@ -33,6 +64,31 @@ function getNumericId(): number {
     .replace(/^\/articles\//, '')
     .replace(/\.md$/, '');
   return parseInt(clean, 10);
+}
+
+function zoomIn() {
+  if (!network) return;
+  const scale = network.getScale();
+  network.moveTo({
+    scale: scale * 1.3,
+    animation: { duration: 200, easingFunction: 'easeInOutQuad' },
+  });
+}
+
+function zoomOut() {
+  if (!network) return;
+  const scale = network.getScale();
+  network.moveTo({
+    scale: scale / 1.3,
+    animation: { duration: 200, easingFunction: 'easeInOutQuad' },
+  });
+}
+
+function fitView() {
+  if (!network) return;
+  network.fit({
+    animation: { duration: 250, easingFunction: 'easeInOutQuad' },
+  });
 }
 
 function getGraphColors() {
@@ -147,7 +203,7 @@ async function initLocalGraph() {
       interaction: {
         hover: true,
         tooltipDelay: 100,
-        zoomView: true,
+        zoomView: false, // Disabled mouse wheel zoom
         dragView: true,
       },
     };
