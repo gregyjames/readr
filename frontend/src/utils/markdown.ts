@@ -73,7 +73,7 @@ export function replaceWikilinks(content: string): string {
   return content.replace(wikilinkRegex, (_, title, label) => {
     const targetTitle = title.trim();
     const displayLabel = (label || title).trim();
-    return `<a class="wikilink underline cursor-pointer decoration-emerald-500/60 hover:decoration-emerald-500 hover:text-emerald-400 transition-colors" data-target="${targetTitle}">${displayLabel}</a>`;
+    return `<a class="wikilink text-emerald-600 dark:text-emerald-400 font-medium border-b border-emerald-500/30 hover:border-emerald-500 transition-colors cursor-pointer" data-target="${targetTitle}">${displayLabel}</a>`;
   });
 }
 
