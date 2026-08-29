@@ -1,26 +1,24 @@
 package main
 
 import (
-	"bytes"
+"regexp"
+
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
-	markdown "github.com/JohannesKaufmann/html-to-markdown"
-	"codeberg.org/readeck/go-readability"
+	"example.com/backend/internal/graph"
+	"example.com/backend/internal/ingest"
+	"example.com/backend/internal/repository"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
-	"golang.org/x/net/html"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	_ "modernc.org/sqlite"
@@ -31,38 +29,16 @@ type RequestBody struct {
 	Tags []string `json:"tags"`
 }
 
-type Article struct {
-	gorm.Model
-	ID      int64
-	Article string `json:"article"`
-	Image   string `json:"image"`
-	Title   string `json:"title"`
-	Tags    string `json:"tags"`
-}
-
-type ArticleLink struct {
-	ID       int64 `gorm:"primaryKey" json:"id"`
-	SourceID int64 `json:"sourceId"`
-	TargetID int64 `json:"targetId"`
-}
+type Article = repository.GormArticle
+type ArticleLink = repository.GormArticleLink
+type GraphNode = graph.Node
+type GraphEdge = graph.Edge
 
 type LinkRequest struct {
 	SourceID     int64  `json:"sourceId"`
 	TargetID     int64  `json:"targetId"`
 	SelectedText string `json:"selectedText"`
 }
-
-type GraphNode struct {
-	Id    string `json:"id"`
-	Label string `json:"label"`
-	Group string `json:"group"` // "article" or "tag"
-}
-
-type GraphEdge struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-}
-
 
 var logger *zap.Logger
 
@@ -136,6 +112,9 @@ func LinkArticles(db *gorm.DB, req LinkRequest) (*ArticleLink, error) {
 	}
 	if req.SourceID == 0 || req.TargetID == 0 {
 		return nil, &LinkError{StatusCode: fiber.StatusBadRequest, Message: "Source and target IDs are required"}
+	}
+	if req.SourceID == req.TargetID {
+		return nil, &LinkError{StatusCode: fiber.StatusBadRequest, Message: "An article cannot link to itself"}
 	}
 
 	// 1. Validate target article exists
@@ -218,13 +197,9 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		DisableStartupMessage: true,
 	})
 
-	dataDirectory := getDataDir()
-	app.Static("/articles", filepath.Join(dataDirectory, "articles"))
-	app.Static("/images", filepath.Join(dataDirectory, "images"))
-
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "http://localhost:8080", // Vue dev server
-		AllowHeaders: "Origin, Content-Type, Accept",
+		AllowOrigins: "*",
+		AllowHeaders: "Origin, Content-Type, Accept, Cache-Control, Pragma",
 	}))
 
 	app.Use(func(c *fiber.Ctx) error {
@@ -241,6 +216,32 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 		return err
 	})
+
+	dataDirectory := getDataDir()
+	app.Get("/api/articles/:filename", func(c *fiber.Ctx) error {
+		filename := c.Params("filename")
+		clean := filepath.Clean(filename)
+		filePath := filepath.Join(dataDirectory, "articles", clean)
+		
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			return c.Status(fiber.StatusNotFound).SendString("Article not found")
+		}
+		c.Set("Content-Type", "text/markdown; charset=utf-8")
+		// Prevent aggressive browser caching of raw files
+		c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+		return c.Send(content)
+	})
+	app.Static("/images", filepath.Join(dataDirectory, "images"))
+
+	repo := repository.NewGormRepository(db)
+	graphEngine := graph.NewEngine(repo)
+	ingester := ingest.NewIngester(
+		ingest.NewHTTPFetcher(30*time.Second),
+		ingest.NewContentExtractor(),
+		ingest.NewDiskStorage(dataDirectory),
+		repo,
+	)
 
 	api := app.Group("/api")
 
@@ -275,6 +276,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			})
 		}
 
+		graphEngine.InvalidateCache()
 		logger.Info("Article deleted successfully", zap.String("id", id))
 		return c.JSON(fiber.Map{
 			"status":  "success",
@@ -293,7 +295,6 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return c.JSON(articles)
 	})
 
-
 	api.Post("/link", func(c *fiber.Ctx) error {
 		var req LinkRequest
 		if err := c.BodyParser(&req); err != nil {
@@ -308,77 +309,35 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
+		graphEngine.InvalidateCache()
 		return c.JSON(fiber.Map{"status": "success", "linkId": link.ID})
 	})
 
 	api.Get("/graph", func(c *fiber.Ctx) error {
-		var articles []Article
-		if err := db.Find(&articles).Error; err != nil {
-			logger.Error("Failed to fetch articles", zap.Error(err))
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to fetch articles"})
+		graphData, err := graphEngine.BuildGlobalGraph(c.Context())
+		if err != nil {
+			logger.Error("Failed to fetch graph", zap.Error(err))
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to fetch graph"})
 		}
-
-		var links []ArticleLink
-		if err := db.Find(&links).Error; err != nil {
-			logger.Error("Failed to fetch links", zap.Error(err))
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to fetch links"})
-		}
-
-		nodes := []GraphNode{}
-		edges := []GraphEdge{}
-		tagSet := make(map[string]bool)
-
-		for _, article := range articles {
-			nodes = append(nodes, GraphNode{
-				Id:    fmt.Sprintf("article-%d", article.ID),
-				Label: article.Title,
-				Group: "article",
-			})
-
-			// Process tags
-			if article.Tags != "" {
-				tags := strings.Split(article.Tags, ",")
-				articleTagSet := make(map[string]bool)
-				for _, tag := range tags {
-					tag = strings.ToLower(strings.TrimSpace(tag))
-					if tag == "" || articleTagSet[tag] {
-						continue
-					}
-					articleTagSet[tag] = true
-
-					if !tagSet[tag] {
-						nodes = append(nodes, GraphNode{
-							Id:    fmt.Sprintf("tag-%s", tag),
-							Label: tag,
-							Group: "tag",
-						})
-						tagSet[tag] = true
-					}
-					edges = append(edges, GraphEdge{
-						From: fmt.Sprintf("article-%d", article.ID),
-						To:   fmt.Sprintf("tag-%s", tag),
-					})
-				}
-			}
-		}
-
-		for _, link := range links {
-			edges = append(edges, GraphEdge{
-				From: fmt.Sprintf("article-%d", link.SourceID),
-				To:   fmt.Sprintf("article-%d", link.TargetID),
-			})
-		}
-
-		return c.JSON(fiber.Map{
-			"nodes": nodes,
-			"edges": edges,
-		})
+		return c.JSON(graphData)
 	})
 
+	api.Get("/graph/local/:id", func(c *fiber.Ctx) error {
+		idParam := c.Params("id")
+		var articleID int64
+		if _, err := fmt.Sscanf(idParam, "%d", &articleID); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "Invalid article ID"})
+		}
 
+		graphData, err := graphEngine.BuildLocalGraph(c.Context(), articleID, 1)
+		if err != nil {
+			logger.Error("Failed to fetch local graph", zap.Int64("id", articleID), zap.Error(err))
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to fetch local graph"})
+		}
+		return c.JSON(graphData)
+	})
 
-
-		api.Post("/edit/:id", func(c *fiber.Ctx) error {
+	api.Post("/edit/:id", func(c *fiber.Ctx) error {
 		id := c.Params("id")
 		
 		var req struct {
@@ -398,6 +357,26 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save article"})
 		}
 		
+		// Sync links to database
+		linkRegex := regexp.MustCompile(`\[\[([^\]|]+)(?:\|([^\]]+))?\]\]`)
+		matches := linkRegex.FindAllStringSubmatch(req.Content, -1)
+		
+		// Delete existing outgoing links to prevent stale links
+		db.Where("source_id = ?", article.ID).Delete(&ArticleLink{})
+		
+		for _, match := range matches {
+			targetTitle := strings.TrimSpace(match[1])
+			var target Article
+			if err := db.Where("LOWER(title) = LOWER(?)", targetTitle).First(&target).Error; err == nil {
+				// Prevent self-linking
+				if article.ID != target.ID {
+					link := ArticleLink{SourceID: article.ID, TargetID: target.ID}
+					db.Create(&link)
+				}
+			}
+		}
+
+		graphEngine.InvalidateCache()
 		return c.JSON(fiber.Map{"status": "success"})
 	})
 
@@ -411,136 +390,31 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 		logger.Info("Adding new article", zap.String("url", body.URL))
 
-		resp, err := http.Get(body.URL)
-		if err != nil || resp.StatusCode != 200 {
-			logger.Error("Failed to fetch the page", zap.String("url", body.URL), zap.Error(err))
+		article, err := ingester.Ingest(c.Context(), ingest.IngestRequest{
+			URL:  body.URL,
+			Tags: body.Tags,
+		})
+		if err != nil {
+			logger.Error("Failed to ingest article", zap.String("url", body.URL), zap.Error(err))
+			if errors.Is(err, ingest.ErrDuplicateArticle) && article != nil {
+				return c.JSON(fiber.Map{
+					"status":  "exists",
+					"message": "Article already exists",
+					"id":      article.ID,
+				})
+			}
+			if errors.Is(err, ingest.ErrEmptyURL) || errors.Is(err, ingest.ErrInvalidURL) {
+				return c.Status(400).SendString("Invalid URL")
+			}
 			return c.Status(500).SendString("Failed to fetch the page")
 		}
-		defer resp.Body.Close()
 
-		// Read HTML body into bytes (for readability)
-		htmlBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			logger.Error("Failed to read HTML body", zap.String("url", body.URL), zap.Error(err))
-			return c.Status(500).SendString("Failed to read HTML body")
-		}
-
-		parsedURL, err := url.Parse(body.URL)
-		if err != nil {
-			logger.Error("Invalid URL", zap.String("url", body.URL), zap.Error(err))
-			return c.Status(400).SendString("Invalid URL")
-		}
-
-		// Parse with readability
-		article, err := readability.FromReader(bytes.NewReader(htmlBytes), parsedURL)
-		if err != nil {
-			logger.Error("Failed to parse readable content", zap.String("url", body.URL), zap.Error(err))
-			return c.Status(500).SendString("Failed to parse readable content")
-		}
-
-		filenameID := time.Now().Unix()
-		imagesDir := filepath.Join(dataDirectory, "images", fmt.Sprintf("%d", filenameID))
-		os.MkdirAll(imagesDir, os.ModePerm)
-		doc, _ := html.Parse(bytes.NewReader(htmlBytes))
-		images := extractImageSources(doc)
-
-		converter := markdown.NewConverter("", true, &markdown.Options{})
-
-		markdownContent, err := converter.ConvertString(article.Content)
-
-		var wg sync.WaitGroup
-		var mu sync.Mutex
-		replacements := make([]string, 0, len(images)*2)
-
-		for _, imgURL := range images {
-			wg.Add(1)
-			go func(url string) {
-				defer wg.Done()
-				imgResp, err := http.Get(url)
-				if err != nil || imgResp.StatusCode != 200 {
-					logger.Warn("Failed to download image", zap.String("imgURL", url))
-					return
-				}
-				defer imgResp.Body.Close()
-
-				// Extract filename
-				parts := strings.Split(url, "/")
-				filename := parts[len(parts)-1]
-				savePath := filepath.Join(imagesDir, filename)
-
-				// Save file
-				out, err := os.Create(savePath)
-				if err != nil {
-					return
-				}
-				io.Copy(out, imgResp.Body)
-				out.Close()
-
-				mu.Lock()
-				replacements = append(replacements, url, fmt.Sprintf("/images/%d/", filenameID)+filename)
-				mu.Unlock()
-			}(imgURL)
-		}
-		wg.Wait()
-
-		replacer := strings.NewReplacer(replacements...)
-		markdownContent = replacer.Replace(markdownContent)
-
-		if err != nil {
-			logger.Error("Failed to convert HTML to markdown", zap.Error(err))
-			return c.Status(500).SendString("Failed to convert HTML to markdown")
-		}
-
-		// Extract title & image
-		title := article.Title
-		imageURL := article.Image
-		imagePath := ""
-
-		if imageURL != "" {
-			imagePath = downloadImage(imageURL, filenameID)
-		}
-
-		tagsString := strings.Join(body.Tags, ",")
-
-		// Build YAML frontmatter so metadata survives outside the DB (e.g. Obsidian sync)
-		savedDate := time.Unix(filenameID, 0).UTC().Format("2006-01-02")
-		frontmatter := fmt.Sprintf("---\ntitle: %q\nsource: %q\ntags: [%s]\ncover: %q\nsaved: %s\n---\n",
-			title,
-			body.URL,
-			tagsString,
-			imagePath,
-			savedDate,
-		)
-
-		markdownDoc := frontmatter + "\n" + markdownContent
-
-		articlesDir := filepath.Join(dataDirectory, "articles")
-		filename := filepath.Join(articlesDir, fmt.Sprintf("%d.md", filenameID))
-		os.MkdirAll(articlesDir, os.ModePerm)
-
-		err = os.WriteFile(filename, []byte(markdownDoc), 0644)
-		if err != nil {
-			logger.Error("Failed to save markdown file", zap.String("filename", filename), zap.Error(err))
-			return c.Status(500).SendString("Failed to save markdown file")
-		}
-
-		// Save article entry in DB
-		if err := db.Create(&Article{
-			Title:   title,
-			Image:   imagePath,
-			Article: fmt.Sprintf("/articles/%d.md", filenameID),
-			Tags:    tagsString,
-			ID:      filenameID,
-		}).Error; err != nil {
-			logger.Error("Failed to save article in DB", zap.Error(err))
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to save article in DB"})
-		}
-
-		logger.Info("Article added successfully", zap.Int64("id", filenameID), zap.String("url", body.URL))
+		graphEngine.InvalidateCache()
+		logger.Info("Article added successfully", zap.Int64("id", article.ID), zap.String("url", body.URL))
 		return c.JSON(fiber.Map{
 			"status":  "success",
 			"message": "Article saved",
-			"id":      filenameID,
+			"id":      article.ID,
 		})
 	})
 
@@ -557,46 +431,4 @@ func main() {
 	app := setupApp(db)
 
 	app.Listen(":3000")
-}
-
-func downloadImage(url string, dirname int64) string {
-	resp, err := http.Get(url)
-	if err != nil {
-		logger.Error("Failed to download image", zap.String("url", url), zap.Error(err))
-		return ""
-	}
-	defer resp.Body.Close()
-
-	name := filepath.Base(strings.Split(url, "?")[0])
-	directory := filepath.Join(getDataDir(), "images", fmt.Sprintf("%d", dirname))
-	os.MkdirAll(directory, os.ModePerm)
-
-	out, err := os.Create(filepath.Join(directory, name))
-	if err != nil {
-		logger.Error("Failed to create image file", zap.String("path", filepath.Join(directory, name)), zap.Error(err))
-		return ""
-	}
-	defer out.Close()
-
-	io.Copy(out, resp.Body)
-	return fmt.Sprintf("/images/%d/", dirname) + name
-}
-
-func extractImageSources(n *html.Node) []string {
-	var srcs []string
-	var crawler func(*html.Node)
-	crawler = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "img" {
-			for _, attr := range n.Attr {
-				if attr.Key == "src" {
-					srcs = append(srcs, attr.Val)
-				}
-			}
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			crawler(c)
-		}
-	}
-	crawler(n)
-	return srcs
 }

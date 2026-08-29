@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Network } from 'vis-network'
+import GraphZoomControls from './GraphZoomControls.vue'
 
 const container = ref<HTMLElement | null>(null)
 const router = useRouter()
@@ -46,9 +47,14 @@ const getOptions = (isDark: boolean) => ({
   },
   interaction: {
     hover: true,
-    tooltipDelay: 200
+    tooltipDelay: 200,
+    zoomView: false,
+    dragView: true
   }
 })
+
+import { useGraphZoom } from '../composables/useGraphZoom'
+const { zoomIn, zoomOut, fitGraph: fitView } = useGraphZoom(() => network)
 
 const getFilteredData = () => {
   const filteredNodes = showTags.value 
@@ -74,31 +80,23 @@ const getFilteredData = () => {
 
 const renderGraph = () => {
   if (!container.value) return
-
-  const data = getFilteredData()
   const isDark = document.documentElement.classList.contains('dark')
-  const options = getOptions(isDark)
 
   if (network) {
-    network.setData(data)
-    network.setOptions(options)
-    return
+    network.destroy()
+    network = null
   }
 
-  network = new Network(container.value, data, options)
-
-  network.once('stabilizationIterationsDone', () => {
-    network?.fit({
-      animation: { duration: 800, easingFunction: 'easeOutQuart' }
-    });
-  });
+  network = new Network(container.value, getFilteredData(), getOptions(isDark))
 
   network.on('click', (params) => {
     if (params.nodes.length > 0) {
       const nodeId = params.nodes[0] as string
-      if (nodeId.startsWith('article-')) {
-        const id = nodeId.replace('article-', '')
-        router.push(`/articles/${id}`)
+      const node = graphData.nodes.find((n: any) => n.id === nodeId)
+      
+      if (node && node.group === 'article') {
+        const articleId = node.id.replace('article-', '')
+        router.push(`/articles/${articleId}`)
       }
     }
   })
@@ -116,7 +114,7 @@ const loadGraph = async () => {
     renderGraph()
   } catch (err: any) {
     console.error('Failed to load graph:', err)
-    error.value = err?.message || 'Failed to load graph data'
+    error.value = 'Failed to load graph relations'
   } finally {
     isLoading.value = false
   }
@@ -124,7 +122,9 @@ const loadGraph = async () => {
 
 const toggleTags = () => {
   showTags.value = !showTags.value
-  renderGraph()
+  if (network) {
+    network.setData(getFilteredData())
+  }
 }
 
 onMounted(() => {
@@ -183,9 +183,13 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Tag Toggle Button -->
-    <div v-if="!isLoading && !error" class="absolute bottom-10 right-10 z-10">
-      <button @click="toggleTags" class="bg-white/70 dark:bg-black/50 backdrop-blur-xl px-5 py-2.5 text-gray-900 dark:text-gray-100 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.6)] border border-black/5 dark:border-white/10 text-sm font-bold hover:bg-white dark:hover:bg-[#1a1a1a] transition-all duration-300 cursor-pointer active:scale-90 flex items-center gap-2">
+    <!-- Bottom Action Controls: Zoom Buttons & Tag Toggle -->
+    <div v-if="!isLoading && !error" class="absolute bottom-10 right-10 z-10 flex items-center gap-3">
+      <!-- Zoom Controls Pill -->
+      <GraphZoomControls @zoom-in="zoomIn" @zoom-out="zoomOut" @fit="fitView" />
+
+      <!-- Tag Toggle Button -->
+      <button @click="toggleTags" class="bg-white/70 dark:bg-black/50 backdrop-blur-xl px-5 py-2.5 text-gray-900 dark:text-gray-100 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.6)] border border-black/5 dark:border-white/10 text-sm font-bold hover:bg-white dark:hover:bg-[#1a1a1a] transition-all duration-300 cursor-pointer active:scale-95 flex items-center gap-2">
         <div :class="['w-2 h-2 rounded-full transition-colors', showTags ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600']"></div>
         {{ showTags ? 'Hide Tags' : 'Show Tags' }}
       </button>

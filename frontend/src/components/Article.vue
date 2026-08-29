@@ -6,10 +6,18 @@ import { marked } from 'marked'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 import { Network } from 'vis-network'
+import ArticleHoverPreview from './ArticleHoverPreview.vue'
+import GraphZoomControls from './GraphZoomControls.vue'
+import { useGraphZoom } from '../composables/useGraphZoom'
 
 defineProps<{ id?: string }>()
 
 const route = useRoute()
+
+const previewArticle = ref<any>(null)
+const previewPos = ref({ top: 0, left: 0 })
+const showPreview = ref(false)
+let previewTimeout: any = null
 
 const getArticleId = () => String(route.params.id || '').replace('.md', '')
 const router = useRouter()
@@ -141,7 +149,7 @@ const saveEdit = async () => {
   try {
     await axios.post(`/api/edit/${getArticleId()}`, { content: editContent.value })
     isEditing.value = false
-    await loadContent(true)
+    await loadContent()
   } catch (err) {
     console.error('Failed to save', err)
     alert('Failed to save edit')
@@ -191,6 +199,7 @@ const backlinks = computed(() => {
 let observer: MutationObserver | null = null
 const localGraphContainer = ref<HTMLElement | null>(null)
 let localNetwork: Network | null = null
+const { zoomIn: localZoomIn, zoomOut: localZoomOut, fitGraph: localFitView } = useGraphZoom(() => localNetwork)
 
 const fetchArticles = async () => {
   try {
@@ -238,7 +247,7 @@ const createLink = async (targetId: number) => {
     })
     
     showLinker.value = false
-    loadContent(true)
+    loadContent()
   } catch (err: any) {
     console.error('Link creation failed', err)
     const msg = err.response?.data?.error || 'Failed to create link'
@@ -301,7 +310,7 @@ const loadLocalGraph = async () => {
       },
       edges: { color: isDark ? '#333' : '#e2e8f0', width: 1 },
       physics: { barnesHut: { gravitationalConstant: -800, springLength: 80, damping: 0.2 } },
-      interaction: { hover: true, tooltipDelay: 200 }
+      interaction: { hover: true, tooltipDelay: 200, zoomView: false }
     }
 
     if (localNetwork) {
@@ -332,14 +341,15 @@ const loadLocalGraph = async () => {
   }
 }
 
-const loadContent = async (forceRefresh = false) => {
+const loadContent = async () => {
   try {
     articleError.value = ''
     const articleID = getArticleId()
     if (!articleID) return
 
-    const articleURL = `/articles/${articleID}.md`
-    const fetchUrl = forceRefresh ? `${articleURL}?t=${Date.now()}` : articleURL
+    const articleURL = `/api/articles/${articleID}.md`
+    // Always append cache buster to prevent stale browser cache after navigation
+    const fetchUrl = `${articleURL}?t=${Date.now()}`
 
     const res = await axios.get(fetchUrl)
     const raw = String(res.data)
@@ -354,7 +364,7 @@ const loadContent = async (forceRefresh = false) => {
       const targetArticle = allArticles.value.find(a => a.title === targetTitle)
       const url = targetArticle ? `/articles/${targetArticle.ID}` : '#'
       
-      return `<a href="${url}" class="wikilink font-semibold text-emerald-600 dark:text-emerald-400 no-underline hover:underline hover:text-emerald-700 dark:hover:text-emerald-300 transition-colors bg-emerald-50/50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded-md border border-emerald-100 dark:border-emerald-800/50">${display}</a>`
+      return `<a href="${url}" data-article-id="${targetArticle?.ID || ''}" class="wikilink font-semibold text-emerald-600 dark:text-emerald-400 no-underline hover:underline hover:text-emerald-700 dark:hover:text-emerald-300 transition-colors bg-emerald-50/50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded-md border border-emerald-100 dark:border-emerald-800/50">${display}</a>`
     })
 
     // Strip YAML frontmatter (--- ... ---) so it never renders in the article view                                                                                 
@@ -377,10 +387,56 @@ const loadContent = async (forceRefresh = false) => {
 
 watch(() => route.params.id, (newId) => {
   if (newId) {
+    showPreview.value = false
     loadContent()
     loadLocalGraph()
   }
 })
+
+const handleMouseOver = (e: MouseEvent) => {
+  const target = (e.target as HTMLElement).closest('a.wikilink, .backlink-row')
+  if (target) {
+    let articleId = ''
+    if (target.classList.contains('wikilink')) {
+      articleId = target.getAttribute('data-article-id') || ''
+    } else {
+      articleId = target.getAttribute('data-id') || ''
+    }
+
+    if (articleId) {
+      const article = allArticles.value.find(a => String(a.ID) === articleId)
+      if (article) {
+        clearTimeout(previewTimeout)
+        previewArticle.value = article
+        
+        const rect = target.getBoundingClientRect()
+        previewPos.value = {
+          top: rect.top + window.scrollY,
+          left: rect.left + window.scrollX + (rect.width / 2)
+        }
+        showPreview.value = true
+      }
+    }
+  }
+}
+
+const handleMouseOut = (e: MouseEvent) => {
+  if ((e.target as HTMLElement).closest('a.wikilink, .backlink-row')) {
+    previewTimeout = setTimeout(() => {
+      showPreview.value = false
+    }, 200)
+  }
+}
+
+const cancelPreviewHide = () => {
+  clearTimeout(previewTimeout)
+}
+
+const hidePreview = () => {
+  previewTimeout = setTimeout(() => {
+    showPreview.value = false
+  }, 200)
+}
 
 const handleWikilinkClick = (e: MouseEvent) => {
   const target = (e.target as HTMLElement).closest('a');
@@ -388,6 +444,7 @@ const handleWikilinkClick = (e: MouseEvent) => {
     const href = target.getAttribute('href');
     if (href && href.startsWith('/articles/')) {
       e.preventDefault();
+      showPreview.value = false
       router.push(href);
     }
   }
@@ -402,6 +459,8 @@ onMounted(async () => {
   
   // Intercept wikilink clicks
   document.addEventListener('click', handleWikilinkClick)
+  document.addEventListener('mouseover', handleMouseOver)
+  document.addEventListener('mouseout', handleMouseOut)
 
   
   observer = new MutationObserver(() => {
@@ -420,6 +479,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('mouseup', handleSelection)
   document.removeEventListener('mousedown', hideLinker)
   document.removeEventListener('click', handleWikilinkClick)
+  document.removeEventListener('mouseover', handleMouseOver)
+  document.removeEventListener('mouseout', handleMouseOut)
   if (localNetwork) {
     localNetwork.destroy()
     localNetwork = null
@@ -543,7 +604,7 @@ onBeforeUnmount(() => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="link in backlinks" :key="link.ID" class="group border-b last:border-0 border-gray-100 dark:border-white/5 hover:bg-gray-50/80 dark:hover:bg-white/5 transition-all duration-300 cursor-pointer active:scale-[0.99]" @click="router.push(`/articles/${link.ID}`)">
+              <tr v-for="link in backlinks" :key="link.ID" :data-id="link.ID" class="backlink-row group border-b last:border-0 border-gray-100 dark:border-white/5 hover:bg-gray-50/80 dark:hover:bg-white/5 transition-all duration-300 cursor-pointer active:scale-[0.99]" @click="router.push(`/articles/${link.ID}`)">
                 <td class="px-8 py-5">
                   <span class="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">{{ link.title }}</span>
                 </td>
@@ -567,6 +628,9 @@ onBeforeUnmount(() => {
       <div class="px-7 py-5 border-b border-gray-100 dark:border-white/5 font-bold tracking-tight text-gray-900 dark:text-gray-100 text-sm flex items-center gap-2">
         <div class="w-2 h-2 rounded-full bg-emerald-500"></div>
         Local Network
+      </div>
+      <div class="absolute bottom-4 right-4 z-10 opacity-70 hover:opacity-100 transition-opacity">
+        <GraphZoomControls @zoom-in="localZoomIn" @zoom-out="localZoomOut" @fit="localFitView" />
       </div>
       <div ref="localGraphContainer" class="w-full h-[360px]"></div>
     </aside>
@@ -598,4 +662,11 @@ onBeforeUnmount(() => {
     </div>
   </div>
 
+  <ArticleHoverPreview 
+    :show="showPreview" 
+    :article="previewArticle" 
+    :pos="previewPos" 
+    @mouseenter="cancelPreviewHide"
+    @mouseleave="hidePreview"
+  />
 </template>
