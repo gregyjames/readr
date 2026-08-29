@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -191,3 +193,99 @@ func BenchmarkDownloadImagesParallel(b *testing.B) {
 		_ = markdownContent
 	}
 }
+
+func TestCreateLink(t *testing.T) {
+	app := setupApp()
+	reqBody := `{"sourceId": 1, "targetId": 2, "selectedText": "neural networks"}`
+	req := httptest.NewRequest("POST", "/api/link", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Failed to execute request: %v", err)
+	}
+
+	if resp.StatusCode != 200 {
+		t.Errorf("Expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestCreateLink_MarkdownUpdated(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("DATA_DIR", tempDir)
+
+	app := setupApp()
+
+	// Initial source article markdown
+	articlesDir := filepath.Join(tempDir, "articles")
+	sourceFile := filepath.Join(articlesDir, "1.md")
+	initialContent := "Deep learning and neural networks are transforming AI."
+	if err := os.WriteFile(sourceFile, []byte(initialContent), 0644); err != nil {
+		t.Fatalf("Failed to write initial article file: %v", err)
+	}
+
+	reqBody := `{"sourceId": 1, "targetId": 2, "selectedText": "neural networks"}`
+	req := httptest.NewRequest("POST", "/api/link", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Failed to execute request: %v", err)
+	}
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("Expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if result["status"] != "success" {
+		t.Errorf("Expected status 'success', got %v", result["status"])
+	}
+	if result["linkId"] == nil {
+		t.Errorf("Expected linkId in response, got nil")
+	}
+
+	// Verify markdown file content was updated with Wikilink format
+	updatedContent, err := os.ReadFile(sourceFile)
+	if err != nil {
+		t.Fatalf("Failed to read updated article file: %v", err)
+	}
+
+	expectedWikilink := "[[Target Article|neural networks]]"
+	if !strings.Contains(string(updatedContent), expectedWikilink) {
+		t.Errorf("Expected updated content to contain %q, got %q", expectedWikilink, string(updatedContent))
+	}
+}
+
+func TestCreateLink_InvalidRequest(t *testing.T) {
+	app := setupApp()
+	req := httptest.NewRequest("POST", "/api/link", strings.NewReader("invalid-json"))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Failed to execute request: %v", err)
+	}
+
+	if resp.StatusCode != 400 {
+		t.Errorf("Expected 400 for invalid JSON, got %d", resp.StatusCode)
+	}
+}
+
+func TestCreateLink_TargetNotFound(t *testing.T) {
+	app := setupApp()
+	reqBody := `{"sourceId": 1, "targetId": 9999, "selectedText": "neural networks"}`
+	req := httptest.NewRequest("POST", "/api/link", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Failed to execute request: %v", err)
+	}
+
+	if resp.StatusCode != 404 {
+		t.Errorf("Expected 404 for missing target article, got %d", resp.StatusCode)
+	}
+}
+
+
