@@ -4,11 +4,13 @@ import HomeIcon from './assets/home.svg'
 import AddIcon from './assets/add.svg'
 import CardIcon from './assets/card.svg'
 import ListIcon from './assets/list.svg'
+import GraphIcon from './assets/graph.svg'
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import emitter from './event-bus.ts'
 
 const router = useRouter()
+const route = useRoute()
 
 const showModal = ref(false)
 const url = ref('')
@@ -105,7 +107,7 @@ function toggleTheme() {
           </router-link>
 
           <router-link to="/graph" class="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800/60 transition-colors">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
+            <GraphIcon class="w-5 h-5" />
           </router-link>
           
           <button @click="toggleViewMode" class="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800/60 transition-colors">
@@ -175,8 +177,8 @@ function toggleTheme() {
       </div>
     </div>
   </transition>
-  <main class="w-full max-w-6xl mx-auto px-6 pt-32 pb-16 flex-grow">
-    <router-view  />
+  <main :class="route.name === 'graph' ? 'w-full flex-grow' : 'w-full max-w-6xl mx-auto px-6 pt-32 pb-16 flex-grow'">
+    <router-view />
   </main>
 </template>
 

@@ -10,7 +10,7 @@ onMounted(() => {
 })
 </script>
 <template>
-  <div class="w-full h-screen bg-gray-50 dark:bg-[#0a0a0a] pt-20" ref="container">
+  <div class="w-full h-screen bg-gray-50 dark:bg-[#0a0a0a] pt-20 overflow-hidden" ref="container">
     <div class="p-8 text-black dark:text-white">Graph View Loading...</div>
   </div>
 </template>
