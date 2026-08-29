@@ -37,6 +37,21 @@ interface ArticleData {
   tags: string
 }
 
+
+const graphDataCache = ref<any>(null)
+
+const backlinks = computed(() => {
+  const currentId = Number(getArticleId())
+  const currentArticleNodeId = `article-${currentId}`
+  
+  if (!graphDataCache.value) return []
+
+  const incomingEdges = graphDataCache.value.edges.filter((e: any) => e.to === currentArticleNodeId)
+  const incomingNodeIds = incomingEdges.map((e: any) => e.from)
+
+  return allArticles.value.filter((a: any) => incomingNodeIds.includes(`article-${a.ID}`))
+})
+
 let observer: MutationObserver | null = null
 const localGraphContainer = ref<HTMLElement | null>(null)
 let localNetwork: Network | null = null
@@ -103,6 +118,7 @@ const loadLocalGraph = async () => {
   try {
     const res = await axios.get('/api/graph')
     const graphData = res.data
+    graphDataCache.value = graphData
     
     if (!localGraphContainer.value) return
     
@@ -277,7 +293,41 @@ onBeforeUnmount(() => {
   </div>
   <div class="flex flex-col lg:flex-row w-full max-w-7xl mx-auto items-start relative px-4 lg:px-8">
     <article class="w-full lg:w-2/3 max-w-2xl mx-auto py-16 transition-colors duration-300">
+      
       <div class="prose prose-lg md:prose-xl dark:prose-invert prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-p:leading-relaxed prose-p:font-serif prose-headings:font-sans prose-headings:font-bold prose-headings:tracking-tight prose-headings:text-gray-900 dark:prose-headings:text-gray-50 prose-a:text-emerald-600 dark:prose-a:text-emerald-400 prose-a:no-underline hover:prose-a:underline prose-img:rounded-3xl prose-img:shadow-sm prose-pre:text-left prose-pre:bg-[#111] dark:prose-pre:bg-[#1a1a1a] prose-pre:rounded-[2rem] transition-colors duration-300" v-html="markdownContent" />
+      
+      <div v-if="backlinks.length > 0" class="mt-24 pt-12 border-t border-gray-200/50 dark:border-white/10">
+        <h3 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 mb-6 flex items-center gap-3">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400 dark:text-gray-500"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+          Linked Mentions
+        </h3>
+        
+        <div class="overflow-hidden rounded-[2rem] border border-gray-200/50 dark:border-white/5 bg-white/50 dark:bg-[#121212]/50 backdrop-blur-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.4)]">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-black/20 text-sm font-semibold text-gray-500 dark:text-gray-400 tracking-wide uppercase">
+                <th class="px-8 py-5 font-bold">Article</th>
+                <th class="px-8 py-5 font-bold text-right hidden sm:table-cell">Tags</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="link in backlinks" :key="link.ID" class="group border-b last:border-0 border-gray-100 dark:border-white/5 hover:bg-gray-50/80 dark:hover:bg-white/5 transition-all duration-300 cursor-pointer active:scale-[0.99]" @click="router.push(`/articles/${link.ID}`)">
+                <td class="px-8 py-5">
+                  <span class="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">{{ link.title }}</span>
+                </td>
+                <td class="px-8 py-5 text-right hidden sm:table-cell">
+                  <div class="flex justify-end gap-2">
+                     <span v-for="tag in (link.tags ? link.tags.split(',') : []).slice(0,3)" :key="tag" class="px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest bg-gray-100/80 dark:bg-black/60 text-gray-600 dark:text-gray-400 rounded-lg group-hover:bg-emerald-50 dark:group-hover:bg-emerald-900/30 group-hover:text-emerald-700 dark:group-hover:text-emerald-300 transition-colors">
+                       {{ tag.trim() }}
+                     </span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
     </article>
     
     <!-- Local Graph Sidebar -->
