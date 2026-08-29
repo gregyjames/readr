@@ -59,7 +59,14 @@ const getFilteredData = () => {
     ? graphData.edges
     : graphData.edges.filter((e: any) => !e.to.startsWith('tag-'))
 
-  return { nodes: filteredNodes, edges: filteredEdges }
+  const processedNodes = filteredNodes.map((n: any) => {
+    if (n.group === 'article') {
+      return { ...n, title: n.label, label: undefined }
+    }
+    return n
+  })
+
+  return { nodes: processedNodes, edges: filteredEdges }
 }
 
 const renderGraph = () => {

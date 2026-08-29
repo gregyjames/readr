@@ -118,7 +118,12 @@ const loadLocalGraph = async () => {
       connectedNodeIds.add(e.to)
     })
     
-    const localNodes = graphData.nodes.filter((n: any) => connectedNodeIds.has(n.id))
+    const localNodes = graphData.nodes.filter((n: any) => connectedNodeIds.has(n.id)).map((n: any) => {
+      if (n.group === 'article') {
+        return { ...n, title: n.label, label: undefined }
+      }
+      return n
+    })
     
     const isDark = document.documentElement.classList.contains('dark')
     
