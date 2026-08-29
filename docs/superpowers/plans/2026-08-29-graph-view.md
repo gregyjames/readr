@@ -15,7 +15,7 @@
 **Files:**
 - Modify: `backend/main.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 *(We will use a minimal HTTP test block in `main_test.go` or write it locally)*
 ```go
@@ -33,12 +33,12 @@ func TestCreateLink(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && go test -run TestCreateLink`
 Expected: FAIL with 404 or method not found.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```go
 // In backend/main.go
@@ -94,12 +94,12 @@ api.Post("/link", func(c *fiber.Ctx) error {
 })
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && go test -run TestCreateLink`
 Expected: PASS (if mock db handles it, or test passes basic route check)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/main.go backend/main_test.go
@@ -111,7 +111,7 @@ git commit -m "feat(backend): add ArticleLink model and POST /api/link endpoint"
 **Files:**
 - Modify: `backend/main.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 // Add to backend/main_test.go
@@ -126,12 +126,12 @@ func TestGetGraph(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && go test -run TestGetGraph`
 Expected: FAIL
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```go
 // In backend/main.go
@@ -207,12 +207,12 @@ api.Get("/graph", func(c *fiber.Ctx) error {
 })
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && go test -run TestGetGraph`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/main.go backend/main_test.go
@@ -226,11 +226,11 @@ git commit -m "feat(backend): add GET /api/graph endpoint returning nodes and ed
 - Modify: `frontend/src/router.ts`
 - Create: `frontend/src/components/Graph.vue`
 
-- [ ] **Step 1: Install vis-network**
+- [x] **Step 1: Install vis-network**
 
 Run: `cd frontend && bun add vis-network`
 
-- [ ] **Step 2: Create empty Graph.vue**
+- [x] **Step 2: Create empty Graph.vue**
 
 ```vue
 <!-- frontend/src/components/Graph.vue -->
@@ -250,7 +250,7 @@ onMounted(() => {
 </template>
 ```
 
-- [ ] **Step 3: Update router and Nav**
+- [x] **Step 3: Update router and Nav**
 
 ```typescript
 // In frontend/src/router.ts
@@ -266,10 +266,10 @@ import Graph from './components/Graph.vue'
 </router-link>
 ```
 
-- [ ] **Step 4: Verify navigation**
+- [x] **Step 4: Verify navigation**
 Run: `cd frontend && bun run build`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/package.json frontend/bun.lock frontend/src/router.ts frontend/src/App.vue frontend/src/components/Graph.vue
@@ -281,7 +281,7 @@ git commit -m "feat(frontend): setup Graph.vue route and vis-network dependency"
 **Files:**
 - Modify: `frontend/src/components/Graph.vue`
 
-- [ ] **Step 1: Implement Graph fetching and rendering**
+- [x] **Step 1: Implement Graph fetching and rendering**
 
 ```vue
 <!-- frontend/src/components/Graph.vue -->
@@ -369,10 +369,10 @@ const toggleTags = () => {
 </template>
 ```
 
-- [ ] **Step 2: Check Build**
+- [x] **Step 2: Check Build**
 Run: `cd frontend && bun run build`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add frontend/src/components/Graph.vue
