@@ -209,12 +209,27 @@ watch(() => route.params.id, (newId) => {
   }
 })
 
+const handleWikilinkClick = (e: MouseEvent) => {
+  const target = (e.target as HTMLElement).closest('a');
+  if (target) {
+    const href = target.getAttribute('href');
+    if (href && href.startsWith('/articles/')) {
+      e.preventDefault();
+      router.push(href);
+    }
+  }
+}
+
 onMounted(async () => {
   await fetchArticles()
   await loadContent()
   await loadLocalGraph()
   document.addEventListener('mouseup', handleSelection)
   document.addEventListener('mousedown', hideLinker)
+  
+  // Intercept wikilink clicks
+  document.addEventListener('click', handleWikilinkClick)
+
   
   observer = new MutationObserver(() => {
     if (localNetwork) {
@@ -231,6 +246,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   document.removeEventListener('mouseup', handleSelection)
   document.removeEventListener('mousedown', hideLinker)
+  document.removeEventListener('click', handleWikilinkClick)
   if (localNetwork) {
     localNetwork.destroy()
     localNetwork = null
