@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,7 +12,37 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
+
+func initTestDB() *gorm.DB {
+	sqlDB, err := sql.Open("sqlite", "file::memory:?cache=shared")
+	if err != nil {
+		panic(err)
+	}
+	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{})
+	if err != nil {
+		panic(err)
+	}
+	db.AutoMigrate(&Article{}, &ArticleLink{})
+	db.Exec("DELETE FROM article_links")
+	db.Exec("DELETE FROM articles")
+
+	db.Create(&Article{
+		ID:      1,
+		Title:   "Source Article",
+		Article: "/articles/1.md",
+	})
+	db.Create(&Article{
+		ID:      2,
+		Title:   "Target Article",
+		Article: "/articles/2.md",
+	})
+
+	return db
+}
 
 func BenchmarkDownloadImagesSequential(b *testing.B) {
 	// Setup a mock server
@@ -259,6 +290,55 @@ func TestCreateLink_MarkdownUpdated(t *testing.T) {
 	}
 }
 
+func TestCreateLink_EmptySelectedText(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("DATA_DIR", tempDir)
+
+	db := initTestDB()
+	app := setupApp(db)
+
+	articlesDir := filepath.Join(tempDir, "articles")
+	if err := os.MkdirAll(articlesDir, 0755); err != nil {
+		t.Fatalf("Failed to create articles dir: %v", err)
+	}
+	sourceFile := filepath.Join(articlesDir, "1.md")
+	initialContent := "Deep learning and neural networks are transforming AI."
+	if err := os.WriteFile(sourceFile, []byte(initialContent), 0644); err != nil {
+		t.Fatalf("Failed to write initial source file: %v", err)
+	}
+
+	testCases := []string{
+		`{"sourceId": 1, "targetId": 2, "selectedText": ""}`,
+		`{"sourceId": 1, "targetId": 2, "selectedText": "   "}`,
+	}
+
+	for _, reqBody := range testCases {
+		req := httptest.NewRequest("POST", "/api/link", strings.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("Failed to execute request: %v", err)
+		}
+
+		if resp.StatusCode != 400 {
+			t.Errorf("Expected 400 for empty selected text, got %d", resp.StatusCode)
+		}
+
+		// Verify file was NOT modified
+		content, _ := os.ReadFile(sourceFile)
+		if string(content) != initialContent {
+			t.Errorf("Source file should not have been modified")
+		}
+
+		// Verify NO link was created in DB
+		var linkCount int64
+		db.Model(&ArticleLink{}).Count(&linkCount)
+		if linkCount != 0 {
+			t.Errorf("Expected 0 links in DB, got %d", linkCount)
+		}
+	}
+}
+
 func TestCreateLink_InvalidRequest(t *testing.T) {
 	app := setupApp()
 	req := httptest.NewRequest("POST", "/api/link", strings.NewReader("invalid-json"))
@@ -274,7 +354,9 @@ func TestCreateLink_InvalidRequest(t *testing.T) {
 }
 
 func TestCreateLink_TargetNotFound(t *testing.T) {
-	app := setupApp()
+	db := initTestDB()
+	app := setupApp(db)
+
 	reqBody := `{"sourceId": 1, "targetId": 9999, "selectedText": "neural networks"}`
 	req := httptest.NewRequest("POST", "/api/link", strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -286,6 +368,94 @@ func TestCreateLink_TargetNotFound(t *testing.T) {
 	if resp.StatusCode != 404 {
 		t.Errorf("Expected 404 for missing target article, got %d", resp.StatusCode)
 	}
+
+	// Verify no dangling link record in DB
+	var linkCount int64
+	db.Model(&ArticleLink{}).Count(&linkCount)
+	if linkCount != 0 {
+		t.Errorf("Expected 0 links in DB when target not found, got %d", linkCount)
+	}
 }
+
+func TestCreateLink_SourceNotFound(t *testing.T) {
+	db := initTestDB()
+	app := setupApp(db)
+
+	reqBody := `{"sourceId": 9999, "targetId": 2, "selectedText": "neural networks"}`
+	req := httptest.NewRequest("POST", "/api/link", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Failed to execute request: %v", err)
+	}
+
+	if resp.StatusCode != 404 {
+		t.Errorf("Expected 404 for missing source article, got %d", resp.StatusCode)
+	}
+
+	// Verify no dangling link record in DB
+	var linkCount int64
+	db.Model(&ArticleLink{}).Count(&linkCount)
+	if linkCount != 0 {
+		t.Errorf("Expected 0 links in DB when source not found, got %d", linkCount)
+	}
+}
+
+func TestCreateLink_FileReadFailure_NoDanglingLink(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("DATA_DIR", tempDir)
+
+	db := initTestDB()
+	app := setupApp(db)
+
+	// Note: 1.md does not exist in tempDir/articles
+	reqBody := `{"sourceId": 1, "targetId": 2, "selectedText": "neural networks"}`
+	req := httptest.NewRequest("POST", "/api/link", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Failed to execute request: %v", err)
+	}
+
+	if resp.StatusCode != 500 {
+		t.Errorf("Expected 500 when file cannot be read, got %d", resp.StatusCode)
+	}
+
+	// Verify no dangling link record in DB
+	var linkCount int64
+	db.Model(&ArticleLink{}).Count(&linkCount)
+	if linkCount != 0 {
+		t.Errorf("Expected 0 links in DB after file error, got %d", linkCount)
+	}
+}
+
+func TestLinkArticles_Service(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("DATA_DIR", tempDir)
+
+	db := initTestDB()
+	articlesDir := filepath.Join(tempDir, "articles")
+	os.MkdirAll(articlesDir, 0755)
+	sourceFile := filepath.Join(articlesDir, "1.md")
+	os.WriteFile(sourceFile, []byte("Topic: neural networks and graphs."), 0644)
+
+	link, err := LinkArticles(db, LinkRequest{
+		SourceID:     1,
+		TargetID:     2,
+		SelectedText: "neural networks",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error from LinkArticles: %v", err)
+	}
+	if link.ID == 0 {
+		t.Errorf("Expected non-zero link ID")
+	}
+
+	content, _ := os.ReadFile(sourceFile)
+	if !strings.Contains(string(content), "[[Target Article|neural networks]]") {
+		t.Errorf("Expected wikilink in file, got %s", string(content))
+	}
+}
+
 
 

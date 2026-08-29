@@ -109,6 +109,58 @@ func initDB() *gorm.DB {
 	return db
 }
 
+type LinkError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *LinkError) Error() string {
+	return e.Message
+}
+
+func LinkArticles(db *gorm.DB, req LinkRequest) (*ArticleLink, error) {
+	if strings.TrimSpace(req.SelectedText) == "" {
+		return nil, &LinkError{StatusCode: fiber.StatusBadRequest, Message: "Selected text cannot be empty"}
+	}
+	if req.SourceID == 0 || req.TargetID == 0 {
+		return nil, &LinkError{StatusCode: fiber.StatusBadRequest, Message: "Source and target IDs are required"}
+	}
+
+	// 1. Validate target article exists
+	var target Article
+	if err := db.First(&target, req.TargetID).Error; err != nil {
+		return nil, &LinkError{StatusCode: fiber.StatusNotFound, Message: "Target article not found"}
+	}
+
+	// 2. Validate source article exists
+	var source Article
+	if err := db.First(&source, req.SourceID).Error; err != nil {
+		return nil, &LinkError{StatusCode: fiber.StatusNotFound, Message: "Source article not found"}
+	}
+
+	// 3. Read and update markdown file
+	sourcePath := filepath.Join(getDataDir(), "articles", fmt.Sprintf("%d.md", req.SourceID))
+	content, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return nil, &LinkError{StatusCode: fiber.StatusInternalServerError, Message: "Could not read source article"}
+	}
+
+	wikilink := fmt.Sprintf("[[%s|%s]]", target.Title, req.SelectedText)
+	newContent := strings.Replace(string(content), req.SelectedText, wikilink, 1)
+
+	if err := os.WriteFile(sourcePath, []byte(newContent), 0644); err != nil {
+		return nil, &LinkError{StatusCode: fiber.StatusInternalServerError, Message: "Could not update markdown"}
+	}
+
+	// 4. Save DB link only after file update succeeds
+	link := ArticleLink{SourceID: req.SourceID, TargetID: req.TargetID}
+	if err := db.Create(&link).Error; err != nil {
+		return nil, &LinkError{StatusCode: fiber.StatusInternalServerError, Message: "Could not create link"}
+	}
+
+	return &link, nil
+}
+
 func setupApp(customDB ...*gorm.DB) *fiber.App {
 	if logger == nil {
 		logger = zap.NewNop()
@@ -229,41 +281,24 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return c.JSON(articles)
 	})
 
+
 	api.Post("/link", func(c *fiber.Ctx) error {
 		var req LinkRequest
 		if err := c.BodyParser(&req); err != nil {
-			return c.Status(400).JSON(fiber.Map{"error": "Invalid request"})
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request"})
 		}
 
-		// 1. Create DB link
-		link := ArticleLink{SourceID: req.SourceID, TargetID: req.TargetID}
-		if err := db.Create(&link).Error; err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "Could not create link"})
-		}
-
-		// 2. Fetch target article to get its title
-		var target Article
-		if err := db.First(&target, req.TargetID).Error; err != nil {
-			return c.Status(404).JSON(fiber.Map{"error": "Target article not found"})
-		}
-
-		// 3. Update markdown file
-		sourcePath := filepath.Join(getDataDir(), "articles", fmt.Sprintf("%d.md", req.SourceID))
-		content, err := os.ReadFile(sourcePath)
+		link, err := LinkArticles(db, req)
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "Could not read source article"})
-		}
-
-		// Simple string replacement for the first instance
-		wikilink := fmt.Sprintf("[[%s|%s]]", target.Title, req.SelectedText)
-		newContent := strings.Replace(string(content), req.SelectedText, wikilink, 1)
-
-		if err := os.WriteFile(sourcePath, []byte(newContent), 0644); err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "Could not update markdown"})
+			if linkErr, ok := err.(*LinkError); ok {
+				return c.Status(linkErr.StatusCode).JSON(fiber.Map{"error": linkErr.Message})
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
 		return c.JSON(fiber.Map{"status": "success", "linkId": link.ID})
 	})
+
 
 	api.Post("/add", func(c *fiber.Ctx) error {
 		var body RequestBody
