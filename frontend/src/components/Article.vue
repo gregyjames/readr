@@ -1,30 +1,20 @@
 <script setup lang="ts">
-import { ref, onMounted, nextTick, onBeforeUnmount, watch, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import axios from 'axios'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
-import axios from 'axios'
 import { Network } from 'vis-network'
 
-interface ArticleData {
-  ID: number;
-  title: string;
-  image: string;
-  article: string;
-  tags: string;
-}
+defineProps<{ id?: string }>()
 
-const markdownContent = ref('')
 const route = useRoute()
+
+const getArticleId = () => String(route.params.id || '').replace('.md', '')
 const router = useRouter()
+const markdownContent = ref('')
 const articleError = ref('')
-
-const localGraphContainer = ref<HTMLElement | null>(null)
-let localNetwork: Network | null = null
-let observer: MutationObserver | null = null
-
-// Linker state
 const showLinker = ref(false)
 const linkerPos = ref({ top: 0, left: 0 })
 const selectedText = ref('')
@@ -33,11 +23,23 @@ const allArticles = ref<ArticleData[]>([])
 
 const filteredArticles = computed(() => {
   const query = searchInput.value.toLowerCase()
-  const currentId = Number(route.params.id)
+  const currentId = Number(getArticleId())
   return allArticles.value.filter(a => 
     a.title.toLowerCase().includes(query) && a.ID !== currentId
   )
 })
+
+interface ArticleData {
+  ID: number
+  title: string
+  image: string
+  article: string
+  tags: string
+}
+
+let observer: MutationObserver | null = null
+const localGraphContainer = ref<HTMLElement | null>(null)
+let localNetwork: Network | null = null
 
 const fetchArticles = async () => {
   try {
@@ -63,7 +65,7 @@ const handleSelection = () => {
   
   selectedText.value = text
   linkerPos.value = {
-    top: rect.top + window.scrollY - 40,
+    top: rect.top + window.scrollY - 50,
     left: rect.left + window.scrollX + (rect.width / 2)
   }
   showLinker.value = true
@@ -79,18 +81,19 @@ const hideLinker = (e: Event) => {
 const createLink = async (targetId: number) => {
   try {
     await axios.post('/api/link', {
-      sourceId: Number(route.params.id),
+      sourceId: Number(getArticleId()),
       targetId: targetId,
       selectedText: selectedText.value
     })
     
     showLinker.value = false
     loadContent(true)
-  } catch (err) {
+  } catch (err: any) {
     console.error('Link creation failed', err)
-    articleError.value = 'Failed to create link'
+    const msg = err.response?.data?.error || 'Failed to create link'
+    articleError.value = msg
     showLinker.value = false
-    alert('Failed to create link')
+    alert(msg)
   }
 }
 
@@ -103,8 +106,7 @@ const loadLocalGraph = async () => {
     
     if (!localGraphContainer.value) return
     
-    // Filter for local neighborhood (1st degree)
-    const currentArticleNodeId = `article-${route.params.id}`
+    const currentArticleNodeId = `article-${getArticleId()}`
     
     const connectedEdges = graphData.edges.filter(
       (e: any) => e.from === currentArticleNodeId || e.to === currentArticleNodeId
@@ -121,13 +123,24 @@ const loadLocalGraph = async () => {
     const isDark = document.documentElement.classList.contains('dark')
     
     const options = {
-      nodes: { shape: 'dot', size: 10, font: { color: isDark ? '#fff' : '#000', size: 10 } },
+      nodes: { 
+        shape: 'dot', 
+        size: 10, 
+        font: { color: isDark ? '#fff' : '#000', size: 10, face: 'Outfit' },
+        borderWidth: 2,
+        color: { border: isDark ? '#1a1a1a' : '#fff', background: '#10b981' }
+      },
       groups: {
-        article: { color: '#10b981' },
-        tag: { color: '#6366f1', shape: 'square' }
+        article: { color: { background: '#10b981', border: isDark ? '#059669' : '#34d399' } },
+        tag: { 
+          shape: 'box', 
+          color: { background: isDark ? '#1f2937' : '#f3f4f6', border: isDark ? '#374151' : '#e5e7eb' },
+          font: { color: isDark ? '#d1d5db' : '#4b5563', size: 9 }
+        }
       },
       edges: { color: isDark ? '#333' : '#e2e8f0', width: 1 },
-      physics: { barnesHut: { gravitationalConstant: -1000, springLength: 100 } }
+      physics: { barnesHut: { gravitationalConstant: -800, springLength: 80, damping: 0.2 } },
+      interaction: { hover: true, tooltipDelay: 200 }
     }
 
     if (localNetwork) {
@@ -136,14 +149,12 @@ const loadLocalGraph = async () => {
     } else {
       localNetwork = new Network(localGraphContainer.value, { nodes: localNodes, edges: connectedEdges }, options)
       
-      // Make nodes clickable to navigate!
       localNetwork.on('click', (params) => {
         if (params.nodes.length > 0) {
           const nodeId = params.nodes[0] as string
           if (nodeId.startsWith('article-')) {
             const id = nodeId.replace('article-', '')
-            // NOTE: Article.vue already has navigation handling, make sure this integrates smoothly.
-            router.push(`/articles/${id}`)
+            router.push(`/${id}`)
           }
         }
       })
@@ -156,25 +167,24 @@ const loadLocalGraph = async () => {
 const loadContent = async (forceRefresh = false) => {
   try {
     articleError.value = ''
-    const articleID = route.params.id
-    if (!articleID) return // additional safety check
+    const articleID = getArticleId()
+    if (!articleID) return
 
-    const articleURL = `/articles/${articleID}`
+    const articleURL = `/articles/${articleID}.md`
     const fetchUrl = forceRefresh ? `${articleURL}?t=${Date.now()}` : articleURL
 
     const res = await axios.get(fetchUrl)
     const raw = String(res.data)
     
-    // Custom Wikilink pre-processor
     const parsedRaw = raw.replace(/\[\[(.*?)\]\]/g, (_, p1) => {
       const parts = p1.split('|')
       const targetTitle = parts[0]
       const display = parts.length > 1 ? parts[1] : parts[0]
       
       const targetArticle = allArticles.value.find(a => a.title === targetTitle)
-      const url = targetArticle ? `/articles/${targetArticle.ID}` : '#'
+      const url = targetArticle ? `/${targetArticle.ID}` : '#'
       
-      return `<a href="${url}" class="wikilink font-medium text-emerald-600 dark:text-emerald-400 no-underline hover:underline px-1 bg-emerald-50 dark:bg-emerald-900/30 rounded">${display}</a>`
+      return `<a href="${url}" class="wikilink font-semibold text-emerald-600 dark:text-emerald-400 no-underline hover:underline hover:text-emerald-700 dark:hover:text-emerald-300 transition-colors bg-emerald-50/50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded-md border border-emerald-100 dark:border-emerald-800/50">${display}</a>`
     })
 
     markdownContent.value = await marked.parse(parsedRaw, {
@@ -233,44 +243,48 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="articleError" class="bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-100 p-4 text-center w-full">
+  <div v-if="articleError" class="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-4 text-center w-full font-medium border-b border-red-100 dark:border-red-900/30">
     {{ articleError }}
   </div>
-  <div class="flex flex-col lg:flex-row w-full max-w-7xl mx-auto items-start">
-    <article class="w-full lg:w-2/3 max-w-2xl mx-auto py-10 transition-colors duration-300">
-      <div class="prose prose-lg dark:prose-invert prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-p:leading-relaxed prose-p:font-serif prose-headings:font-sans prose-headings:font-bold prose-headings:tracking-tight prose-headings:text-gray-900 dark:prose-headings:text-gray-100 prose-a:text-emerald-600 dark:prose-a:text-emerald-400 prose-a:no-underline hover:prose-a:underline prose-img:rounded-3xl prose-img:shadow-sm prose-pre:text-left prose-pre:bg-[#111] dark:prose-pre:bg-[#1a1a1a] prose-pre:rounded-2xl transition-colors duration-300" v-html="markdownContent" />
+  <div class="flex flex-col lg:flex-row w-full max-w-7xl mx-auto items-start relative px-4 lg:px-8">
+    <article class="w-full lg:w-2/3 max-w-2xl mx-auto py-16 transition-colors duration-300">
+      <div class="prose prose-lg md:prose-xl dark:prose-invert prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-p:leading-relaxed prose-p:font-serif prose-headings:font-sans prose-headings:font-bold prose-headings:tracking-tight prose-headings:text-gray-900 dark:prose-headings:text-gray-50 prose-a:text-emerald-600 dark:prose-a:text-emerald-400 prose-a:no-underline hover:prose-a:underline prose-img:rounded-3xl prose-img:shadow-sm prose-pre:text-left prose-pre:bg-[#111] dark:prose-pre:bg-[#1a1a1a] prose-pre:rounded-[2rem] transition-colors duration-300" v-html="markdownContent" />
     </article>
     
     <!-- Local Graph Sidebar -->
-    <aside class="hidden lg:block w-1/3 sticky top-24 h-[400px] bg-gray-50 dark:bg-[#1a1a1a] rounded-3xl border border-gray-100 dark:border-gray-800 ml-8 overflow-hidden mt-10">
-      <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-800 font-semibold text-gray-900 dark:text-gray-100 text-sm">Local Graph</div>
-      <div ref="localGraphContainer" class="w-full h-[340px]"></div>
+    <aside class="hidden lg:block w-1/3 sticky top-32 h-[420px] bg-white/40 dark:bg-black/20 backdrop-blur-3xl rounded-[2rem] border border-gray-200/50 dark:border-white/5 ml-12 overflow-hidden mt-16 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.4)]">
+      <div class="px-7 py-5 border-b border-gray-100 dark:border-white/5 font-bold tracking-tight text-gray-900 dark:text-gray-100 text-sm flex items-center gap-2">
+        <div class="w-2 h-2 rounded-full bg-emerald-500"></div>
+        Local Network
+      </div>
+      <div ref="localGraphContainer" class="w-full h-[360px]"></div>
     </aside>
 
     <div 
       v-if="showLinker" 
-      class="linker-popup absolute z-50 transform -translate-x-1/2 bg-white dark:bg-[#111] border border-gray-200 dark:border-gray-800 shadow-xl rounded-xl p-2 w-64"
+      @mousedown.prevent
+      class="linker-popup absolute z-50 transform -translate-x-1/2 bg-white/90 dark:bg-[#1a1a1a]/90 backdrop-blur-xl border border-gray-200/50 dark:border-white/10 shadow-[0_20px_60px_rgb(0,0,0,0.1)] dark:shadow-[0_20px_60px_rgb(0,0,0,0.8)] rounded-2xl p-2 w-72 transition-all duration-200 ease-out animate-in fade-in zoom-in-95"
       :style="{ top: linkerPos.top + 'px', left: linkerPos.left + 'px' }"
     >
       <input 
         v-model="searchInput" 
         placeholder="Link to article..." 
-        class="w-full bg-gray-50 dark:bg-[#1a1a1a] text-sm px-3 py-2 rounded-lg border-transparent focus:ring-2 focus:ring-emerald-500 outline-none text-black dark:text-white mb-2"
+        class="w-full bg-gray-100/50 dark:bg-black/50 text-sm px-4 py-2.5 rounded-xl border-transparent focus:ring-2 focus:ring-emerald-500 outline-none text-gray-900 dark:text-gray-100 mb-2 font-medium placeholder-gray-500 dark:placeholder-gray-500"
       />
-      <div class="max-h-40 overflow-y-auto space-y-1">
+      <div class="max-h-48 overflow-y-auto space-y-1 px-1 pb-1">
         <button 
           v-for="article in filteredArticles"
           :key="article.ID"
           @click="createLink(article.ID)"
-          class="w-full text-left px-2 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg text-gray-700 dark:text-gray-300 truncate"
+          class="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-white/5 rounded-xl text-gray-700 dark:text-gray-300 font-medium truncate transition-colors active:scale-[0.98]"
         >
           {{ article.title }}
         </button>
-        <div v-if="filteredArticles.length === 0" class="text-xs text-gray-500 text-center py-2">
+        <div v-if="filteredArticles.length === 0" class="text-xs text-gray-500 font-medium text-center py-4">
           No matching articles
         </div>
       </div>
     </div>
   </div>
-</template>
 
+</template>
