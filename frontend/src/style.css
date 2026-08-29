@@ -47,3 +47,12 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.05) !important;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5) !important;
 }
+
+/* ─── Hide scrollbar in list view ───────────────────── */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE / Edge */
+}

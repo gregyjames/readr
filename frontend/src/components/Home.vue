@@ -76,12 +76,14 @@ onMounted(async () => {
     router.replace({ query: { view: 'card' } })
   }
 
+  syncScrollbar(viewMode.value)
   emitter.on('article-added', fetchArticles)
 })
 
 onBeforeUnmount(() => {
   emitter.off('article-added', fetchArticles)
   observer?.disconnect()
+  document.documentElement.classList.remove('no-scrollbar')
 })
 
 const deleteArticle = async (id: number) => {
@@ -94,10 +96,15 @@ const deleteArticle = async (id: number) => {
   }
 }
 
+function syncScrollbar(mode: string) {
+  document.documentElement.classList.toggle('no-scrollbar', mode === 'list')
+}
+
 watch(() => route.query.view, (newView) => {
   if (newView === 'card' || newView === 'list') {
     viewMode.value = newView
     localStorage.setItem('viewMode', newView)
+    syncScrollbar(newView)
     nextTick(initReveal)
   }
 })
