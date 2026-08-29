@@ -1,6 +1,8 @@
 package main
 
 import (
+"regexp"
+
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -344,6 +346,22 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save article"})
 		}
 		
+		// Sync links to database
+		linkRegex := regexp.MustCompile(`\[\[([^\]|]+)(?:\|([^\]]+))?\]\]`)
+		matches := linkRegex.FindAllStringSubmatch(req.Content, -1)
+		
+		// Delete existing outgoing links to prevent stale links
+		db.Where("source_id = ?", article.ID).Delete(&ArticleLink{})
+		
+		for _, match := range matches {
+			targetTitle := strings.TrimSpace(match[1])
+			var target Article
+			if err := db.Where("LOWER(title) = LOWER(?)", targetTitle).First(&target).Error; err == nil {
+				link := ArticleLink{SourceID: article.ID, TargetID: target.ID}
+				db.Create(&link)
+			}
+		}
+
 		graphEngine.InvalidateCache()
 		return c.JSON(fiber.Map{"status": "success"})
 	})
