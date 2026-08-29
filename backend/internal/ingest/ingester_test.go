@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"example.com/backend/internal/repository"
 )
 
 // MockPageFetcher
@@ -82,10 +84,43 @@ func (m *mockArticleRepository) FindBySourceURL(ctx context.Context, sourceURL s
 	return nil, errors.New("not found")
 }
 
-func (m *mockArticleRepository) Save(ctx context.Context, article *IngestedArticle) error {
+func (m *mockArticleRepository) FindByID(ctx context.Context, id int64) (*IngestedArticle, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, a := range m.articles {
+		if a.ID == id {
+			return a, nil
+		}
+	}
+	return nil, errors.New("not found")
+}
+
+func (m *mockArticleRepository) SaveArticle(ctx context.Context, article *IngestedArticle) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.articles[article.SourceURL] = article
+	return nil
+}
+
+func (m *mockArticleRepository) GetAllArticles(ctx context.Context) ([]IngestedArticle, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	res := make([]IngestedArticle, 0, len(m.articles))
+	for _, a := range m.articles {
+		res = append(res, *a)
+	}
+	return res, nil
+}
+
+func (m *mockArticleRepository) GetAllLinks(ctx context.Context) ([]repository.LinkRecord, error) {
+	return nil, nil
+}
+
+func (m *mockArticleRepository) CreateLink(ctx context.Context, sourceID, targetID int64) (*repository.LinkRecord, error) {
+	return &repository.LinkRecord{SourceID: sourceID, TargetID: targetID}, nil
+}
+
+func (m *mockArticleRepository) DeleteArticle(ctx context.Context, id int64) error {
 	return nil
 }
 

@@ -3,6 +3,8 @@ package ingest
 import (
 	"context"
 	"errors"
+
+	"example.com/backend/internal/repository"
 )
 
 var (
@@ -17,14 +19,8 @@ type IngestRequest struct {
 	Tags []string
 }
 
-type IngestedArticle struct {
-	ID        int64
-	Title     string
-	ImagePath string
-	FilePath  string
-	Tags      string
-	SourceURL string
-}
+type IngestedArticle = repository.ArticleRecord
+type ArticleRepository = repository.Repository
 
 type ArticleIngester interface {
 	Ingest(ctx context.Context, req IngestRequest) (*IngestedArticle, error)
@@ -33,11 +29,6 @@ type ArticleIngester interface {
 type PageFetcher interface {
 	FetchHTML(ctx context.Context, rawURL string) ([]byte, error)
 	FetchImage(ctx context.Context, imgURL string) ([]byte, error)
-}
-
-type ArticleRepository interface {
-	FindBySourceURL(ctx context.Context, sourceURL string) (*IngestedArticle, error)
-	Save(ctx context.Context, article *IngestedArticle) error
 }
 
 type FileStorage interface {

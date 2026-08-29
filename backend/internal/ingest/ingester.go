@@ -118,7 +118,7 @@ func (ing *Ingester) Ingest(ctx context.Context, req IngestRequest) (*IngestedAr
 	}
 
 	if ing.repo != nil {
-		if err := ing.repo.Save(ctx, article); err != nil {
+		if err := ing.repo.SaveArticle(ctx, article); err != nil {
 			return nil, fmt.Errorf("save article to repository failed: %w", err)
 		}
 	}

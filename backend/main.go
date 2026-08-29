@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"example.com/backend/internal/graph"
 	"example.com/backend/internal/ingest"
+	"example.com/backend/internal/repository"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"go.uber.org/zap"
@@ -26,72 +27,16 @@ type RequestBody struct {
 	Tags []string `json:"tags"`
 }
 
-type Article struct {
-	gorm.Model
-	ID      int64
-	Article string `json:"article"`
-	Image   string `json:"image"`
-	Title   string `json:"title"`
-	Tags    string `json:"tags"`
-}
-
-type GormArticleRepository struct {
-	db *gorm.DB
-}
-
-func NewGormArticleRepository(db *gorm.DB) *GormArticleRepository {
-	return &GormArticleRepository{db: db}
-}
-
-func (r *GormArticleRepository) FindBySourceURL(ctx context.Context, sourceURL string) (*ingest.IngestedArticle, error) {
-	var article Article
-	if err := r.db.WithContext(ctx).Where("title = ?", sourceURL).First(&article).Error; err == nil {
-		return &ingest.IngestedArticle{
-			ID:        article.ID,
-			Title:     article.Title,
-			ImagePath: article.Image,
-			FilePath:  article.Article,
-			Tags:      article.Tags,
-			SourceURL: sourceURL,
-		}, nil
-	}
-	return nil, gorm.ErrRecordNotFound
-}
-
-func (r *GormArticleRepository) Save(ctx context.Context, a *ingest.IngestedArticle) error {
-	article := Article{
-		ID:      a.ID,
-		Title:   a.Title,
-		Image:   a.ImagePath,
-		Article: a.FilePath,
-		Tags:    a.Tags,
-	}
-	return r.db.WithContext(ctx).Create(&article).Error
-}
-
-type ArticleLink struct {
-	ID       int64 `gorm:"primaryKey" json:"id"`
-	SourceID int64 `json:"sourceId"`
-	TargetID int64 `json:"targetId"`
-}
+type Article = repository.GormArticle
+type ArticleLink = repository.GormArticleLink
+type GraphNode = graph.Node
+type GraphEdge = graph.Edge
 
 type LinkRequest struct {
 	SourceID     int64  `json:"sourceId"`
 	TargetID     int64  `json:"targetId"`
 	SelectedText string `json:"selectedText"`
 }
-
-type GraphNode struct {
-	Id    string `json:"id"`
-	Label string `json:"label"`
-	Group string `json:"group"` // "article" or "tag"
-}
-
-type GraphEdge struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-}
-
 
 var logger *zap.Logger
 
@@ -251,6 +196,15 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	app.Static("/articles", filepath.Join(dataDirectory, "articles"))
 	app.Static("/images", filepath.Join(dataDirectory, "images"))
 
+	repo := repository.NewGormRepository(db)
+	graphEngine := graph.NewEngine(repo)
+	ingester := ingest.NewIngester(
+		ingest.NewHTTPFetcher(30*time.Second),
+		ingest.NewContentExtractor(),
+		ingest.NewDiskStorage(dataDirectory),
+		repo,
+	)
+
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "http://localhost:8080", // Vue dev server
 		AllowHeaders: "Origin, Content-Type, Accept",
@@ -304,6 +258,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			})
 		}
 
+		graphEngine.InvalidateCache()
 		logger.Info("Article deleted successfully", zap.String("id", id))
 		return c.JSON(fiber.Map{
 			"status":  "success",
@@ -322,7 +277,6 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return c.JSON(articles)
 	})
 
-
 	api.Post("/link", func(c *fiber.Ctx) error {
 		var req LinkRequest
 		if err := c.BodyParser(&req); err != nil {
@@ -337,77 +291,20 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
+		graphEngine.InvalidateCache()
 		return c.JSON(fiber.Map{"status": "success", "linkId": link.ID})
 	})
 
 	api.Get("/graph", func(c *fiber.Ctx) error {
-		var articles []Article
-		if err := db.Find(&articles).Error; err != nil {
-			logger.Error("Failed to fetch articles", zap.Error(err))
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to fetch articles"})
+		graphData, err := graphEngine.BuildGlobalGraph(c.Context())
+		if err != nil {
+			logger.Error("Failed to fetch graph", zap.Error(err))
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to fetch graph"})
 		}
-
-		var links []ArticleLink
-		if err := db.Find(&links).Error; err != nil {
-			logger.Error("Failed to fetch links", zap.Error(err))
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to fetch links"})
-		}
-
-		nodes := []GraphNode{}
-		edges := []GraphEdge{}
-		tagSet := make(map[string]bool)
-
-		for _, article := range articles {
-			nodes = append(nodes, GraphNode{
-				Id:    fmt.Sprintf("article-%d", article.ID),
-				Label: article.Title,
-				Group: "article",
-			})
-
-			// Process tags
-			if article.Tags != "" {
-				tags := strings.Split(article.Tags, ",")
-				articleTagSet := make(map[string]bool)
-				for _, tag := range tags {
-					tag = strings.ToLower(strings.TrimSpace(tag))
-					if tag == "" || articleTagSet[tag] {
-						continue
-					}
-					articleTagSet[tag] = true
-
-					if !tagSet[tag] {
-						nodes = append(nodes, GraphNode{
-							Id:    fmt.Sprintf("tag-%s", tag),
-							Label: tag,
-							Group: "tag",
-						})
-						tagSet[tag] = true
-					}
-					edges = append(edges, GraphEdge{
-						From: fmt.Sprintf("article-%d", article.ID),
-						To:   fmt.Sprintf("tag-%s", tag),
-					})
-				}
-			}
-		}
-
-		for _, link := range links {
-			edges = append(edges, GraphEdge{
-				From: fmt.Sprintf("article-%d", link.SourceID),
-				To:   fmt.Sprintf("article-%d", link.TargetID),
-			})
-		}
-
-		return c.JSON(fiber.Map{
-			"nodes": nodes,
-			"edges": edges,
-		})
+		return c.JSON(graphData)
 	})
 
-
-
-
-		api.Post("/edit/:id", func(c *fiber.Ctx) error {
+	api.Post("/edit/:id", func(c *fiber.Ctx) error {
 		id := c.Params("id")
 		
 		var req struct {
@@ -427,15 +324,9 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save article"})
 		}
 		
+		graphEngine.InvalidateCache()
 		return c.JSON(fiber.Map{"status": "success"})
 	})
-
-	ingester := ingest.NewIngester(
-		ingest.NewHTTPFetcher(30*time.Second),
-		ingest.NewContentExtractor(),
-		ingest.NewDiskStorage(dataDirectory),
-		NewGormArticleRepository(db),
-	)
 
 	api.Post("/add", func(c *fiber.Ctx) error {
 		var body RequestBody
@@ -466,6 +357,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(500).SendString("Failed to fetch the page")
 		}
 
+		graphEngine.InvalidateCache()
 		logger.Info("Article added successfully", zap.Int64("id", article.ID), zap.String("url", body.URL))
 		return c.JSON(fiber.Map{
 			"status":  "success",
