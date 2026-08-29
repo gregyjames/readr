@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Network } from 'vis-network'
+import GraphZoomControls from './GraphZoomControls.vue'
 
 const container = ref<HTMLElement | null>(null)
 const router = useRouter()
@@ -52,22 +53,8 @@ const getOptions = (isDark: boolean) => ({
   }
 })
 
-const zoomIn = () => {
-  if (!network) return
-  const scale = network.getScale()
-  network.moveTo({ scale: scale * 1.3, animation: { duration: 200, easingFunction: 'easeInOutQuad' } })
-}
-
-const zoomOut = () => {
-  if (!network) return
-  const scale = network.getScale()
-  network.moveTo({ scale: scale / 1.3, animation: { duration: 200, easingFunction: 'easeInOutQuad' } })
-}
-
-const fitView = () => {
-  if (!network) return
-  network.fit({ animation: { duration: 250, easingFunction: 'easeInOutQuad' } })
-}
+import { useGraphZoom } from '../composables/useGraphZoom'
+const { zoomIn, zoomOut, fitGraph: fitView } = useGraphZoom(() => network)
 
 const getFilteredData = () => {
   const filteredNodes = showTags.value 
@@ -199,34 +186,7 @@ onUnmounted(() => {
     <!-- Bottom Action Controls: Zoom Buttons & Tag Toggle -->
     <div v-if="!isLoading && !error" class="absolute bottom-10 right-10 z-10 flex items-center gap-3">
       <!-- Zoom Controls Pill -->
-      <div class="bg-white/70 dark:bg-black/50 backdrop-blur-xl p-1 text-gray-900 dark:text-gray-100 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.6)] border border-black/5 dark:border-white/10 flex items-center gap-0.5">
-        <button
-          @click="zoomIn"
-          class="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-white dark:hover:bg-white/10 text-gray-800 dark:text-gray-200 transition-colors cursor-pointer text-base font-bold select-none leading-none active:scale-90"
-          title="Zoom In"
-        >
-          +
-        </button>
-        <button
-          @click="zoomOut"
-          class="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-white dark:hover:bg-white/10 text-gray-800 dark:text-gray-200 transition-colors cursor-pointer text-base font-bold select-none leading-none active:scale-90"
-          title="Zoom Out"
-        >
-          −
-        </button>
-        <button
-          @click="fitView"
-          class="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-white dark:hover:bg-white/10 text-gray-800 dark:text-gray-200 transition-colors cursor-pointer select-none active:scale-90"
-          title="Fit View"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="15 3 21 3 21 9"></polyline>
-            <polyline points="9 21 3 21 3 15"></polyline>
-            <line x1="21" y1="3" x2="14" y2="10"></line>
-            <line x1="3" y1="21" x2="10" y2="14"></line>
-          </svg>
-        </button>
-      </div>
+      <GraphZoomControls @zoom-in="zoomIn" @zoom-out="zoomOut" @fit="fitView" />
 
       <!-- Tag Toggle Button -->
       <button @click="toggleTags" class="bg-white/70 dark:bg-black/50 backdrop-blur-xl px-5 py-2.5 text-gray-900 dark:text-gray-100 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.6)] border border-black/5 dark:border-white/10 text-sm font-bold hover:bg-white dark:hover:bg-[#1a1a1a] transition-all duration-300 cursor-pointer active:scale-95 flex items-center gap-2">

@@ -7,6 +7,8 @@ import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 import { Network } from 'vis-network'
 import ArticleHoverPreview from './ArticleHoverPreview.vue'
+import GraphZoomControls from './GraphZoomControls.vue'
+import { useGraphZoom } from '../composables/useGraphZoom'
 
 defineProps<{ id?: string }>()
 
@@ -197,6 +199,7 @@ const backlinks = computed(() => {
 let observer: MutationObserver | null = null
 const localGraphContainer = ref<HTMLElement | null>(null)
 let localNetwork: Network | null = null
+const { zoomIn: localZoomIn, zoomOut: localZoomOut, fitGraph: localFitView } = useGraphZoom(() => localNetwork)
 
 const fetchArticles = async () => {
   try {
@@ -307,7 +310,7 @@ const loadLocalGraph = async () => {
       },
       edges: { color: isDark ? '#333' : '#e2e8f0', width: 1 },
       physics: { barnesHut: { gravitationalConstant: -800, springLength: 80, damping: 0.2 } },
-      interaction: { hover: true, tooltipDelay: 200 }
+      interaction: { hover: true, tooltipDelay: 200, zoomView: false }
     }
 
     if (localNetwork) {
@@ -625,6 +628,9 @@ onBeforeUnmount(() => {
       <div class="px-7 py-5 border-b border-gray-100 dark:border-white/5 font-bold tracking-tight text-gray-900 dark:text-gray-100 text-sm flex items-center gap-2">
         <div class="w-2 h-2 rounded-full bg-emerald-500"></div>
         Local Network
+      </div>
+      <div class="absolute bottom-4 right-4 z-10 opacity-70 hover:opacity-100 transition-opacity">
+        <GraphZoomControls @zoom-in="localZoomIn" @zoom-out="localZoomOut" @fit="localFitView" />
       </div>
       <div ref="localGraphContainer" class="w-full h-[360px]"></div>
     </aside>

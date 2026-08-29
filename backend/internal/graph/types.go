@@ -2,10 +2,17 @@ package graph
 
 import "context"
 
+type NodeGroup string
+
+const (
+	GroupArticle NodeGroup = "article"
+	GroupTag     NodeGroup = "tag"
+)
+
 type Node struct {
-	Id    string `json:"id"`
-	Label string `json:"label"`
-	Group string `json:"group"` // "article" | "tag"
+	Id    string    `json:"id"`
+	Label string    `json:"label"`
+	Group NodeGroup `json:"group"`
 }
 
 type Edge struct {

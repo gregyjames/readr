@@ -9,33 +9,8 @@
     </div>
 
     <!-- Floating Zoom Controls -->
-    <div class="absolute bottom-4 right-4 z-10 flex flex-col gap-1 bg-white/90 dark:bg-stone-900/90 backdrop-blur-md p-1 rounded-xl border border-stone-200/60 dark:border-stone-800/80 shadow-md opacity-70 hover:opacity-100 transition-opacity">
-      <button
-        @click="zoomIn"
-        class="w-7 h-7 flex items-center justify-center rounded-lg text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors cursor-pointer text-base font-bold select-none leading-none"
-        title="Zoom In"
-      >
-        +
-      </button>
-      <button
-        @click="zoomOut"
-        class="w-7 h-7 flex items-center justify-center rounded-lg text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors cursor-pointer text-base font-bold select-none leading-none"
-        title="Zoom Out"
-      >
-        −
-      </button>
-      <button
-        @click="fitView"
-        class="w-7 h-7 flex items-center justify-center rounded-lg text-stone-500 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors cursor-pointer select-none"
-        title="Fit View"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="15 3 21 3 21 9"></polyline>
-          <polyline points="9 21 3 21 3 15"></polyline>
-          <line x1="21" y1="3" x2="14" y2="10"></line>
-          <line x1="3" y1="21" x2="10" y2="14"></line>
-        </svg>
-      </button>
+    <div class="absolute bottom-4 right-4 z-10 opacity-70 hover:opacity-100 transition-opacity">
+      <GraphZoomControls @zoom-in="zoomIn" @zoom-out="zoomOut" @fit="fitView" />
     </div>
 
     <div ref="networkContainer" class="w-full h-[360px]"></div>
@@ -47,6 +22,7 @@ import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import axios from 'axios';
 import { Network } from 'vis-network';
+import GraphZoomControls from './GraphZoomControls.vue';
 
 const props = defineProps<{
   articleId: string | number;
@@ -66,30 +42,10 @@ function getNumericId(): number {
   return parseInt(clean, 10);
 }
 
-function zoomIn() {
-  if (!network) return;
-  const scale = network.getScale();
-  network.moveTo({
-    scale: scale * 1.3,
-    animation: { duration: 200, easingFunction: 'easeInOutQuad' },
-  });
-}
+import { useGraphZoom } from '../composables/useGraphZoom'
+const { zoomIn, zoomOut, fitGraph: fitView } = useGraphZoom(() => network)
 
-function zoomOut() {
-  if (!network) return;
-  const scale = network.getScale();
-  network.moveTo({
-    scale: scale / 1.3,
-    animation: { duration: 200, easingFunction: 'easeInOutQuad' },
-  });
-}
 
-function fitView() {
-  if (!network) return;
-  network.fit({
-    animation: { duration: 250, easingFunction: 'easeInOutQuad' },
-  });
-}
 
 function getGraphColors() {
   const isDark = document.documentElement.classList.contains('dark');

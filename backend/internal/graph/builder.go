@@ -17,7 +17,7 @@ func BuildTopology(articles []repository.ArticleRecord, links []repository.LinkR
 		nodes = append(nodes, Node{
 			Id:    fmt.Sprintf("article-%d", article.ID),
 			Label: article.Title,
-			Group: "article",
+			Group: GroupArticle,
 		})
 
 		if article.Tags != "" {
@@ -35,7 +35,7 @@ func BuildTopology(articles []repository.ArticleRecord, links []repository.LinkR
 					nodes = append(nodes, Node{
 						Id:    fmt.Sprintf("tag-%s", tag),
 						Label: tag,
-						Group: "tag",
+						Group: GroupTag,
 					})
 					tagSet[tag] = true
 				}

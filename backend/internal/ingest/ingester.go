@@ -24,6 +24,9 @@ func NewIngester(
 	storage FileStorage,
 	repo ArticleRepository,
 ) *Ingester {
+	if repo == nil {
+		panic("repo is required")
+	}
 	if extractor == nil {
 		extractor = NewContentExtractor()
 	}
@@ -51,12 +54,9 @@ func (ing *Ingester) Ingest(ctx context.Context, req IngestRequest) (*IngestedAr
 		return nil, fmt.Errorf("%w: %s", ErrInvalidURL, trimmedURL)
 	}
 
-	// 1. Check for duplicate article by Source URL if repository is provided
-	if ing.repo != nil {
-		existing, err := ing.repo.FindBySourceURL(ctx, trimmedURL)
-		if err == nil && existing != nil {
-			return existing, ErrDuplicateArticle
-		}
+	existing, err := ing.repo.FindBySourceURL(ctx, trimmedURL)
+	if err == nil && existing != nil {
+		return existing, ErrDuplicateArticle
 	}
 
 	// 2. Fetch remote HTML content
@@ -117,10 +117,8 @@ func (ing *Ingester) Ingest(ctx context.Context, req IngestRequest) (*IngestedAr
 		SourceURL: trimmedURL,
 	}
 
-	if ing.repo != nil {
-		if err := ing.repo.SaveArticle(ctx, article); err != nil {
-			return nil, fmt.Errorf("save article to repository failed: %w", err)
-		}
+	if err := ing.repo.SaveArticle(ctx, article); err != nil {
+		return nil, fmt.Errorf("save article to repository failed: %w", err)
 	}
 
 	return article, nil
