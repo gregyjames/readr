@@ -67,7 +67,7 @@ const loadContent = async () => {
   const articleID = route.params.id
   const articleURL = `/articles/${articleID}`
 
-  const res = await fetch(articleURL)
+  const res = await fetch(`${articleURL}?t=${Date.now()}`)
   const raw = await res.text()
   
   // Custom Wikilink pre-processor
@@ -77,7 +77,7 @@ const loadContent = async () => {
     const display = parts.length > 1 ? parts[1] : parts[0]
     
     const targetArticle = allArticles.value.find(a => a.title === targetTitle)
-    const url = targetArticle ? `/${targetArticle.ID}` : '#'
+    const url = targetArticle ? `/articles/${targetArticle.ID}` : '#'
     
     return `<a href="${url}" class="wikilink font-medium text-emerald-600 dark:text-emerald-400 no-underline hover:underline px-1 bg-emerald-50 dark:bg-emerald-900/30 rounded">${display}</a>`
   })
