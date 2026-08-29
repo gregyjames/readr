@@ -314,11 +314,13 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	api.Get("/graph", func(c *fiber.Ctx) error {
 		var articles []Article
 		if err := db.Find(&articles).Error; err != nil {
+			logger.Error("Failed to fetch articles", zap.Error(err))
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to fetch articles"})
 		}
 
 		var links []ArticleLink
 		if err := db.Find(&links).Error; err != nil {
+			logger.Error("Failed to fetch links", zap.Error(err))
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to fetch links"})
 		}
 
@@ -336,11 +338,14 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			// Process tags
 			if article.Tags != "" {
 				tags := strings.Split(article.Tags, ",")
+				articleTagSet := make(map[string]bool)
 				for _, tag := range tags {
-					tag = strings.TrimSpace(tag)
-					if tag == "" {
+					tag = strings.ToLower(strings.TrimSpace(tag))
+					if tag == "" || articleTagSet[tag] {
 						continue
 					}
+					articleTagSet[tag] = true
+
 					if !tagSet[tag] {
 						nodes = append(nodes, GraphNode{
 							Id:    fmt.Sprintf("tag-%s", tag),
@@ -369,6 +374,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			"edges": edges,
 		})
 	})
+
 
 
 

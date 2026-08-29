@@ -610,4 +610,69 @@ func TestGetGraph_Empty(t *testing.T) {
 	}
 }
 
+func TestGetGraph_DuplicateTagsAndCaseSensitivity(t *testing.T) {
+	db := initTestDB()
+	db.Exec("DELETE FROM article_links")
+	db.Exec("DELETE FROM articles")
+
+	db.Create(&Article{
+		ID:    1,
+		Title: "Article 1",
+		Tags:  "AI, ai, Ai, Tech, tech ",
+	})
+	db.Create(&Article{
+		ID:    2,
+		Title: "Article 2",
+		Tags:  "TECH, Robotics",
+	})
+
+	app := setupApp(db)
+	req := httptest.NewRequest("GET", "/api/graph", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Failed to execute request: %v", err)
+	}
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("Expected 200, got %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Nodes []GraphNode `json:"nodes"`
+		Edges []GraphEdge `json:"edges"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// 2 articles + 3 unique lowercase tags ("ai", "tech", "robotics") = 5 nodes
+	if len(result.Nodes) != 5 {
+		t.Errorf("Expected 5 nodes, got %d: %+v", len(result.Nodes), result.Nodes)
+	}
+
+	// 2 tag edges from article 1 ("ai", "tech") + 2 tag edges from article 2 ("tech", "robotics") = 4 edges
+	if len(result.Edges) != 4 {
+		t.Errorf("Expected 4 edges, got %d: %+v", len(result.Edges), result.Edges)
+	}
+
+	edgeSet := make(map[string]int)
+	for _, e := range result.Edges {
+		edgeSet[fmt.Sprintf("%s->%s", e.From, e.To)]++
+	}
+
+	expectedEdges := []string{
+		"article-1->tag-ai",
+		"article-1->tag-tech",
+		"article-2->tag-tech",
+		"article-2->tag-robotics",
+	}
+
+	for _, expected := range expectedEdges {
+		if count := edgeSet[expected]; count != 1 {
+			t.Errorf("Expected edge %s to appear exactly once, got %d", expected, count)
+		}
+	}
+}
+
+
 
