@@ -60,10 +60,13 @@ const getFilteredData = () => {
     : graphData.edges.filter((e: any) => !e.to.startsWith('tag-'))
 
   const processedNodes = filteredNodes.map((n: any) => {
+    const connections = filteredEdges.filter((e: any) => e.from === n.id || e.to === n.id).length
+    const nodeSize = Math.min(12 + (connections * 3), 40)
+    
     if (n.group === 'article') {
-      return { ...n, title: n.label, label: undefined }
+      return { ...n, title: n.label, label: undefined, size: nodeSize }
     }
-    return n
+    return { ...n, size: nodeSize }
   })
 
   return { nodes: processedNodes, edges: filteredEdges }

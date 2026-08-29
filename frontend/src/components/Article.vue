@@ -164,10 +164,13 @@ const loadLocalGraph = async () => {
     })
     
     const localNodes = graphData.nodes.filter((n: any) => connectedNodeIds.has(n.id)).map((n: any) => {
+      const connections = connectedEdges.filter((e: any) => e.from === n.id || e.to === n.id).length
+      const nodeSize = Math.min(10 + (connections * 3), 35)
+      
       if (n.group === 'article') {
-        return { ...n, title: n.label, label: undefined }
+        return { ...n, title: n.label, label: undefined, size: nodeSize }
       }
-      return n
+      return { ...n, size: nodeSize }
     })
     
     const isDark = document.documentElement.classList.contains('dark')
