@@ -98,8 +98,10 @@ const loadLocalGraph = async () => {
   if (!localGraphContainer.value) return
   
   try {
-    const res = await fetch('/api/graph')
-    const graphData = await res.json()
+    const res = await axios.get('/api/graph')
+    const graphData = res.data
+    
+    if (!localGraphContainer.value) return
     
     // Filter for local neighborhood (1st degree)
     const currentArticleNodeId = `article-${route.params.id}`
@@ -155,12 +157,13 @@ const loadContent = async (forceRefresh = false) => {
   try {
     articleError.value = ''
     const articleID = route.params.id
+    if (!articleID) return // additional safety check
+
     const articleURL = `/articles/${articleID}`
     const fetchUrl = forceRefresh ? `${articleURL}?t=${Date.now()}` : articleURL
 
-    const res = await fetch(fetchUrl)
-    if (!res.ok) throw new Error('Failed to fetch content')
-    const raw = await res.text()
+    const res = await axios.get(fetchUrl)
+    const raw = String(res.data)
     
     // Custom Wikilink pre-processor
     const parsedRaw = raw.replace(/\[\[(.*?)\]\]/g, (_, p1) => {
@@ -189,9 +192,11 @@ const loadContent = async (forceRefresh = false) => {
   }
 }
 
-watch(() => route.params.id, () => {
-  loadContent()
-  loadLocalGraph()
+watch(() => route.params.id, (newId) => {
+  if (newId) {
+    loadContent()
+    loadLocalGraph()
+  }
 })
 
 onMounted(async () => {

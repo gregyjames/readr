@@ -384,7 +384,7 @@ git commit -m "feat(frontend): implement global graph visualization with vis-net
 **Files:**
 - Modify: `frontend/src/components/Article.vue`
 
-- [ ] **Step 1: Add selection logic & popup**
+- [x] **Step 1: Add selection logic & popup**
 
 ```vue
 <!-- Add to frontend/src/components/Article.vue script -->
@@ -502,7 +502,7 @@ onBeforeUnmount(() => {
 </script>
 ```
 
-- [ ] **Step 2: Add linker template**
+- [x] **Step 2: Add linker template**
 
 ```vue
 <!-- Add this at the bottom of the template in Article.vue -->
@@ -532,10 +532,10 @@ onBeforeUnmount(() => {
   </div>
 ```
 
-- [ ] **Step 3: Check Build**
+- [x] **Step 3: Check Build**
 Run: `cd frontend && bun run build`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add frontend/src/components/Article.vue
@@ -547,7 +547,7 @@ git commit -m "feat(frontend): implement inline highlighting UI for creating art
 **Files:**
 - Modify: `frontend/src/components/Article.vue`
 
-- [ ] **Step 1: Embed graph container and logic**
+- [x] **Step 1: Embed graph container and logic**
 
 ```vue
 <!-- Add to script in frontend/src/components/Article.vue -->
@@ -596,7 +596,7 @@ const loadLocalGraph = async () => {
 await loadLocalGraph()
 ```
 
-- [ ] **Step 2: Add template for local graph**
+- [x] **Step 2: Add template for local graph**
 
 ```vue
 <!-- Add to Article.vue template, wrapper around <article> -->
@@ -615,10 +615,10 @@ await loadLocalGraph()
 </template>
 ```
 
-- [ ] **Step 3: Check Build**
+- [x] **Step 3: Check Build**
 Run: `cd frontend && bun run build`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add frontend/src/components/Article.vue
