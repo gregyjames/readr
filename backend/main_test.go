@@ -122,7 +122,7 @@ func TestDownloadImagesParallel(t *testing.T) {
 		wg.Add(1)
 		go func(url string) {
 			defer wg.Done()
-			imgResp, err := http.Get(url)
+			imgResp, err := ts.Client().Get(url)
 			if err != nil || imgResp.StatusCode != 200 {
 				return
 			}
@@ -719,6 +719,104 @@ func TestGetGraph_LocalSubgraph(t *testing.T) {
 		t.Errorf("article-3 is 2 hops away and should not be in 1-hop subgraph")
 	}
 }
+
+func TestChatEndpoints_CRUD(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("DATA_DIR", tempDir)
+
+	db := initTestDB()
+	app := setupApp(db)
+
+	// 1. List chats initially (should be empty)
+	req := httptest.NewRequest("GET", "/api/chats", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Failed to list chats: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("Expected 200, got %d", resp.StatusCode)
+	}
+
+	var chats []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&chats)
+	if len(chats) != 0 {
+		t.Errorf("Expected empty chat list, got %d", len(chats))
+	}
+
+	// 2. Create a new chat
+	createReq := httptest.NewRequest("POST", "/api/chats", strings.NewReader(`{"title": "Test Chat"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	resp, err = app.Test(createReq)
+	if err != nil {
+		t.Fatalf("Failed to create chat: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("Expected 200, got %d", resp.StatusCode)
+	}
+
+	var createdChat map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&createdChat)
+	chatID, ok := createdChat["id"].(string)
+	if !ok || chatID == "" {
+		t.Fatalf("Expected non-empty chat ID, got %+v", createdChat)
+	}
+	if createdChat["title"] != "Test Chat" {
+		t.Errorf("Expected title 'Test Chat', got %v", createdChat["title"])
+	}
+
+	// 3. Get the created chat
+	getReq := httptest.NewRequest("GET", "/api/chats/"+chatID, nil)
+	resp, err = app.Test(getReq)
+	if err != nil {
+		t.Fatalf("Failed to get chat: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("Expected 200, got %d", resp.StatusCode)
+	}
+
+	var fetchedChat map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&fetchedChat)
+	if fetchedChat["id"] != chatID {
+		t.Errorf("Expected chat ID %s, got %v", chatID, fetchedChat["id"])
+	}
+
+	// 4. Delete the chat
+	delReq := httptest.NewRequest("DELETE", "/api/chats/"+chatID, nil)
+	resp, err = app.Test(delReq)
+	if err != nil {
+		t.Fatalf("Failed to delete chat: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("Expected 200, got %d", resp.StatusCode)
+	}
+
+	// 5. Verify it's gone
+	getReq = httptest.NewRequest("GET", "/api/chats/"+chatID, nil)
+	resp, _ = app.Test(getReq)
+	if resp.StatusCode != 404 {
+		t.Errorf("Expected 404 after deletion, got %d", resp.StatusCode)
+	}
+}
+
+func TestChatEndpoints_StreamMessage_Unauthorized(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("DATA_DIR", tempDir)
+
+	db := initTestDB()
+	app := setupApp(db)
+
+	req := httptest.NewRequest("POST", "/api/chats/session-1/message", strings.NewReader(`{"content": "Hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Failed to post message: %v", err)
+	}
+
+	if resp.StatusCode != 401 {
+		t.Errorf("Expected 401 Unauthorized, got %d", resp.StatusCode)
+	}
+}
+
 
 
 

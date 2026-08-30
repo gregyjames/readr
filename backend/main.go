@@ -1,28 +1,44 @@
 package main
 
 import (
-"regexp"
-
+	"bufio"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
+	"example.com/backend/internal/chat"
 	"example.com/backend/internal/graph"
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	_ "modernc.org/sqlite"
 )
+
+type articleFileFetcher struct {
+	dataDir string
+}
+
+func (f *articleFileFetcher) GetMarkdownContent(ctx context.Context, id int64) (string, error) {
+	path := filepath.Join(f.dataDir, "articles", fmt.Sprintf("%d.md", id))
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
 
 type RequestBody struct {
 	URL  string   `json:"url"`
@@ -199,7 +215,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
-		AllowHeaders: "Origin, Content-Type, Accept, Cache-Control, Pragma",
+		AllowHeaders: "Origin, Content-Type, Accept, Cache-Control, Pragma, Authorization",
 	}))
 
 	app.Use(func(c *fiber.Ctx) error {
@@ -243,7 +259,105 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		repo,
 	)
 
+	chatRepo := chat.NewFileRepository(filepath.Join(dataDirectory, "chats"))
+	articleFetcher := &articleFileFetcher{dataDir: dataDirectory}
+	chatService := chat.NewService(chatRepo, articleFetcher)
+
 	api := app.Group("/api")
+
+	api.Get("/chats", func(c *fiber.Ctx) error {
+		sessions, err := chatRepo.List(c.Context())
+		if err != nil {
+			logger.Error("Failed to list chats", zap.Error(err))
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to list chats"})
+		}
+		if sessions == nil {
+			sessions = []*chat.ChatSession{}
+		}
+		return c.JSON(sessions)
+	})
+
+	api.Post("/chats", func(c *fiber.Ctx) error {
+		var body struct {
+			Title string `json:"title"`
+		}
+		_ = c.BodyParser(&body)
+		title := strings.TrimSpace(body.Title)
+		if title == "" {
+			title = "New Chat"
+		}
+		session := &chat.ChatSession{
+			ID:        uuid.New().String(),
+			Title:     title,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+			Messages:  []chat.Message{},
+		}
+		if err := chatRepo.Save(c.Context(), session); err != nil {
+			logger.Error("Failed to create chat session", zap.Error(err))
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to create chat session"})
+		}
+		return c.JSON(session)
+	})
+
+	api.Get("/chats/:id", func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		session, err := chatRepo.Get(c.Context(), id)
+		if err != nil || session == nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Chat session not found"})
+		}
+		return c.JSON(session)
+	})
+
+	api.Delete("/chats/:id", func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		if err := chatRepo.Delete(c.Context(), id); err != nil {
+			logger.Error("Failed to delete chat session", zap.Error(err))
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to delete chat session"})
+		}
+		return c.JSON(fiber.Map{"status": "success"})
+	})
+
+	api.Post("/chats/:id/message", func(c *fiber.Ctx) error {
+		authHeader := c.Get("Authorization")
+		apiKey := strings.TrimPrefix(authHeader, "Bearer ")
+		apiKey = strings.TrimSpace(apiKey)
+		if apiKey == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Authorization header required with Bearer API key"})
+		}
+
+		var msg chat.Message
+		if err := c.BodyParser(&msg); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid message payload"})
+		}
+		if msg.Role == "" {
+			msg.Role = chat.RoleUser
+		}
+
+		sessionID := c.Params("id")
+
+		c.Set("Content-Type", "text/event-stream")
+		c.Set("Cache-Control", "no-cache")
+		c.Set("Connection", "keep-alive")
+
+		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			err := chatService.StreamMessage(c.Context(), sessionID, apiKey, msg, func(chunk string) error {
+				if _, err := fmt.Fprintf(w, "data: %s\n\n", chunk); err != nil {
+					return err
+				}
+				return w.Flush()
+			})
+			if err != nil {
+				logger.Error("StreamMessage error", zap.Error(err))
+				fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+				w.Flush()
+				return
+			}
+			fmt.Fprintf(w, "data: [DONE]\n\n")
+			w.Flush()
+		})
+		return nil
+	})
 
 	api.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"message": "Hello from Go!"})
