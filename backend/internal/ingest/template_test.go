@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -93,6 +94,47 @@ Hello world markdown
 `
 	if rendered != expected {
 		t.Errorf("Render() got:\n%s\nwant:\n%s", rendered, expected)
+	}
+}
+
+func TestRenderTemplate_ToJSONFilter(t *testing.T) {
+	tempDir := t.TempDir()
+	templateContent := `---
+title: {{ title | tojson }}
+source: {{ source | tojson }}
+tags: {{ tags | tojson }}
+cover: {{ cover_image | tojson }}
+saved: {{ saved_date | tojson }}
+type: github-repo
+---
+
+{{ content }}
+`
+	templatePath := filepath.Join(tempDir, "github.com.jinja")
+	if err := os.WriteFile(templatePath, []byte(templateContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	renderer := NewGonjaTemplateRenderer(tempDir)
+	ctxData := TemplateContext{
+		Title:      `Pongo2: Django "Template" Engine`,
+		Source:     "https://github.com/flosch/pongo2",
+		Tags:       []string{"go", "django:syntax"},
+		CoverImage: "/images/cover.png",
+		SavedDate:  "2026-08-30",
+		Content:    "Sample content",
+	}
+
+	rendered, err := renderer.Render(context.Background(), templatePath, ctxData)
+	if err != nil {
+		t.Fatalf("unexpected render error: %v", err)
+	}
+
+	if !strings.Contains(rendered, `title: "Pongo2: Django \"Template\" Engine"`) {
+		t.Errorf("expected safely serialized title, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `tags: ["go","django:syntax"]`) && !strings.Contains(rendered, `tags: ["go", "django:syntax"]`) {
+		t.Errorf("expected safely serialized tags, got:\n%s", rendered)
 	}
 }
 
