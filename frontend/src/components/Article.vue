@@ -145,6 +145,21 @@ const isReparsing = ref(false)
 const dismissNotification = () => {
   if (notificationTimer) clearTimeout(notificationTimer)
   notificationState.value = 'idle'
+  isReparsing.value = false
+}
+
+const handleReparseComplete = async () => {
+  await fetchArticles()
+  await loadContent()
+  if (notificationState.value === 'running') {
+    notificationState.value = 'completed'
+    notificationMessage.value = 'Article successfully reparsed and graph updated!'
+    isReparsing.value = false
+    if (notificationTimer) clearTimeout(notificationTimer)
+    notificationTimer = setTimeout(() => {
+      notificationState.value = 'idle'
+    }, 4000)
+  }
 }
 
 const reparseArticle = async () => {
@@ -154,6 +169,13 @@ const reparseArticle = async () => {
   notificationState.value = 'running'
   notificationMessage.value = 'Agents running in background: analyzing, enriching frontmatter, and linking...'
   if (notificationTimer) clearTimeout(notificationTimer)
+
+  // Safety fallback: if SSE disconnects or takes too long, auto-resolve after 12s
+  notificationTimer = setTimeout(async () => {
+    if (notificationState.value === 'running') {
+      await handleReparseComplete()
+    }
+  }, 12000)
 
   try {
     const enricherEnabled = localStorage.getItem('AGENT_ENRICHER') !== 'false'
@@ -172,6 +194,7 @@ const reparseArticle = async () => {
     isReparsing.value = false
     notificationState.value = 'error'
     notificationMessage.value = err?.response?.data?.error || 'Failed to trigger background agents'
+    if (notificationTimer) clearTimeout(notificationTimer)
     notificationTimer = setTimeout(() => {
       notificationState.value = 'idle'
     }, 4000)
@@ -513,19 +536,9 @@ onMounted(async () => {
   await loadContent()
   await loadLocalGraph()
   
-  emitter.on('article-added', async () => {
-    await fetchArticles()
-    await loadContent()
-    if (notificationState.value === 'running') {
-      notificationState.value = 'completed'
-      notificationMessage.value = 'Article successfully reparsed and graph updated!'
-      isReparsing.value = false
-      if (notificationTimer) clearTimeout(notificationTimer)
-      notificationTimer = setTimeout(() => {
-        notificationState.value = 'idle'
-      }, 4000)
-    }
-  })
+  emitter.on('article-added', handleReparseComplete)
+  emitter.on('graph-updated', handleReparseComplete)
+
   document.addEventListener('mouseup', handleSelection)
   document.addEventListener('mousedown', hideLinker)
   document.addEventListener('click', handleWikilinkClick)
@@ -548,6 +561,8 @@ onBeforeUnmount(() => {
   if (notificationTimer) {
     clearTimeout(notificationTimer)
   }
+  emitter.off('article-added', handleReparseComplete)
+  emitter.off('graph-updated', handleReparseComplete)
   document.removeEventListener('mouseup', handleSelection)
   document.removeEventListener('mousedown', hideLinker)
   document.removeEventListener('click', handleWikilinkClick)

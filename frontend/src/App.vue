@@ -17,12 +17,26 @@ const tagInput = ref('')
 const isSubmitting = ref(false)
 
 onMounted(() => {
-  const evtSource = new EventSource('/api/events');
-  evtSource.onmessage = (event) => {
-    if (event.data === 'graph-updated') {
-      emitter.emit('article-added') // Refetch graph and articles
+  let evtSource: EventSource | null = null;
+  const connectSSE = () => {
+    try {
+      evtSource = new EventSource('/api/events');
+      evtSource.onmessage = (event) => {
+        const msg = (event.data || '').trim();
+        if (msg === 'graph-updated') {
+          emitter.emit('article-added');
+          emitter.emit('graph-updated');
+        }
+      };
+      evtSource.onerror = () => {
+        evtSource?.close();
+        setTimeout(connectSSE, 3000);
+      };
+    } catch (e) {
+      console.warn('EventSource failed:', e);
     }
-  }
+  };
+  connectSSE();
 })
 
 const submitForm = async () => {

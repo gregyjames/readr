@@ -35,9 +35,10 @@ var (
 )
 
 func broadcastEvent(event string) {
+	clientCount := 0
 	eventClients.Range(func(key, value interface{}) bool {
 		if ch, ok := key.(chan string); ok {
-			// Non-blocking send
+			clientCount++
 			select {
 			case ch <- event:
 			default:
@@ -45,6 +46,9 @@ func broadcastEvent(event string) {
 		}
 		return true
 	})
+	if logger != nil {
+		logger.Info("SSE Broadcast sent", zap.String("event", event), zap.Int("connected_clients", clientCount))
+	}
 }
 
 
