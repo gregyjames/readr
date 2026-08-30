@@ -35,7 +35,7 @@ func NewIngester(
 		extractor: extractor,
 		storage:   storage,
 		repo:      repo,
-		idGen:     time.Now().Unix,
+		idGen:     func() int64 { return time.Now().UnixMilli() },
 	}
 }
 
@@ -90,7 +90,7 @@ func (ing *Ingester) Ingest(ctx context.Context, req IngestRequest) (*IngestedAr
 
 	// 6. Format YAML Frontmatter
 	tagsString := strings.Join(req.Tags, ",")
-	savedDate := time.Unix(filenameID, 0).UTC().Format("2006-01-02")
+	savedDate := time.UnixMilli(filenameID).UTC().Format("2006-01-02")
 	frontmatter := fmt.Sprintf("---\ntitle: %q\nsource: %q\ntags: [%s]\ncover: %q\nsaved: %s\n---\n",
 		extracted.Title,
 		trimmedURL,
