@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"example.com/backend/internal/agents"
 	"example.com/backend/internal/chat"
 	"example.com/backend/internal/graph"
 	"example.com/backend/internal/ingest"
@@ -657,6 +658,12 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 		graphEngine.InvalidateCache()
 		logger.Info("Article added successfully", zap.Int64("id", article.ID), zap.String("url", body.URL))
+
+		// Trigger Background Agent to format the markdown frontmatter to OKF spec
+		agents.SubmitJob(agents.Job{
+			ArticleID: article.ID,
+			Type:      agents.JobTypeEnrichFrontmatter,
+		})
 		return c.JSON(fiber.Map{
 			"status":  "success",
 			"message": "Article saved",
@@ -705,6 +712,10 @@ func main() {
 	logger.Info("Available SQL drivers", zap.Strings("drivers", sql.Drivers()))
 
 	db := initDB()
+	
+	// Start 3 Background Agents for the Vault
+	agents.InitPool(logger, db, dataDirectory, 3)
+	
 	app := setupApp(db)
 
 	port := os.Getenv("PORT")
