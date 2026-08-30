@@ -142,15 +142,15 @@ const reparseArticle = async () => {
   if (!articleID) return
   isReparsing.value = true
   try {
-    const enricherEnabled = localStorage.getItem('readr_agent_enricher') !== 'false'
-    const linkerEnabled = localStorage.getItem('readr_agent_linker') !== 'false'
+    const enricherEnabled = localStorage.getItem('AGENT_ENRICHER') !== 'false'
+    const linkerEnabled = localStorage.getItem('AGENT_LINKER') !== 'false'
 
     await axios.post(`/api/articles/${articleID}/reparse`, null, {
       headers: {
         'X-Agent-Enricher': enricherEnabled ? 'true' : 'false',
         'X-Agent-Linker': linkerEnabled ? 'true' : 'false',
-        'X-Openrouter-Key': localStorage.getItem('openrouter_key') || '',
-        'X-Openrouter-Model': localStorage.getItem('openrouter_model') || ''
+        'X-Openrouter-Key': localStorage.getItem('OPENROUTER_API_KEY') || '',
+        'X-Openrouter-Model': localStorage.getItem('OPENROUTER_MODEL') || 'openai/gpt-4o-mini'
       }
     })
   } catch (err) {
