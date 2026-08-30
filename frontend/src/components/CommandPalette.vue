@@ -72,10 +72,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMagicKeys, watchDebounced } from '@vueuse/core'
 import axios from 'axios'
+import emitter from '../event-bus'
 
 interface SearchResult {
   id: number
@@ -86,6 +87,23 @@ interface SearchResult {
 const router = useRouter()
 const isOpen = ref(false)
 const query = ref('')
+
+const openSearch = () => {
+  isOpen.value = true
+  query.value = ''
+  results.value = []
+  nextTick(() => {
+    searchInput.value?.focus()
+  })
+}
+
+onMounted(() => {
+  emitter.on('open-search', openSearch)
+})
+
+onUnmounted(() => {
+  emitter.off('open-search', openSearch)
+})
 const results = ref<SearchResult[]>([])
 const isLoading = ref(false)
 const selectedIndex = ref(0)
