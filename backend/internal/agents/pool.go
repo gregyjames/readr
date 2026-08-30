@@ -56,6 +56,10 @@ func (p *AgentPool) worker(id int) {
 		default:
 			p.logger.Warn("Unknown job type", zap.String("type", string(job.Type)))
 		}
+
+		if p.InvalidateGraphCache != nil {
+			p.InvalidateGraphCache()
+		}
 	}
 }
 

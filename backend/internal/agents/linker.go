@@ -230,10 +230,6 @@ Article Content:
 			p.logger.Error("AutoLinker could not write file", zap.Error(err))
 			return
 		}
-
-		if p.InvalidateGraphCache != nil {
-			p.InvalidateGraphCache()
-		}
 		p.logger.Info("Successfully executed Smart Linker!", zap.Int64("article_id", job.ArticleID), zap.Int("links_added", linksAdded))
 	} else {
 		p.logger.Info("Smart Linker found no new connections", zap.Int64("article_id", job.ArticleID))

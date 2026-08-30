@@ -628,9 +628,15 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			eventClients.Store(ch, true)
 			defer eventClients.Delete(ch)
 
+			// Send initial comment to establish SSE stream
+			fmt.Fprintf(w, ": connected\n\n")
+			w.Flush()
+
 			for msg := range ch {
 				fmt.Fprintf(w, "data: %s\n\n", msg)
-				w.Flush()
+				if err := w.Flush(); err != nil {
+					return
+				}
 			}
 		})
 		return nil
