@@ -108,9 +108,18 @@ func (p *AgentPool) processAutoLinker(job Job) {
 	}
 
 	// 4. Ask LLM to generate Semantic Links
-	prompt := fmt.Sprintf(`You are an expert semantic graph builder.
-Identify organic connections between the new article and the existing vault articles. 
-Do NOT rewrite the article body. Instead, return a list of precise phrases from the text that should be converted into wikilinks.
+	prompt := fmt.Sprintf(`You are an expert semantic knowledge graph builder.
+Analyze the article content and identify ALL relevant connections (aim for 2 to 5 connections where applicable) to existing articles in the user's vault.
+
+Look for:
+- Mentions of shared companies, organizations, or people (e.g. "Anthropic", "OpenAI", "Google")
+- Shared technologies, languages, tools, or frameworks (e.g. "Python", "Mojo", "VPN", "LLM")
+- Overlapping concepts, themes, or subject matter (e.g. "AI safety", "paywalls", "security", "copyright")
+
+RULES:
+1. "exact_phrase_in_text" must be a verbatim, case-sensitive substring from the article body.
+2. The phrase can be a short mention, entity name, or concept (e.g. "Anthropic" or "AI models") that relates to the vault article.
+3. Link to as many distinct relevant vault articles as make sense (do not limit yourself to just 1 link if more connections exist).
 
 Existing Vault Articles:
 %s
@@ -121,7 +130,7 @@ You must output a strictly valid JSON object matching this schema. Output ONLY J
   "links_to_inject": [
     {
       "existing_article_id": <int>,
-      "exact_phrase_in_text": "<exact string from the article body to replace>"
+      "exact_phrase_in_text": "<exact verbatim phrase from article body>"
     }
   ]
 }
@@ -194,7 +203,8 @@ Article Content:
 	linksAdded := 0
 	if len(parsed.LinksToInject) > 0 {
 		for _, link := range parsed.LinksToInject {
-			if link.ExactPhraseInText == "" {
+			phrase := strings.TrimSpace(link.ExactPhraseInText)
+			if phrase == "" {
 				continue
 			}
 			
@@ -209,9 +219,23 @@ Article Content:
 				continue
 			}
 			
-			alreadyLinked := fmt.Sprintf("[[%s]]", targetTitle)
-			if !strings.Contains(body, alreadyLinked) && strings.Contains(body, link.ExactPhraseInText) {
-				body = strings.Replace(body, link.ExactPhraseInText, alreadyLinked, 1)
+			// Format wikilink (aliased if phrase is different from title)
+			var replacement string
+			if strings.EqualFold(phrase, targetTitle) {
+				replacement = fmt.Sprintf("[[%s]]", targetTitle)
+			} else {
+				replacement = fmt.Sprintf("[[%s|%s]]", targetTitle, phrase)
+			}
+
+			// Don't inject if already linked to this target
+			alreadyLinkedSimple := fmt.Sprintf("[[%s]]", targetTitle)
+			alreadyLinkedAliasedPrefix := fmt.Sprintf("[[%s|", targetTitle)
+			if strings.Contains(body, alreadyLinkedSimple) || strings.Contains(body, alreadyLinkedAliasedPrefix) {
+				continue
+			}
+
+			if strings.Contains(body, phrase) {
+				body = strings.Replace(body, phrase, replacement, 1)
 				
 				var count int64
 				p.db.Table("article_links").Where("source_id = ? AND target_id = ?", job.ArticleID, link.ExistingArticleID).Count(&count)
