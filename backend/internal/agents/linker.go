@@ -150,7 +150,7 @@ Article Content:
 	reqPayload := linkerOpenRouterRequest{
 		Model:     model,
 		Messages:  apiMsgs,
-		MaxTokens: 600, // Explicitly constrain max tokens to prevent in-flight budget exhaustion
+		MaxTokens: 2500, // Generous token ceiling to allow reasoning models room to think before outputting JSON
 		ResponseFormat: &struct {
 			Type string `json:"type"`
 		}{Type: "json_object"},
