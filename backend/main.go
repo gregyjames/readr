@@ -481,6 +481,38 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return c.JSON(fiber.Map{"message": "Hello from Go!"})
 	})
 
+	api.Post("/articles/:id/reparse", func(c *fiber.Ctx) error {
+		idParam := c.Params("id")
+
+		var article Article
+		if err := db.First(&article, idParam).Error; err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": "Article not found"})
+		}
+
+		if c.Get("X-Agent-Enricher") == "true" {
+			agents.SubmitJob(agents.Job{
+				ArticleID: article.ID,
+				Type:      agents.JobTypeEnrichFrontmatter,
+				Payload: map[string]interface{}{
+					"api_key": c.Get("X-Openrouter-Key"),
+					"model":   c.Get("X-Openrouter-Model"),
+				},
+			})
+		}
+		if c.Get("X-Agent-Linker") == "true" {
+			agents.SubmitJob(agents.Job{
+				ArticleID: article.ID,
+				Type:      agents.JobTypeAutoLinker,
+				Payload: map[string]interface{}{
+					"api_key": c.Get("X-Openrouter-Key"),
+					"model":   c.Get("X-Openrouter-Model"),
+				},
+			})
+		}
+
+		return c.JSON(fiber.Map{"status": "ok", "message": "Agents triggered"})
+	})
+
 	api.Delete("/delete/:id", func(c *fiber.Ctx) error {
 		id := c.Params("id")
 		logger.Info("Attempting to delete article", zap.String("id", id))
