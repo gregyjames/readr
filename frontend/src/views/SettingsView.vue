@@ -429,6 +429,8 @@ const clearKey = () => {
           <button
             type="button"
             @click="enableAgentEnricher = !enableAgentEnricher"
+            aria-label="Toggle OKF Frontmatter Enricher"
+            :aria-pressed="enableAgentEnricher"
             class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
             :class="enableAgentEnricher ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
           >
@@ -452,6 +454,8 @@ const clearKey = () => {
           <button
             type="button"
             @click="enableAgentLinker = !enableAgentLinker"
+            aria-label="Toggle Autonomous Graph Linker"
+            :aria-pressed="enableAgentLinker"
             class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
             :class="enableAgentLinker ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
           >
@@ -475,6 +479,8 @@ const clearKey = () => {
           <button
             type="button"
             @click="enableAgentSummarizer = !enableAgentSummarizer"
+            aria-label="Toggle Executive Summarizer"
+            :aria-pressed="enableAgentSummarizer"
             class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
             :class="enableAgentSummarizer ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
           >
