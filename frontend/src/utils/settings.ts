@@ -22,3 +22,8 @@ export function isAgentEnricherEnabled(): boolean {
 export function isAgentLinkerEnabled(): boolean {
   return localStorage.getItem('AGENT_LINKER') !== 'false' && localStorage.getItem('readr_agent_linker') !== 'false'
 }
+
+export function isAgentSummarizerEnabled(): boolean {
+  return localStorage.getItem('AGENT_SUMMARIZER') !== 'false' && localStorage.getItem('readr_agent_summarizer') !== 'false'
+}
+

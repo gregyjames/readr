@@ -575,7 +575,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 				},
 			})
 		}
-		if apiKey != "" {
+		if apiKey != "" && c.Get("X-Agent-Summarizer") != "false" {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeSummarizer,
@@ -846,7 +846,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 				},
 			})
 		}
-		if apiKey != "" {
+		if apiKey != "" && c.Get("X-Agent-Summarizer") != "false" {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeSummarizer,

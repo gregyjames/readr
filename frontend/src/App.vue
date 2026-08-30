@@ -8,7 +8,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import axios from 'axios'
 import emitter from './event-bus.ts'
-import { getOpenRouterApiKey, getOpenRouterModel, isAgentEnricherEnabled, isAgentLinkerEnabled } from './utils/settings'
+import { getOpenRouterApiKey, getOpenRouterModel, isAgentEnricherEnabled, isAgentLinkerEnabled, isAgentSummarizerEnabled } from './utils/settings'
 
 interface TemplateInfo {
   name: string
@@ -82,6 +82,7 @@ const submitForm = async () => {
     const defaultModel = getOpenRouterModel()
     const agentEnricher = isAgentEnricherEnabled()
     const agentLinker = isAgentLinkerEnabled()
+    const agentSummarizer = isAgentSummarizerEnabled()
     
     const chosenTemplate = selectedTemplate.value === 'auto'
       ? (matchedTemplate.value?.name || '')
@@ -94,7 +95,8 @@ const submitForm = async () => {
         'X-Openrouter-Key': apiKey,
         'X-Openrouter-Model': defaultModel,
         'X-Agent-Enricher': agentEnricher ? 'true' : 'false',
-        'X-Agent-Linker': agentLinker ? 'true' : 'false'
+        'X-Agent-Linker': agentLinker ? 'true' : 'false',
+        'X-Agent-Summarizer': agentSummarizer ? 'true' : 'false'
       },
       body: JSON.stringify({ 
         url: url.value,

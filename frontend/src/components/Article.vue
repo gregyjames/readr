@@ -162,11 +162,11 @@ const handleReparseComplete = async () => {
   }
 }
 
-import { getOpenRouterApiKey, getOpenRouterModel, isAgentEnricherEnabled, isAgentLinkerEnabled } from '../utils/settings'
+import { getOpenRouterApiKey, getOpenRouterModel, isAgentEnricherEnabled, isAgentLinkerEnabled, isAgentSummarizerEnabled } from '../utils/settings'
 
 const reparseArticle = async () => {
   const articleID = getArticleId()
-  if (!articleID) return
+  if (!articleID || isReparsing.value) return
   isReparsing.value = true
   notificationState.value = 'running'
   notificationMessage.value = 'Agents running in background: analyzing, enriching frontmatter, and linking...'
@@ -184,11 +184,13 @@ const reparseArticle = async () => {
     const model = getOpenRouterModel()
     const enricherEnabled = isAgentEnricherEnabled()
     const linkerEnabled = isAgentLinkerEnabled()
+    const summarizerEnabled = isAgentSummarizerEnabled()
 
     await axios.post(`/api/articles/${articleID}/reparse`, null, {
       headers: {
         'X-Agent-Enricher': enricherEnabled ? 'true' : 'false',
         'X-Agent-Linker': linkerEnabled ? 'true' : 'false',
+        'X-Agent-Summarizer': summarizerEnabled ? 'true' : 'false',
         'X-Openrouter-Key': apiKey,
         'X-Openrouter-Model': model
       }

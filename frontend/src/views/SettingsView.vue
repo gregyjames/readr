@@ -46,6 +46,7 @@ const isModelDropdownOpen = ref(false)
 const expandGraphContext = ref(true)
 const enableAgentEnricher = ref(localStorage.getItem('AGENT_ENRICHER') !== 'false') // Default true
 const enableAgentLinker = ref(localStorage.getItem('AGENT_LINKER') !== 'false') // Default true
+const enableAgentSummarizer = ref(localStorage.getItem('AGENT_SUMMARIZER') !== 'false') // Default true
 
 let timer: ReturnType<typeof setTimeout> | null = null
 
@@ -161,6 +162,7 @@ const saveSettings = () => {
   localStorage.setItem('GRAPH_CONTEXT_EXPANSION', String(expandGraphContext.value))
   localStorage.setItem('AGENT_ENRICHER', enableAgentEnricher.value ? 'true' : 'false')
   localStorage.setItem('AGENT_LINKER', enableAgentLinker.value ? 'true' : 'false')
+  localStorage.setItem('AGENT_SUMMARIZER', enableAgentSummarizer.value ? 'true' : 'false')
   showSavedMessage('Settings saved successfully!')
 }
 
@@ -452,6 +454,29 @@ const clearKey = () => {
             <span
               class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
               :class="enableAgentLinker ? 'translate-x-5' : 'translate-x-0'"
+            />
+          </button>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-2">
+              <span>Executive Summarizer</span>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">LLM</span>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 max-w-md">
+              Automatically generate concise 2–3 sentence executive summaries when templates include a summary block.
+            </p>
+          </div>
+          <button
+            type="button"
+            @click="enableAgentSummarizer = !enableAgentSummarizer"
+            class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+            :class="enableAgentSummarizer ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
+          >
+            <span
+              class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+              :class="enableAgentSummarizer ? 'translate-x-5' : 'translate-x-0'"
             />
           </button>
         </div>
