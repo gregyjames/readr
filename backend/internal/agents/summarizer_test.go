@@ -68,3 +68,53 @@ func TestProcessSummarizer_Success(t *testing.T) {
 	}
 	_ = pool
 }
+
+func TestProcessSummarizer_SkipsWhenNoSummaryBlock(t *testing.T) {
+	tempDir := t.TempDir()
+	articlesDir := filepath.Join(tempDir, "articles")
+	os.MkdirAll(articlesDir, 0755)
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Table("articles").AutoMigrate(&ArticleRecord{})
+	db.Table("articles").Create(&ArticleRecord{ID: 102, Title: "No Summary Article"})
+
+	articlePath := filepath.Join(articlesDir, "102.md")
+	contentWithoutSummary := "---\ntitle: \"No Summary Article\"\nsource: \"https://example.com\"\n---\n\nStandard body content without any summary placeholder."
+	os.WriteFile(articlePath, []byte(contentWithoutSummary), 0644)
+
+	called := false
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(500)
+	}))
+	defer ts.Close()
+
+	pool := &AgentPool{
+		Queue:         make(chan Job, 10),
+		logger:        zap.NewNop(),
+		db:            db,
+		dataDirectory: tempDir,
+	}
+
+	job := Job{
+		ArticleID: 102,
+		Type:      JobTypeSummarizer,
+		Payload: map[string]interface{}{
+			"api_key": "test-key",
+		},
+	}
+
+	pool.processSummarizer(job)
+
+	if called {
+		t.Errorf("expected LLM server not to be called when article has no summary block")
+	}
+
+	afterBytes, _ := os.ReadFile(articlePath)
+	if string(afterBytes) != contentWithoutSummary {
+		t.Errorf("expected file content to remain unchanged, got:\n%s", string(afterBytes))
+	}
+}

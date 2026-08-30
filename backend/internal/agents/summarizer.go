@@ -59,6 +59,12 @@ func (p *AgentPool) processSummarizer(job Job) {
 		}
 	}
 
+	// Guard: Only run LLM if the template rendered a summary block or frontmatter summary
+	if !summaryBlockRegex.MatchString(content) && !strings.Contains(frontmatter, "summary:") {
+		p.logger.Info("Skipping summarization: template does not use summary", zap.Int64("article_id", job.ArticleID))
+		return
+	}
+
 	promptBody := body
 	if len(promptBody) > 6000 {
 		promptBody = promptBody[:6000]
