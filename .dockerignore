@@ -1,0 +1,7 @@
+.git
+.github
+.superpowers
+data
+frontend/node_modules
+frontend/dist
+backend/data

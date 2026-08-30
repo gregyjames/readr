@@ -594,6 +594,37 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		})
 	})
 
+	distDir := os.Getenv("DIST_DIR")
+	if distDir == "" {
+		candidates := []string{"/app/dist", "../frontend/dist", "./dist"}
+		for _, cand := range candidates {
+			if info, err := os.Stat(cand); err == nil && info.IsDir() {
+				distDir = cand
+				break
+			}
+		}
+	}
+
+	if distDir != "" {
+		if info, err := os.Stat(distDir); err == nil && info.IsDir() {
+			logger.Info("Serving static frontend files from", zap.String("distDir", distDir))
+			app.Static("/", distDir)
+
+			// SPA Fallback for client-side routing
+			app.Get("*", func(c *fiber.Ctx) error {
+				path := c.Path()
+				if strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/images") || strings.HasPrefix(path, "/articles") {
+					return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Not Found"})
+				}
+				indexPath := filepath.Join(distDir, "index.html")
+				if _, err := os.Stat(indexPath); err == nil {
+					return c.SendFile(indexPath)
+				}
+				return c.Status(fiber.StatusNotFound).SendString("index.html not found")
+			})
+		}
+	}
+
 	return app
 }
 
@@ -606,5 +637,16 @@ func main() {
 	db := initDB()
 	app := setupApp(db)
 
-	app.Listen(":3000")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	if !strings.HasPrefix(port, ":") {
+		port = ":" + port
+	}
+
+	logger.Info("Starting server", zap.String("port", port))
+	if err := app.Listen(port); err != nil {
+		logger.Fatal("Server failed to start", zap.Error(err))
+	}
 }

@@ -3,6 +3,8 @@ import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import svgLoader from 'vite-svg-loader'
 
+const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.BACKEND_PORT || '8080'}`
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -18,11 +20,11 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: backendUrl,
         changeOrigin: true,
       },
       '/images': {
-        target: 'http://localhost:3000',
+        target: backendUrl,
         changeOrigin: true,
       },
     },

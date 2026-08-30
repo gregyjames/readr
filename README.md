@@ -1,6 +1,5 @@
 [![Go CI](https://github.com/gregyjames/readr/actions/workflows/go.yml/badge.svg)](https://github.com/gregyjames/readr/actions/workflows/go.yml)
-![Docker Image Size (tag)](https://img.shields.io/docker/image-size/gjames8/readr-frontend/latest?label=Frontend)
-![Docker Image Size (tag)](https://img.shields.io/docker/image-size/gjames8/readr-backend/latest?label=Backend)
+![Docker Image Size (tag)](https://img.shields.io/docker/image-size/gjames8/readr/latest?label=Docker)
 
 # Readr
 A self-hosted, AI-native read-it-later app and knowledge graph engine powered by Vue, Tailwind, and Go. Articles are saved as clean markdown files on disk and tracked in a SQLite database.
@@ -36,18 +35,14 @@ A self-hosted, AI-native read-it-later app and knowledge graph engine powered by
 version: '3.8'
 
 services:
-  frontend:
-    image: "gjames8/readr-frontend:latest"
+  readr:
+    image: "gjames8/readr:latest"
     ports:
       - "8080:8080"
-    container_name: frontend
-  backend:
-    image: "gjames8/readr-backend:latest"
-    ports:
-      - "3000:3000"
-    container_name: backend
+    container_name: readr
     volumes:
       - ./data:/app/data
+    restart: unless-stopped
 ```
 
 ## Design choices
