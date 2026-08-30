@@ -29,4 +29,24 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('vis-network') || id.includes('vis-data')) {
+              return 'vendor-graph'
+            }
+            if (id.includes('highlight.js') || id.includes('marked')) {
+              return 'vendor-markdown'
+            }
+            if (id.includes('vue') || id.includes('vue-router') || id.includes('axios')) {
+              return 'vendor-core'
+            }
+          }
+        },
+      },
+    },
+  },
 })
