@@ -4,10 +4,16 @@ import HomeIcon from './assets/home.svg'
 import AddIcon from './assets/add.svg'
 import GraphIcon from './assets/graph.svg'
 import CommandPalette from './components/CommandPalette.vue'
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import axios from 'axios'
 import emitter from './event-bus.ts'
 import { getOpenRouterApiKey, getOpenRouterModel, isAgentEnricherEnabled, isAgentLinkerEnabled } from './utils/settings'
+
+interface TemplateInfo {
+  name: string
+  filename: string
+}
 
 const route = useRoute()
 
@@ -16,8 +22,37 @@ const url = ref('')
 const tags = ref<string[]>([])
 const tagInput = ref('')
 const isSubmitting = ref(false)
+const availableTemplates = ref<TemplateInfo[]>([])
+const selectedTemplate = ref<string>('auto')
+
+const fetchTemplates = async () => {
+  try {
+    const res = await axios.get('/api/templates')
+    availableTemplates.value = res.data || []
+  } catch (err) {
+    console.error('Failed to fetch templates', err)
+  }
+}
+
+const matchedTemplate = computed(() => {
+  if (!url.value) return null
+  try {
+    const raw = url.value.startsWith('http') ? url.value : `https://${url.value}`
+    const host = new URL(raw).hostname.toLowerCase()
+    const parts = host.split('.')
+    for (let i = 0; i < parts.length - 1; i++) {
+      const candidate = parts.slice(i).join('.')
+      const found = availableTemplates.value.find(t => t.name === candidate)
+      if (found) return found
+    }
+  } catch {
+    return null
+  }
+  return null
+})
 
 onMounted(() => {
+  fetchTemplates();
   let evtSource: EventSource | null = null;
   const connectSSE = () => {
     try {
@@ -48,6 +83,10 @@ const submitForm = async () => {
     const agentEnricher = isAgentEnricherEnabled()
     const agentLinker = isAgentLinkerEnabled()
     
+    const chosenTemplate = selectedTemplate.value === 'auto'
+      ? (matchedTemplate.value?.name || '')
+      : (selectedTemplate.value === 'none' ? '' : selectedTemplate.value)
+
     await fetch('/api/add', {
       method: 'POST',
       headers: { 
@@ -59,7 +98,8 @@ const submitForm = async () => {
       },
       body: JSON.stringify({ 
         url: url.value,
-        Tags: tags.value
+        Tags: tags.value,
+        template: chosenTemplate
       }),
     })
     emitter.emit('article-added')
@@ -67,6 +107,7 @@ const submitForm = async () => {
     url.value = ''
     tags.value = []
     tagInput.value = ''
+    selectedTemplate.value = 'auto'
   }
   catch (err) {
     console.error('Submit failed', err)
@@ -76,11 +117,15 @@ const submitForm = async () => {
   }
 }
 
-function closeModal() {
-  showModal.value = false
+function openModal() {
+  showModal.value = true
+  fetchTemplates()
 }
 
-
+function closeModal() {
+  showModal.value = false
+  selectedTemplate.value = 'auto'
+}
 
 function addTag() {
   const trimmed = tagInput.value.trim()
@@ -145,7 +190,7 @@ function removeTag(tag: string) {
           
 
           
-          <button @click="showModal = true" class="flex items-center gap-2 bg-[#111] dark:bg-white hover:bg-[#222] dark:hover:bg-gray-100 active:scale-95 text-white dark:text-[#111] px-4 py-2 rounded-full transition-all duration-300 shadow-sm ml-2 cursor-pointer">
+          <button @click="openModal" class="flex items-center gap-2 bg-[#111] dark:bg-white hover:bg-[#222] dark:hover:bg-gray-100 active:scale-95 text-white dark:text-[#111] px-4 py-2 rounded-full transition-all duration-300 shadow-sm ml-2 cursor-pointer">
             <AddIcon class="w-4 h-4 text-white dark:text-[#111]" />
             <span class="font-medium text-sm">Add Article</span>
           </button>
@@ -194,6 +239,23 @@ function removeTag(tag: string) {
               placeholder="Type tag and press Enter"
               class="w-full px-4 py-3 bg-gray-50 dark:bg-[#1a1a1a] border-transparent rounded-xl focus:bg-white dark:focus:bg-[#1a1a1a] focus:border-gray-200 dark:focus:border-gray-700 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-800 focus:outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-600 text-gray-900 dark:text-gray-100"
             />
+          </div>
+          <div v-if="availableTemplates.length > 0" class="mt-4">
+            <label class="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1.5">
+              Markdown Template
+            </label>
+            <select
+              v-model="selectedTemplate"
+              class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-black/40 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              <option value="auto">
+                Auto {{ matchedTemplate ? `(${matchedTemplate.name})` : '(Default)' }}
+              </option>
+              <option v-for="tpl in availableTemplates" :key="tpl.name" :value="tpl.name">
+                {{ tpl.name }}
+              </option>
+              <option value="none">Built-in Default</option>
+            </select>
           </div>
           <button
             type="submit"
