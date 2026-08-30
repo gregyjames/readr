@@ -22,6 +22,19 @@ type IngestRequest struct {
 type IngestedArticle = repository.ArticleRecord
 type ArticleRepository = repository.Repository
 
+type ExtractedContent struct {
+	Title           string
+	MarkdownContent string
+	CoverImageURL   string
+	BodyImages      []string
+	Author          string
+	Description     string
+	SiteName        string
+	OG              map[string]string
+}
+
+type ExtractedArticle = ExtractedContent
+
 type ArticleIngester interface {
 	Ingest(ctx context.Context, req IngestRequest) (*IngestedArticle, error)
 }
