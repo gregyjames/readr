@@ -44,9 +44,9 @@ func (p *AgentPool) processAutoLinker(job Job) {
 		return
 	}
 
-	// 1. Fetch all articles in a single query
+	// 1. Fetch all non-deleted articles in a single query
 	var allArticles []repository.ArticleRecord
-	if err := p.db.Table("articles").Find(&allArticles).Error; err != nil {
+	if err := p.db.Table("articles").Where("deleted_at IS NULL").Find(&allArticles).Error; err != nil {
 		p.logger.Error("AutoLinker could not load articles", zap.Error(err))
 		return
 	}
