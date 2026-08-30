@@ -3,6 +3,8 @@ package ingest
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -12,11 +14,15 @@ import (
 
 // MockPageFetcher
 type mockPageFetcher struct {
+	html     string
 	htmlMap  map[string][]byte
 	imageMap map[string][]byte
 }
 
 func (m *mockPageFetcher) FetchHTML(ctx context.Context, rawURL string) ([]byte, error) {
+	if m.html != "" {
+		return []byte(m.html), nil
+	}
 	if data, ok := m.htmlMap[rawURL]; ok {
 		return data, nil
 	}
@@ -35,12 +41,14 @@ type mockFileStorage struct {
 	mu           sync.Mutex
 	markdownDocs map[int64][]byte
 	images       map[string][]byte
+	files        map[string][]byte
 }
 
 func newMockStorage() *mockFileStorage {
 	return &mockFileStorage{
 		markdownDocs: make(map[int64][]byte),
 		images:       make(map[string][]byte),
+		files:        make(map[string][]byte),
 	}
 }
 
@@ -48,7 +56,9 @@ func (m *mockFileStorage) SaveMarkdown(filenameID int64, content []byte) (string
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.markdownDocs[filenameID] = content
-	return "/articles/test.md", nil
+	path := "/articles/test.md"
+	m.files[path] = content
+	return path, nil
 }
 
 func (m *mockFileStorage) SaveImage(filenameID int64, filename string, data []byte) (string, error) {
@@ -244,5 +254,88 @@ func TestIngester_InvalidURL(t *testing.T) {
 	_, err = ingester.Ingest(context.Background(), IngestRequest{URL: "not-a-url"})
 	if !errors.Is(err, ErrInvalidURL) {
 		t.Errorf("expected ErrInvalidURL, got: %v", err)
+	}
+}
+
+func TestIngester_CustomTemplateRendering(t *testing.T) {
+	tempDir := t.TempDir()
+	templatesDir := filepath.Join(tempDir, "templates")
+	os.MkdirAll(templatesDir, 0755)
+
+	customTpl := `---
+title: {{ title }}
+source: {{ source }}
+site: custom-site
+tags: [{% for tag in tags %}"{{ tag }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+---
+
+Custom Header: {{ title }}
+
+{{ content }}
+`
+	os.WriteFile(filepath.Join(templatesDir, "mysite.com.jinja"), []byte(customTpl), 0644)
+
+	fetcher := &mockPageFetcher{
+		html: `<html><body><article><p>Hello from my site</p></article></body></html>`,
+	}
+	storage := newMockStorage()
+	repo := newMockRepository()
+	renderer := NewGonjaTemplateRenderer(templatesDir)
+
+	ingester := NewIngester(fetcher, nil, storage, repo)
+	ingester.SetTemplateRenderer(renderer)
+	ingester.SetIDGenerator(func() int64 { return 1700000000 })
+
+	req := IngestRequest{
+		URL:  "https://mysite.com/article/1",
+		Tags: []string{"test"},
+	}
+
+	article, err := ingester.Ingest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Ingest failed: %v", err)
+	}
+
+	savedMD := string(storage.files[article.FilePath])
+	if !strings.Contains(savedMD, "site: custom-site") {
+		t.Errorf("saved markdown missing custom template content, got:\n%s", savedMD)
+	}
+	if !strings.Contains(savedMD, "Custom Header:") {
+		t.Errorf("saved markdown missing custom header, got:\n%s", savedMD)
+	}
+}
+
+func TestIngester_TemplateSyntaxErrorFallsBackToDefault(t *testing.T) {
+	tempDir := t.TempDir()
+	templatesDir := filepath.Join(tempDir, "templates")
+	os.MkdirAll(templatesDir, 0755)
+
+	// Broken Jinja syntax
+	os.WriteFile(filepath.Join(templatesDir, "broken.com.jinja"), []byte(`{% for tag in tags %}`), 0644)
+
+	fetcher := &mockPageFetcher{
+		html: `<html><body><article><p>Fallback content</p></article></body></html>`,
+	}
+	storage := newMockStorage()
+	repo := newMockRepository()
+	renderer := NewGonjaTemplateRenderer(templatesDir)
+
+	ingester := NewIngester(fetcher, nil, storage, repo)
+	ingester.SetTemplateRenderer(renderer)
+	ingester.SetIDGenerator(func() int64 { return 1700000000 })
+
+	req := IngestRequest{
+		URL:  "https://broken.com/article",
+		Tags: []string{"test"},
+	}
+
+	article, err := ingester.Ingest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Ingest should succeed with fallback, got err: %v", err)
+	}
+
+	savedMD := string(storage.files[article.FilePath])
+	if !strings.Contains(savedMD, "Fallback content") {
+		t.Errorf("expected fallback content, got:\n%s", savedMD)
 	}
 }

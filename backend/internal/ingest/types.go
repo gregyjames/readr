@@ -15,8 +15,9 @@ var (
 )
 
 type IngestRequest struct {
-	URL  string
-	Tags []string
+	URL      string   `json:"url"`
+	Tags     []string `json:"tags"`
+	Template string   `json:"template,omitempty"`
 }
 
 type IngestedArticle = repository.ArticleRecord
