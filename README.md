@@ -23,10 +23,16 @@ A minimal, self hosted read it later app written powered by Vue/Tailwind and Go.
 <table>
   <tr>
     <td>
-      <img src="https://github.com/gregyjames/readr/blob/main/samples/home.png?raw=true" width="750px"/>
+      <img src="https://github.com/gregyjames/readr/blob/main/samples/home.png?raw=true" width="350px"/>
     </td>
     <td>
-      <img src="https://github.com/gregyjames/readr/blob/main/samples/article.png?raw=true" width="750px"/>
+      <img src="https://github.com/gregyjames/readr/blob/main/samples/article.png?raw=true" width="350px"/>
+    </td>
+    <td>
+      <img src="https://github.com/gregyjames/readr/blob/main/samples/chat.png?raw=true" width="350px"/>
+    </td>
+    <td>
+      <img src="https://github.com/gregyjames/readr/blob/main/samples/graph.png?raw=true" width="350px"/>
     </td>
   </tr>
 </table>
