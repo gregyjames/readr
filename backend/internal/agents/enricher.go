@@ -15,8 +15,9 @@ import (
 )
 
 type openRouterRequest struct {
-	Model    string        `json:"model"`
-	Messages []interface{} `json:"messages"`
+	Model     string        `json:"model"`
+	Messages  []interface{} `json:"messages"`
+	MaxTokens int           `json:"max_tokens,omitempty"`
 }
 
 type ArticleRecord struct {
@@ -59,8 +60,8 @@ func (p *AgentPool) processEnrichFrontmatter(job Job) {
 		}
 	}
 	
-	if len(body) > 10000 {
-		body = body[:10000] // truncate to save tokens
+	if len(body) > 8000 {
+		body = body[:8000] // truncate to save tokens
 	}
 
 	// 3. Ask LLM to generate OKF frontmatter
@@ -86,27 +87,43 @@ Output ONLY the YAML block starting and ending with ---. No other text.`, time.N
 	}
 
 	reqPayload := openRouterRequest{
-		Model:    model, // Use the user's chosen model passed in from settings
-		Messages: apiMsgs,
+		Model:     model,
+		Messages:  apiMsgs,
+		MaxTokens: 600, // Explicitly constrain max tokens to prevent in-flight budget exhaustion
 	}
 	bodyJSON, _ := json.Marshal(reqPayload)
 
-	req, _ := http.NewRequest(http.MethodPost, "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(bodyJSON))
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("HTTP-Referer", "https://github.com/gregyjames/readr")
-	req.Header.Set("X-Title", "Readr Vault Agent")
-
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		p.logger.Error("Enricher LLM request failed", zap.Error(err))
-		return
+	var resp *http.Response
+	var bodyBytes []byte
+
+	// Try up to 2 times with backoff on in-flight budget limits
+	for attempt := 0; attempt < 2; attempt++ {
+		req, _ := http.NewRequest(http.MethodPost, "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(bodyJSON))
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("HTTP-Referer", "https://github.com/gregyjames/readr")
+		req.Header.Set("X-Title", "Readr Vault Agent")
+
+		var err error
+		resp, err = client.Do(req)
+		if err != nil {
+			p.logger.Error("Enricher LLM request failed", zap.Error(err))
+			return
+		}
+
+		if resp.StatusCode == http.StatusPaymentRequired || resp.StatusCode == http.StatusTooManyRequests {
+			resp.Body.Close()
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		break
 	}
+
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ = io.ReadAll(resp.Body)
 		p.logger.Error("Enricher LLM request returned non-200 status", zap.Int("status", resp.StatusCode), zap.String("body", string(bodyBytes)))
 		return
 	}

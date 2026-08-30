@@ -28,6 +28,7 @@ type llmLinkerResponseJSON struct {
 type linkerOpenRouterRequest struct {
 	Model          string        `json:"model"`
 	Messages       []interface{} `json:"messages"`
+	MaxTokens      int           `json:"max_tokens,omitempty"`
 	ResponseFormat *struct {
 		Type string `json:"type"`
 	} `json:"response_format,omitempty"`
@@ -147,8 +148,9 @@ Article Content:
 	}
 	
 	reqPayload := linkerOpenRouterRequest{
-		Model:    model,
-		Messages: apiMsgs,
+		Model:     model,
+		Messages:  apiMsgs,
+		MaxTokens: 600, // Explicitly constrain max tokens to prevent in-flight budget exhaustion
 		ResponseFormat: &struct {
 			Type string `json:"type"`
 		}{Type: "json_object"},
@@ -156,22 +158,37 @@ Article Content:
 
 	bodyJSON, _ := json.Marshal(reqPayload)
 
-	req, _ := http.NewRequest(http.MethodPost, "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(bodyJSON))
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("HTTP-Referer", "https://github.com/gregyjames/readr")
-	req.Header.Set("X-Title", "Readr Vault Agent")
-
 	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		p.logger.Error("AutoLinker LLM request failed", zap.Error(err))
-		return
+	var resp *http.Response
+	var bodyBytes []byte
+
+	// Try up to 2 times with backoff on in-flight budget limits
+	for attempt := 0; attempt < 2; attempt++ {
+		req, _ := http.NewRequest(http.MethodPost, "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(bodyJSON))
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("HTTP-Referer", "https://github.com/gregyjames/readr")
+		req.Header.Set("X-Title", "Readr Vault Agent")
+
+		var err error
+		resp, err = client.Do(req)
+		if err != nil {
+			p.logger.Error("AutoLinker LLM request failed", zap.Error(err))
+			return
+		}
+
+		if resp.StatusCode == http.StatusPaymentRequired || resp.StatusCode == http.StatusTooManyRequests {
+			resp.Body.Close()
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		break
 	}
+
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ = io.ReadAll(resp.Body)
 		p.logger.Error("AutoLinker LLM request returned non-200 status", zap.Int("status", resp.StatusCode), zap.String("body", string(bodyBytes)))
 		return
 	}

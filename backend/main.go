@@ -331,8 +331,8 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	repo := repository.NewGormRepository(db)
 	graphEngine := graph.NewEngine(repo)
 
-	// Start 3 Background Agents for the Vault
-	agents.InitPool(logger, db, dataDirectory, 3, func() {
+	// Start 1 Background Agent for the Vault (sequential execution prevents OpenRouter in-flight credit exhaustion)
+	agents.InitPool(logger, db, dataDirectory, 1, func() {
 		graphEngine.InvalidateCache()
 		broadcastEvent("graph-updated")
 	})
