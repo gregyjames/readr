@@ -1,17 +1,12 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import Home from './components/Home.vue'
-import Article from './components/Article.vue'
-import Graph from './components/Graph.vue'
-import ChatView from './views/ChatView.vue'
-import SettingsView from './views/SettingsView.vue'
 
 const routes = [
-  { path: '/', name: 'home', component: Home },
-  { path: '/articles/:id', component: Article, props: true },
-  { path: '/graph', name: 'graph', component: Graph },
-  { path: '/chat', name: 'chat', component: ChatView },
-  { path: '/chat/:id', name: 'chat-session', component: ChatView, props: true },
-  { path: '/settings', name: 'settings', component: SettingsView },
+  { path: '/', name: 'home', component: () => import('./components/Home.vue') },
+  { path: '/articles/:id', name: 'article', component: () => import('./components/Article.vue'), props: true },
+  { path: '/graph', name: 'graph', component: () => import('./components/Graph.vue') },
+  { path: '/chat', name: 'chat', component: () => import('./views/ChatView.vue') },
+  { path: '/chat/:id', name: 'chat-session', component: () => import('./views/ChatView.vue'), props: true },
+  { path: '/settings', name: 'settings', component: () => import('./views/SettingsView.vue') },
 ]
 
 const router = createRouter({
