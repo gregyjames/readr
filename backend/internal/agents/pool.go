@@ -9,6 +9,7 @@ type JobType string
 
 const (
 	JobTypeEnrichFrontmatter JobType = "enrich_frontmatter"
+	JobTypeAutoLinker        JobType = "auto_linker"
 )
 
 type Job struct {
@@ -18,20 +19,22 @@ type Job struct {
 }
 
 type AgentPool struct {
-	Queue         chan Job
-	logger        *zap.Logger
-	db            *gorm.DB
-	dataDirectory string
+	Queue                chan Job
+	logger               *zap.Logger
+	db                   *gorm.DB
+	dataDirectory        string
+	InvalidateGraphCache func()
 }
 
 var Pool *AgentPool
 
-func InitPool(logger *zap.Logger, db *gorm.DB, dataDir string, numWorkers int) {
+func InitPool(logger *zap.Logger, db *gorm.DB, dataDir string, numWorkers int, invalidateGraphCache func()) {
 	Pool = &AgentPool{
-		Queue:         make(chan Job, 100),
-		logger:        logger,
-		db:            db,
-		dataDirectory: dataDir,
+		Queue:                make(chan Job, 100),
+		logger:               logger,
+		db:                   db,
+		dataDirectory:        dataDir,
+		InvalidateGraphCache: invalidateGraphCache,
 	}
 
 	for i := 0; i < numWorkers; i++ {
@@ -48,6 +51,8 @@ func (p *AgentPool) worker(id int) {
 		switch job.Type {
 		case JobTypeEnrichFrontmatter:
 			p.processEnrichFrontmatter(job)
+		case JobTypeAutoLinker:
+			p.processAutoLinker(job)
 		default:
 			p.logger.Warn("Unknown job type", zap.String("type", string(job.Type)))
 		}

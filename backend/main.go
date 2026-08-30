@@ -310,6 +310,12 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	repo := repository.NewGormRepository(db)
 	graphEngine := graph.NewEngine(repo)
+
+	// Start 3 Background Agents for the Vault
+	agents.InitPool(logger, db, dataDirectory, 3, func() {
+		graphEngine.InvalidateCache()
+	})
+
 	ingester := ingest.NewIngester(
 		ingest.NewHTTPFetcher(30*time.Second),
 		ingest.NewContentExtractor(),
@@ -659,8 +665,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		graphEngine.InvalidateCache()
 		logger.Info("Article added successfully", zap.Int64("id", article.ID), zap.String("url", body.URL))
 
-		if c.Get("X-Enable-Agents") == "true" {
-			// Trigger Background Agent to format the markdown frontmatter to OKF spec
+		if c.Get("X-Agent-Enricher") == "true" {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeEnrichFrontmatter,
@@ -668,6 +673,12 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 					"api_key": c.Get("X-Openrouter-Key"),
 					"model":   c.Get("X-Openrouter-Model"),
 				},
+			})
+		}
+		if c.Get("X-Agent-Linker") == "true" {
+			agents.SubmitJob(agents.Job{
+				ArticleID: article.ID,
+				Type:      agents.JobTypeAutoLinker,
 			})
 		}
 		return c.JSON(fiber.Map{
@@ -718,9 +729,6 @@ func main() {
 	logger.Info("Available SQL drivers", zap.Strings("drivers", sql.Drivers()))
 
 	db := initDB()
-	
-	// Start 3 Background Agents for the Vault
-	agents.InitPool(logger, db, getDataDir(), 3)
 	
 	app := setupApp(db)
 
