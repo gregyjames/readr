@@ -5,6 +5,7 @@ import AddIcon from './assets/add.svg'
 import CardIcon from './assets/card.svg'
 import ListIcon from './assets/list.svg'
 import GraphIcon from './assets/graph.svg'
+import CommandPalette from './components/CommandPalette.vue'
 import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import emitter from './event-bus.ts'
@@ -140,6 +141,9 @@ function toggleTheme() {
       </div>
     </div>
   </nav>
+
+  <CommandPalette />
+
   <transition name="fade-blur">
     <div v-if="showModal" @click.self="closeModal" class="fixed inset-0 bg-[#0a0a0a]/60 backdrop-blur-md flex justify-center items-center z-50 transition-all duration-300 ease-out p-4">
       <!-- Modal content -->
