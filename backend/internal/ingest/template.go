@@ -13,6 +13,7 @@ import (
 
 type TemplateContext struct {
 	Title       string            `json:"title"`
+	Summary     string            `json:"summary"`
 	Source      string            `json:"source"`
 	URL         string            `json:"url"`
 	Domain      string            `json:"domain"`
@@ -35,6 +36,7 @@ type TemplateInfo struct {
 
 type TemplateRenderer interface {
 	ResolveTemplate(hostname string, override string) string
+	RequiresSummary(templatePath string) bool
 	Render(ctx context.Context, templatePath string, data TemplateContext) (string, error)
 	ListTemplates() ([]TemplateInfo, error)
 }
@@ -86,6 +88,17 @@ func (r *GonjaTemplateRenderer) ResolveTemplate(hostname string, override string
 	return ""
 }
 
+func (r *GonjaTemplateRenderer) RequiresSummary(templatePath string) bool {
+	if templatePath == "" {
+		return false
+	}
+	contentBytes, err := os.ReadFile(templatePath)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(contentBytes), "summary")
+}
+
 func (r *GonjaTemplateRenderer) Render(ctx context.Context, templatePath string, data TemplateContext) (string, error) {
 	tpl, err := gonja.FromFile(templatePath)
 	if err != nil {
@@ -94,6 +107,7 @@ func (r *GonjaTemplateRenderer) Render(ctx context.Context, templatePath string,
 
 	contextMap := exec.NewContext(map[string]interface{}{
 		"title":       data.Title,
+		"summary":     data.Summary,
 		"source":      data.Source,
 		"url":         data.Source,
 		"domain":      data.Domain,

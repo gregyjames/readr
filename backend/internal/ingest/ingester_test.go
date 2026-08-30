@@ -339,3 +339,99 @@ func TestIngester_TemplateSyntaxErrorFallsBackToDefault(t *testing.T) {
 		t.Errorf("expected fallback content, got:\n%s", savedMD)
 	}
 }
+
+type mockSummarizer struct {
+	called bool
+	result string
+}
+
+func (m *mockSummarizer) Summarize(ctx context.Context, title, body, apiKey, model string) (string, error) {
+	m.called = true
+	return m.result, nil
+}
+
+func TestIngester_SummaryInTemplate(t *testing.T) {
+	tempDir := t.TempDir()
+	templatesDir := filepath.Join(tempDir, "templates")
+	os.MkdirAll(templatesDir, 0755)
+
+	templateContent := `---
+title: {{ title }}
+---
+{% if summary %}
+Summary: {{ summary }}
+{% endif %}
+{{ content }}`
+
+	os.WriteFile(filepath.Join(templatesDir, "summarysite.com.jinja"), []byte(templateContent), 0644)
+
+	fetcher := &mockPageFetcher{
+		html: `<html><body><article><p>Main body content</p></article></body></html>`,
+	}
+	storage := newMockStorage()
+	repo := newMockRepository()
+	renderer := NewGonjaTemplateRenderer(templatesDir)
+	summarizer := &mockSummarizer{result: "Generated AI summary"}
+
+	ingester := NewIngester(fetcher, nil, storage, repo)
+	ingester.SetTemplateRenderer(renderer)
+	ingester.SetSummarizer(summarizer)
+
+	req := IngestRequest{
+		URL:    "https://summarysite.com/article",
+		APIKey: "test-key",
+	}
+
+	article, err := ingester.Ingest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Ingest failed: %v", err)
+	}
+
+	if !summarizer.called {
+		t.Errorf("expected summarizer to be called")
+	}
+
+	savedMD := string(storage.files[article.FilePath])
+	if !strings.Contains(savedMD, "Summary: Generated AI summary") {
+		t.Errorf("expected saved markdown to contain AI summary, got:\n%s", savedMD)
+	}
+}
+
+func TestIngester_NoSummaryWhenTemplateDoesNotNeedIt(t *testing.T) {
+	tempDir := t.TempDir()
+	templatesDir := filepath.Join(tempDir, "templates")
+	os.MkdirAll(templatesDir, 0755)
+
+	templateContent := `---
+title: {{ title }}
+---
+{{ content }}`
+
+	os.WriteFile(filepath.Join(templatesDir, "nosummary.com.jinja"), []byte(templateContent), 0644)
+
+	fetcher := &mockPageFetcher{
+		html: `<html><body><article><p>Main body content</p></article></body></html>`,
+	}
+	storage := newMockStorage()
+	repo := newMockRepository()
+	renderer := NewGonjaTemplateRenderer(templatesDir)
+	summarizer := &mockSummarizer{result: "Should not be called"}
+
+	ingester := NewIngester(fetcher, nil, storage, repo)
+	ingester.SetTemplateRenderer(renderer)
+	ingester.SetSummarizer(summarizer)
+
+	req := IngestRequest{
+		URL:    "https://nosummary.com/article",
+		APIKey: "test-key",
+	}
+
+	_, err := ingester.Ingest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Ingest failed: %v", err)
+	}
+
+	if summarizer.called {
+		t.Errorf("summarizer should NOT have been called when template does not require summary")
+	}
+}

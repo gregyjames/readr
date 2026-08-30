@@ -392,6 +392,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	templatesDir := filepath.Join(dataDirectory, "templates")
 	templateRenderer := ingest.NewGonjaTemplateRenderer(templatesDir)
 	ingester.SetTemplateRenderer(templateRenderer)
+	ingester.SetSummarizer(ingest.NewOpenRouterSummarizer())
 
 	chatRepo := chat.NewFileRepository(filepath.Join(dataDirectory, "chats"))
 	articleFetcher := &articleFileFetcher{dataDir: dataDirectory, db: db}
@@ -779,10 +780,21 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 		logger.Info("Adding new article", zap.String("url", body.URL))
 
+		apiKey := strings.TrimSpace(c.Get("X-Openrouter-Key"))
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
+		}
+		model := strings.TrimSpace(c.Get("X-Openrouter-Model"))
+		if model == "" {
+			model = strings.TrimSpace(os.Getenv("OPENROUTER_DEFAULT_MODEL"))
+		}
+
 		article, err := ingester.Ingest(c.Context(), ingest.IngestRequest{
 			URL:      body.URL,
 			Tags:     body.Tags,
 			Template: body.Template,
+			APIKey:   apiKey,
+			Model:    model,
 		})
 		if err != nil {
 			logger.Error("Failed to ingest article", zap.String("url", body.URL), zap.Error(err))
@@ -803,15 +815,6 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 		graphEngine.InvalidateCache()
 		logger.Info("Article added successfully", zap.Int64("id", article.ID), zap.String("url", body.URL))
-
-		apiKey := strings.TrimSpace(c.Get("X-Openrouter-Key"))
-		if apiKey == "" {
-			apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
-		}
-		model := strings.TrimSpace(c.Get("X-Openrouter-Model"))
-		if model == "" {
-			model = strings.TrimSpace(os.Getenv("OPENROUTER_MODEL"))
-		}
 
 		if c.Get("X-Agent-Enricher") == "true" {
 			agents.SubmitJob(agents.Job{

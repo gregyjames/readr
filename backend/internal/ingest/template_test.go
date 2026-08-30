@@ -108,3 +108,23 @@ func TestListTemplates(t *testing.T) {
 		t.Fatalf("expected 2 templates, got %d", len(templates))
 	}
 }
+
+func TestRequiresSummary(t *testing.T) {
+	tempDir := t.TempDir()
+	withSummary := filepath.Join(tempDir, "with.jinja")
+	withoutSummary := filepath.Join(tempDir, "without.jinja")
+
+	os.WriteFile(withSummary, []byte("Hello {{ summary }}"), 0644)
+	os.WriteFile(withoutSummary, []byte("Hello {{ title }}"), 0644)
+
+	renderer := NewGonjaTemplateRenderer(tempDir)
+	if !renderer.RequiresSummary(withSummary) {
+		t.Errorf("expected RequiresSummary to be true for template with summary")
+	}
+	if renderer.RequiresSummary(withoutSummary) {
+		t.Errorf("expected RequiresSummary to be false for template without summary")
+	}
+	if renderer.RequiresSummary("") {
+		t.Errorf("expected RequiresSummary to be false for empty path")
+	}
+}

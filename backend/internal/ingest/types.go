@@ -18,6 +18,8 @@ type IngestRequest struct {
 	URL      string   `json:"url"`
 	Tags     []string `json:"tags"`
 	Template string   `json:"template,omitempty"`
+	APIKey   string   `json:"api_key,omitempty"`
+	Model    string   `json:"model,omitempty"`
 }
 
 type IngestedArticle = repository.ArticleRecord
