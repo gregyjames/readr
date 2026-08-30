@@ -86,7 +86,7 @@ const submitForm = async () => {
     
     const chosenTemplate = selectedTemplate.value === 'auto'
       ? (matchedTemplate.value?.name || '')
-      : (selectedTemplate.value === 'none' ? '' : selectedTemplate.value)
+      : (selectedTemplate.value === 'none' ? 'none' : selectedTemplate.value)
 
     await fetch('/api/add', {
       method: 'POST',

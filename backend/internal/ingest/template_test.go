@@ -31,6 +31,10 @@ func TestDomainMatching(t *testing.T) {
 		{"blog.mycoolsite.org", "", "blog.mycoolsite.org.jinja"},
 		{"other.mycoolsite.org", "", ""},
 		{"randomsite.com", "github.com", "github.com.jinja"},
+		{"github.com", "none", ""},
+		{"github.com", "default", ""},
+		{"github.com", "builtin", ""},
+		{"github.com", "auto", "github.com.jinja"},
 	}
 
 	for _, tt := range tests {

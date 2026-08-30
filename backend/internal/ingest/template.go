@@ -63,9 +63,17 @@ func (r *GonjaTemplateRenderer) ResolveTemplate(hostname string, override string
 		return ""
 	}
 
+	overrideClean := strings.ToLower(strings.TrimSpace(override))
+	if overrideClean == "none" || overrideClean == "default" || overrideClean == "builtin" {
+		return ""
+	}
+	if overrideClean == "auto" {
+		overrideClean = ""
+	}
+
 	// 1. Manual override
-	if override != "" {
-		cleanedOverride := filepath.Base(strings.TrimSpace(override))
+	if overrideClean != "" {
+		cleanedOverride := filepath.Base(overrideClean)
 		overrideName := strings.TrimSuffix(cleanedOverride, ".jinja") + ".jinja"
 		target := filepath.Join(r.templatesDir, overrideName)
 		if fi, err := os.Stat(target); err == nil && !fi.IsDir() {
