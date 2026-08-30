@@ -32,7 +32,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w -extldflags '-static'" -o /app/readr .
 
 # Stage 3: Runtime Container (Target platform)
-FROM alpine:3.21
+FROM alpine:3.24
 WORKDIR /app
 
 # Install runtime SSL certs and timezone data using apk cache
