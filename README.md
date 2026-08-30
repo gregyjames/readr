@@ -75,8 +75,8 @@ The following variables are available inside Jinja templates:
 | `tags` | `[]string` | Array of extracted or assigned tags |
 | `tags_str` | `string` | Comma-separated tag string |
 | `cover_image` | `string` | URL of the cover or lead image |
-| `saved_date` | `string` | Formatted date string (`YYYY-MM-DD HH:MM:SS`) |
-| `timestamp` | `int64` | Unix epoch timestamp (seconds) |
+| `saved_date` | `string` | Formatted UTC date string (`YYYY-MM-DD`) |
+| `timestamp` | `int64` | Unix timestamp in milliseconds |
 | `author` | `string` | Article author (from metadata or OpenGraph) |
 | `description` | `string` | Article summary or OpenGraph description |
 | `site_name` | `string` | Publication or site name |
