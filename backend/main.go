@@ -180,6 +180,23 @@ func initDB() *gorm.DB {
 	return db
 }
 
+func splitTags(raw string) []string {
+	tags := make([]string, 0)
+	if raw == "" {
+		return tags
+	}
+	seen := make(map[string]bool)
+	for _, rawTag := range strings.Split(raw, ",") {
+		tag := strings.ToLower(strings.TrimSpace(rawTag))
+		if tag == "" || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		tags = append(tags, tag)
+	}
+	return tags
+}
+
 func syncArticleToFTS(db *gorm.DB, id int64, title string, tags string) {
 	db.Exec("DELETE FROM articles_fts WHERE rowid = ?", id)
 	err := db.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", id, title, tags).Error
@@ -598,12 +615,11 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		}
 		
 		type SearchResult struct {
-			ID      int64  `json:"id"`
-			Title   string `json:"title"`
-			Excerpt string `json:"excerpt"`
+			ID    int64    `json:"id"`
+			Title string   `json:"title"`
+			Tags  []string `json:"tags"`
 		}
 		
-		var results []SearchResult
 		// Format query for prefix matching (e.g. "pay" -> "pay*")
 		cleanQuery := strings.ReplaceAll(query, "\"", "")
 		cleanQuery = strings.ReplaceAll(cleanQuery, "'", "")
@@ -615,19 +631,32 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		}
 		safeQuery := strings.Join(parts, " AND ")
 		
+		var rows []struct {
+			ID    int64
+			Title string
+			Tags  string
+		}
 		err := db.Raw(`
-			SELECT rowid as id, title, snippet(articles_fts, 1, '<mark>', '</mark>', '...', 25) as excerpt
+			SELECT rowid as id, title, content as tags
 			FROM articles_fts
 			WHERE articles_fts MATCH ?
 			ORDER BY rank
 			LIMIT 15
-		`, safeQuery).Scan(&results).Error
+		`, safeQuery).Scan(&rows).Error
 		
 		if err != nil {
 			logger.Error("FTS search failed", zap.Error(err))
 			return c.Status(500).JSON(fiber.Map{"error": "Search failed"})
 		}
 		
+		results := make([]SearchResult, 0, len(rows))
+		for _, row := range rows {
+			results = append(results, SearchResult{
+				ID:    row.ID,
+				Title: row.Title,
+				Tags:  splitTags(row.Tags),
+			})
+		}
 		return c.JSON(results)
 	})
 

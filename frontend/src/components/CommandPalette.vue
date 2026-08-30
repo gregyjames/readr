@@ -56,10 +56,20 @@
               <span v-if="selectedIndex === index" class="text-xs text-gray-400 shrink-0 font-mono">↵ to jump</span>
             </div>
             
-            <p 
-              class="text-sm text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed ml-7 search-excerpt"
-              v-html="result.excerpt"
-            ></p>
+            <div v-if="result.tags.length" class="flex flex-wrap gap-2 ml-7">
+              <span
+                v-for="tag in result.tags"
+                :key="tag"
+                :class="[
+                  'text-[10px] font-bold px-3 py-1.5 rounded-full uppercase tracking-widest transition-colors',
+                  isMatchedTag(tag)
+                    ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-gray-100/80 dark:bg-white/5 text-gray-700 dark:text-gray-300'
+                ]"
+              >
+                {{ tag }}
+              </span>
+            </div>
           </button>
         </div>
         
@@ -81,7 +91,7 @@ import emitter from '../event-bus'
 interface SearchResult {
   id: number
   title: string
-  excerpt: string
+  tags: string[]
 }
 
 const router = useRouter()
@@ -132,6 +142,11 @@ const close = () => {
   isOpen.value = false
 }
 
+const isMatchedTag = (tag: string) => {
+  const terms = query.value.toLowerCase().split(/\s+/).filter(Boolean)
+  return terms.some(term => tag.startsWith(term))
+}
+
 const selectNext = () => {
   if (selectedIndex.value < results.value.length - 1) {
     selectedIndex.value++
@@ -173,17 +188,3 @@ watchDebounced(query, async (newQuery) => {
   }
 }, { debounce: 300 })
 </script>
-
-<style>
-.search-excerpt mark {
-  background-color: rgba(16, 185, 129, 0.2); /* Emerald 500 w/ opacity */
-  color: inherit;
-  border-radius: 2px;
-  padding: 0 2px;
-  font-weight: 600;
-}
-.dark .search-excerpt mark {
-  background-color: rgba(16, 185, 129, 0.25);
-  color: #fff;
-}
-</style>

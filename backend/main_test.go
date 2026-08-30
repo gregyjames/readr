@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -879,7 +880,130 @@ func TestStaticAndSPAFallback(t *testing.T) {
 	}
 }
 
+// setupApp does not create the FTS table, only initDB does, so search tests make their own.
+func initSearchTestDB(t *testing.T, articles ...Article) *gorm.DB {
+	t.Helper()
+	db := initTestDB()
+	db.Exec("DELETE FROM articles")
+	db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
+		title,
+		content,
+		tokenize='porter'
+	)`)
+	db.Exec("DELETE FROM articles_fts")
 
+	for _, article := range articles {
+		if err := db.Create(&article).Error; err != nil {
+			t.Fatalf("Failed to seed article %d: %v", article.ID, err)
+		}
+		syncArticleToFTS(db, article.ID, article.Title, article.Tags)
+	}
+	return db
+}
 
+type searchResultJSON struct {
+	ID    int64    `json:"id"`
+	Title string   `json:"title"`
+	Tags  []string `json:"tags"`
+}
 
+func searchBody(t *testing.T, db *gorm.DB, query string) ([]byte, []searchResultJSON) {
+	t.Helper()
+	app := setupApp(db)
+	target := "/api/search?q=" + url.QueryEscape(query)
+	resp, err := app.Test(httptest.NewRequest("GET", target, nil))
+	if err != nil {
+		t.Fatalf("Failed to GET %s: %v", target, err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("Expected 200 for %s, got %d", target, resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read response body: %v", err)
+	}
+	var results []searchResultJSON
+	if err := json.Unmarshal(body, &results); err != nil {
+		t.Fatalf("Failed to decode %s: %v (body %s)", target, err, string(body))
+	}
+	return body, results
+}
 
+func TestSearch_ReturnsMarkupInTitlesAsData(t *testing.T) {
+	const payload = `Payload <img src=x onerror="alert(1)">`
+	db := initSearchTestDB(t, Article{ID: 90, Title: payload, Tags: "security, <b>bold</b>"})
+
+	// Query a tag rather than the title, so any server-side snippet highlighting would fire.
+	body, results := searchBody(t, db, "security")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Title != payload {
+		t.Errorf("expected title %q, got %q", payload, results[0].Title)
+	}
+
+	if len(results[0].Tags) != 2 || results[0].Tags[1] != "<b>bold</b>" {
+		t.Errorf("expected tags [security <b>bold</b>], got %v", results[0].Tags)
+	}
+
+	// encoding/json escapes angle brackets, so check both forms. That escaping is not the
+	// protection here: JSON.parse restores it before the client renders.
+	for _, fragment := range []string{"<mark", `\u003cmark`} {
+		if strings.Contains(string(body), fragment) {
+			t.Errorf("expected no %s in response, got %s", fragment, string(body))
+		}
+	}
+}
+
+func TestSearch_ReturnsTagsArrayNotExcerpt(t *testing.T) {
+	db := initSearchTestDB(t, Article{ID: 91, Title: "Tagged Article", Tags: "security, tooling"})
+
+	body, results := searchBody(t, db, "Tagged")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	var raw []map[string]interface{}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if _, ok := raw[0]["excerpt"]; ok {
+		t.Errorf("expected no excerpt field, got %s", string(body))
+	}
+	if _, ok := raw[0]["tags"]; !ok {
+		t.Errorf("expected a tags field, got %s", string(body))
+	}
+}
+
+func TestSearch_NormalizesTags(t *testing.T) {
+	db := initSearchTestDB(t, Article{ID: 92, Title: "Mixed Case", Tags: "AI, ai, Ai, Tech, tech "})
+
+	_, results := searchBody(t, db, "Mixed")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	want := []string{"ai", "tech"}
+	if len(results[0].Tags) != len(want) {
+		t.Fatalf("expected tags %v, got %v", want, results[0].Tags)
+	}
+	for i := range want {
+		if results[0].Tags[i] != want[i] {
+			t.Fatalf("expected tags %v, got %v", want, results[0].Tags)
+		}
+	}
+}
+
+func TestSearch_ArticleWithoutTagsReturnsEmptyArray(t *testing.T) {
+	db := initSearchTestDB(t, Article{ID: 93, Title: "Untagged Piece", Tags: ""})
+
+	body, results := searchBody(t, db, "Untagged")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Tags == nil {
+		t.Errorf("expected an empty tag array, got nil")
+	}
+	if strings.Contains(string(body), `"tags":null`) {
+		t.Errorf("expected \"tags\":[], got %s", string(body))
+	}
+}
