@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { isAgentEnricherEnabled, isAgentLinkerEnabled, isAgentSummarizerEnabled } from '../utils/settings'
 
 interface ModelItem {
   id: string
@@ -44,9 +45,9 @@ const isLoadingModels = ref(false)
 const modelSearch = ref('')
 const isModelDropdownOpen = ref(false)
 const expandGraphContext = ref(true)
-const enableAgentEnricher = ref(localStorage.getItem('AGENT_ENRICHER') !== 'false') // Default true
-const enableAgentLinker = ref(localStorage.getItem('AGENT_LINKER') !== 'false') // Default true
-const enableAgentSummarizer = ref(localStorage.getItem('AGENT_SUMMARIZER') !== 'false') // Default true
+const enableAgentEnricher = ref(isAgentEnricherEnabled())
+const enableAgentLinker = ref(isAgentLinkerEnabled())
+const enableAgentSummarizer = ref(isAgentSummarizerEnabled())
 
 let timer: ReturnType<typeof setTimeout> | null = null
 
@@ -161,8 +162,11 @@ const saveSettings = () => {
   localStorage.setItem('OPENROUTER_MODEL', selectedModel.value)
   localStorage.setItem('GRAPH_CONTEXT_EXPANSION', String(expandGraphContext.value))
   localStorage.setItem('AGENT_ENRICHER', enableAgentEnricher.value ? 'true' : 'false')
+  localStorage.setItem('readr_agent_enricher', enableAgentEnricher.value ? 'true' : 'false')
   localStorage.setItem('AGENT_LINKER', enableAgentLinker.value ? 'true' : 'false')
+  localStorage.setItem('readr_agent_linker', enableAgentLinker.value ? 'true' : 'false')
   localStorage.setItem('AGENT_SUMMARIZER', enableAgentSummarizer.value ? 'true' : 'false')
+  localStorage.setItem('readr_agent_summarizer', enableAgentSummarizer.value ? 'true' : 'false')
   showSavedMessage('Settings saved successfully!')
 }
 
