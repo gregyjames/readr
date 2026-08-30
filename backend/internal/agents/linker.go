@@ -163,7 +163,18 @@ Article Content:
 
 	bodyJSON, _ := json.Marshal(reqPayload)
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			if len(via) > 0 {
+				req.Header.Set("Authorization", via[0].Header.Get("Authorization"))
+			}
+			return nil
+		},
+	}
 	var resp *http.Response
 	var bodyBytes []byte
 
