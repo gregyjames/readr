@@ -400,15 +400,21 @@ const loadContent = async () => {
     rawMarkdown.value = raw
     properties.value = parseFrontmatter(raw)
     
-    const parsedRaw = raw.replace(/\[\[(.*?)\]\]/g, (_, p1) => {
+    const parsedRaw = raw.replace(/\[\[([^[\]\n]+?)\]\]/g, (_, p1) => {
       const parts = p1.split('|')
-      const targetTitle = parts[0]
-      const display = parts.length > 1 ? parts[1] : parts[0]
+      const targetTitle = parts[0].trim()
+      const display = parts.length > 1 ? parts[1].trim() : targetTitle
       
-      const targetArticle = allArticles.value.find(a => a.title === targetTitle)
-      const url = targetArticle ? `/articles/${targetArticle.ID}` : '#'
-      
-      return `<a href="${url}" data-article-id="${targetArticle?.ID || ''}" class="wikilink font-semibold text-emerald-600 dark:text-emerald-400 no-underline hover:underline hover:text-emerald-700 dark:hover:text-emerald-300 transition-colors bg-emerald-50/50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded-md border border-emerald-100 dark:border-emerald-800/50">${display}</a>`
+      const targetArticle = allArticles.value.find(a => 
+        a.title.trim().toLowerCase() === targetTitle.toLowerCase() ||
+        String(a.ID) === targetTitle
+      )
+
+      if (targetArticle) {
+        return `<a href="/articles/${targetArticle.ID}" data-article-id="${targetArticle.ID}" class="wikilink font-semibold text-emerald-600 dark:text-emerald-400 no-underline hover:underline hover:text-emerald-700 dark:hover:text-emerald-300 transition-colors bg-emerald-50/50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded-md border border-emerald-100 dark:border-emerald-800/50 cursor-pointer">${display}</a>`
+      } else {
+        return `<span class="font-semibold text-emerald-600/70 dark:text-emerald-400/70 bg-emerald-50/30 dark:bg-emerald-900/10 px-1.5 py-0.5 rounded-md border border-dashed border-emerald-200/50 dark:border-emerald-800/30" title="Target article not found in vault: ${targetTitle}">${display}</span>`
+      }
     })
 
     // Strip YAML frontmatter (--- ... ---) so it never renders in the article view                                                                                 
@@ -483,13 +489,21 @@ const hidePreview = () => {
 }
 
 const handleWikilinkClick = (e: MouseEvent) => {
-  const target = (e.target as HTMLElement).closest('a');
+  const target = (e.target as HTMLElement).closest('a.wikilink, a') as HTMLAnchorElement | null
   if (target) {
-    const href = target.getAttribute('href');
-    if (href && href.startsWith('/articles/')) {
-      e.preventDefault();
+    const articleId = target.getAttribute('data-article-id')
+    const href = target.getAttribute('href')
+
+    if (articleId) {
+      e.preventDefault()
+      e.stopPropagation()
       showPreview.value = false
-      router.push(href);
+      router.push(`/articles/${articleId}`)
+    } else if (href && href.startsWith('/articles/')) {
+      e.preventDefault()
+      e.stopPropagation()
+      showPreview.value = false
+      router.push(href)
     }
   }
 }

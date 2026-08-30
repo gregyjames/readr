@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -199,9 +200,12 @@ Article Content:
 		return
 	}
 
-	// 5. Inject Semantic Links using Go
+	// 5. Inject Semantic Links using Go with Protected Boundary Replacement
 	linksAdded := 0
 	if len(parsed.LinksToInject) > 0 {
+		// Regex matching markdown links, existing wikilinks, and code blocks
+		reProtected := regexp.MustCompile(`(\[\[[\s\S]*?\]\]|\[[\s\S]*?\]\([\s\S]*?\)|` + "`[\\s\\S]*?`" + `)`)
+
 		for _, link := range parsed.LinksToInject {
 			phrase := strings.TrimSpace(link.ExactPhraseInText)
 			if phrase == "" {
@@ -227,16 +231,32 @@ Article Content:
 				replacement = fmt.Sprintf("[[%s|%s]]", targetTitle, phrase)
 			}
 
-			// Don't inject if already linked to this target
+			// Don't inject if already linked to this target anywhere in body
 			alreadyLinkedSimple := fmt.Sprintf("[[%s]]", targetTitle)
 			alreadyLinkedAliasedPrefix := fmt.Sprintf("[[%s|", targetTitle)
 			if strings.Contains(body, alreadyLinkedSimple) || strings.Contains(body, alreadyLinkedAliasedPrefix) {
 				continue
 			}
 
-			if strings.Contains(body, phrase) {
-				body = strings.Replace(body, phrase, replacement, 1)
-				
+			// Split into protected tokens and unprotected segments
+			parts := reProtected.Split(body, -1)
+			matches := reProtected.FindAllString(body, -1)
+
+			replaced := false
+			var newBody strings.Builder
+			for i, part := range parts {
+				if !replaced && strings.Contains(part, phrase) {
+					part = strings.Replace(part, phrase, replacement, 1)
+					replaced = true
+				}
+				newBody.WriteString(part)
+				if i < len(matches) {
+					newBody.WriteString(matches[i])
+				}
+			}
+
+			if replaced {
+				body = newBody.String()
 				var count int64
 				p.db.Table("article_links").Where("source_id = ? AND target_id = ?", job.ArticleID, link.ExistingArticleID).Count(&count)
 				if count == 0 {
