@@ -15,6 +15,7 @@ import (
 
 type ArticleFetcher interface {
 	GetMarkdownContent(ctx context.Context, id int64) (string, error)
+	GetLinkedArticles(ctx context.Context, id int64) ([]Attachment, error)
 }
 
 type Service struct {
@@ -74,7 +75,7 @@ func (s *Service) FetchModels(ctx context.Context, apiKey string) ([]byte, error
 	return io.ReadAll(resp.Body)
 }
 
-func (s *Service) StreamMessage(ctx context.Context, sessionID string, apiKey string, model string, userMsg Message, onChunk func(string) error) error {
+func (s *Service) StreamMessage(ctx context.Context, sessionID string, apiKey string, model string, expandContext bool, userMsg Message, onChunk func(string) error) error {
 	if apiKey == "" {
 		return errors.New("missing OpenRouter API key")
 	}
@@ -97,20 +98,39 @@ func (s *Service) StreamMessage(ctx context.Context, sessionID string, apiKey st
 		}
 	}
 
-	// 1. Build Context Prompt from Attachments
+	// 1. Build Context Prompt from Attachments and optional 1-hop expansion
 	var contextContent strings.Builder
+	processedArticleIDs := make(map[int64]bool)
+
 	for _, att := range userMsg.Attachments {
+		processedArticleIDs[att.ID] = true
 		if s.fetcher != nil {
 			content, err := s.fetcher.GetMarkdownContent(ctx, att.ID)
 			if err == nil && content != "" {
-				contextContent.WriteString(fmt.Sprintf("<article id=\"%d\" title=\"%s\">\n%s\n</article>\n\n", att.ID, att.Title, content))
+				contextContent.WriteString(fmt.Sprintf("<article id=\"%d\" title=\"%s\" relationship=\"direct-mention\">\n%s\n</article>\n\n", att.ID, att.Title, content))
+			}
+
+			// If 1-hop graph context expansion is enabled, pull connected notes
+			if expandContext {
+				linked, err := s.fetcher.GetLinkedArticles(ctx, att.ID)
+				if err == nil {
+					for _, link := range linked {
+						if !processedArticleIDs[link.ID] {
+							processedArticleIDs[link.ID] = true
+							linkedContent, err := s.fetcher.GetMarkdownContent(ctx, link.ID)
+							if err == nil && linkedContent != "" {
+								contextContent.WriteString(fmt.Sprintf("<article id=\"%d\" title=\"%s\" relationship=\"1-hop-connected (via %s)\">\n%s\n</article>\n\n", link.ID, link.Title, att.Title, linkedContent))
+							}
+						}
+					}
+				}
 			}
 		}
 	}
 
 	effectiveUserContent := userMsg.Content
 	if contextContent.Len() > 0 {
-		effectiveUserContent = fmt.Sprintf("Use the following referenced articles as context:\n\n%sUser Request:\n%s", contextContent.String(), userMsg.Content)
+		effectiveUserContent = fmt.Sprintf("Use the following referenced articles and knowledge graph context to answer the user request:\n\n%sUser Request:\n%s", contextContent.String(), userMsg.Content)
 	}
 
 	// Record the user message in session

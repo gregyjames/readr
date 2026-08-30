@@ -277,6 +277,7 @@ const sendMessage = async () => {
   scrollToBottom()
 
   try {
+    const expandGraph = localStorage.getItem('GRAPH_CONTEXT_EXPANSION') !== 'false'
     const response = await fetch(`/api/chats/${session.id}/message`, {
       method: 'POST',
       headers: {
@@ -285,7 +286,8 @@ const sendMessage = async () => {
       },
       body: JSON.stringify({
         ...userMsg,
-        model: currentModel.value
+        model: currentModel.value,
+        expandContext: expandGraph
       })
     })
 

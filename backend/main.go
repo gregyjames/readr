@@ -29,6 +29,7 @@ import (
 
 type articleFileFetcher struct {
 	dataDir string
+	db      *gorm.DB
 }
 
 func (f *articleFileFetcher) GetMarkdownContent(ctx context.Context, id int64) (string, error) {
@@ -38,6 +39,37 @@ func (f *articleFileFetcher) GetMarkdownContent(ctx context.Context, id int64) (
 		return "", err
 	}
 	return string(content), nil
+}
+
+func (f *articleFileFetcher) GetLinkedArticles(ctx context.Context, id int64) ([]chat.Attachment, error) {
+	if f.db == nil {
+		return nil, nil
+	}
+	var links []ArticleLink
+	if err := f.db.WithContext(ctx).Where("source_id = ? OR target_id = ?", id, id).Find(&links).Error; err != nil {
+		return nil, err
+	}
+
+	linkedIDMap := make(map[int64]bool)
+	for _, l := range links {
+		if l.SourceID == id && l.TargetID != id {
+			linkedIDMap[l.TargetID] = true
+		} else if l.TargetID == id && l.SourceID != id {
+			linkedIDMap[l.SourceID] = true
+		}
+	}
+
+	var results []chat.Attachment
+	for linkedID := range linkedIDMap {
+		var art Article
+		if err := f.db.WithContext(ctx).Select("id, title").First(&art, linkedID).Error; err == nil {
+			results = append(results, chat.Attachment{
+				ID:    art.ID,
+				Title: art.Title,
+			})
+		}
+	}
+	return results, nil
 }
 
 type RequestBody struct {
@@ -260,7 +292,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	)
 
 	chatRepo := chat.NewFileRepository(filepath.Join(dataDirectory, "chats"))
-	articleFetcher := &articleFileFetcher{dataDir: dataDirectory}
+	articleFetcher := &articleFileFetcher{dataDir: dataDirectory, db: db}
 	chatService := chat.NewService(chatRepo, articleFetcher)
 
 	api := app.Group("/api")
@@ -268,31 +300,31 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	api.Get("/chats", func(c *fiber.Ctx) error {
 		sessions, err := chatRepo.List(c.Context())
 		if err != nil {
-			logger.Error("Failed to list chats", zap.Error(err))
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to list chats"})
-		}
-		if sessions == nil {
-			sessions = []*chat.ChatSession{}
+			logger.Error("Failed to list chat sessions", zap.Error(err))
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to list chat sessions"})
 		}
 		return c.JSON(sessions)
 	})
 
 	api.Post("/chats", func(c *fiber.Ctx) error {
-		var body struct {
+		var req struct {
 			Title string `json:"title"`
 		}
-		_ = c.BodyParser(&body)
-		title := strings.TrimSpace(body.Title)
-		if title == "" {
+		_ = c.BodyParser(&req)
+
+		title := req.Title
+		if strings.TrimSpace(title) == "" {
 			title = "New Chat"
 		}
+
 		session := &chat.ChatSession{
 			ID:        uuid.New().String(),
 			Title:     title,
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
-			Messages:  []chat.Message{},
+			Messages:  make([]chat.Message, 0),
 		}
+
 		if err := chatRepo.Save(c.Context(), session); err != nil {
 			logger.Error("Failed to create chat session", zap.Error(err))
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to create chat session"})
@@ -303,7 +335,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	api.Get("/chats/:id", func(c *fiber.Ctx) error {
 		id := c.Params("id")
 		session, err := chatRepo.Get(c.Context(), id)
-		if err != nil || session == nil {
+		if err != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Chat session not found"})
 		}
 		return c.JSON(session)
@@ -341,10 +373,11 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		}
 
 		var req struct {
-			Role        chat.MessageRole  `json:"role"`
-			Content     string            `json:"content"`
-			Attachments []chat.Attachment `json:"attachments,omitempty"`
-			Model       string            `json:"model,omitempty"`
+			Role          chat.MessageRole  `json:"role"`
+			Content       string            `json:"content"`
+			Attachments   []chat.Attachment `json:"attachments,omitempty"`
+			Model         string            `json:"model,omitempty"`
+			ExpandContext bool              `json:"expandContext,omitempty"`
 		}
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid message payload"})
@@ -369,7 +402,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
-			err := chatService.StreamMessage(ctx, sessionID, apiKey, req.Model, msg, func(chunk string) error {
+			err := chatService.StreamMessage(ctx, sessionID, apiKey, req.Model, req.ExpandContext, msg, func(chunk string) error {
 				data, _ := json.Marshal(fiber.Map{"text": chunk})
 				if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
 					return err

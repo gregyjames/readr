@@ -40,12 +40,16 @@ func (m *mockArticleFetcher) GetMarkdownContent(ctx context.Context, id int64) (
 	return content, nil
 }
 
+func (m *mockArticleFetcher) GetLinkedArticles(ctx context.Context, id int64) ([]Attachment, error) {
+	return nil, nil
+}
+
 func TestService_StreamMessage_MissingAPIKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewFileRepository(tmpDir)
 	svc := NewService(repo, nil)
 
-	err := svc.StreamMessage(context.Background(), "session-1", "", "", Message{
+	err := svc.StreamMessage(context.Background(), "session-1", "", "", false, Message{
 		Role:    RoleUser,
 		Content: "Hello",
 	}, nil)
@@ -123,7 +127,7 @@ func TestService_StreamMessage_Success(t *testing.T) {
 
 	ctx := context.Background()
 	sessionID := "session-abc"
-	err := svc.StreamMessage(ctx, sessionID, "test-api-key", "anthropic/claude-3.5-sonnet", userMsg, onChunk)
+	err := svc.StreamMessage(ctx, sessionID, "test-api-key", "anthropic/claude-3.5-sonnet", false, userMsg, onChunk)
 	if err != nil {
 		t.Fatalf("StreamMessage failed: %v", err)
 	}
@@ -161,7 +165,7 @@ func TestService_StreamMessage_Success(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected message content to be string")
 	}
-	if !strings.Contains(firstMsgContent, `<article id="101" title="Go Concurrency">`) {
+	if !strings.Contains(firstMsgContent, `id="101"`) || !strings.Contains(firstMsgContent, `title="Go Concurrency"`) {
 		t.Errorf("expected payload content to contain article context, got %q", firstMsgContent)
 	}
 	if !strings.Contains(firstMsgContent, "Tell me about Go") {
@@ -243,7 +247,7 @@ func TestService_StreamMessage_MultiTurnAndLongTitle(t *testing.T) {
 		Content: "This is a very long message that definitely exceeds thirty characters in length.",
 	}
 
-	err := svc.StreamMessage(ctx, sessionID, "key", "", longUserMsg, nil)
+	err := svc.StreamMessage(ctx, sessionID, "key", "", false, longUserMsg, nil)
 	if err != nil {
 		t.Fatalf("StreamMessage failed: %v", err)
 	}
@@ -287,7 +291,7 @@ func TestService_StreamMessage_TitleTruncationNewSession(t *testing.T) {
 
 	longMsg := "This is a very long message that definitely exceeds thirty characters in length."
 	sessionID := "truncated-title-session"
-	err := svc.StreamMessage(context.Background(), sessionID, "key", "", Message{
+	err := svc.StreamMessage(context.Background(), sessionID, "key", "", false, Message{
 		Role:    RoleUser,
 		Content: longMsg,
 	}, nil)
@@ -319,7 +323,7 @@ func TestService_StreamMessage_ServerError(t *testing.T) {
 	svc := NewService(repo, nil)
 	svc.SetHTTPClient(mockClient)
 
-	err := svc.StreamMessage(context.Background(), "session-err", "bad-key", "", Message{
+	err := svc.StreamMessage(context.Background(), "session-err", "bad-key", "", false, Message{
 		Role:    RoleUser,
 		Content: "Hi",
 	}, nil)
@@ -353,7 +357,7 @@ func TestService_StreamMessage_CallbackError(t *testing.T) {
 		return expectedErr
 	}
 
-	err := svc.StreamMessage(context.Background(), "session-cb-err", "key", "", Message{
+	err := svc.StreamMessage(context.Background(), "session-cb-err", "key", "", false, Message{
 		Role:    RoleUser,
 		Content: "Hi",
 	}, onChunk)
@@ -375,7 +379,7 @@ func TestService_StreamMessage_RequestFailure(t *testing.T) {
 	svc := NewService(repo, nil)
 	svc.SetHTTPClient(mockClient)
 
-	err := svc.StreamMessage(context.Background(), "session-req-err", "key", "", Message{
+	err := svc.StreamMessage(context.Background(), "session-req-err", "key", "", false, Message{
 		Role:    RoleUser,
 		Content: "Hi",
 	}, nil)
@@ -386,6 +390,84 @@ func TestService_StreamMessage_RequestFailure(t *testing.T) {
 	if !strings.Contains(err.Error(), "openrouter request failed") {
 		t.Errorf("unexpected error message: %v", err)
 	}
+}
+
+func TestService_StreamMessage_1HopExpansion(t *testing.T) {
+	tmpDir := t.TempDir()
+	repo := NewFileRepository(tmpDir)
+
+	var receivedPrompt string
+	mockClient := newMockHTTPClient(func(req *http.Request) (*http.Response, error) {
+		var reqBody struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		json.NewDecoder(req.Body).Decode(&reqBody)
+		if len(reqBody.Messages) > 0 {
+			receivedPrompt = reqBody.Messages[0].Content
+		}
+
+		sseData := "data: {\"choices\":[{\"delta\":{\"content\":\"Expanded answer\"}}]}\n\ndata: [DONE]\n\n"
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(sseData)),
+		}, nil
+	})
+
+	mockFetcher := &mockExpansionFetcher{
+		articles: map[int64]string{
+			1: "Main Article Content",
+			2: "Connected Note Content",
+		},
+		links: map[int64][]Attachment{
+			1: {{ID: 2, Title: "Connected Note"}},
+		},
+	}
+
+	svc := NewService(repo, mockFetcher)
+	svc.SetHTTPClient(mockClient)
+
+	userMsg := Message{
+		Role:    RoleUser,
+		Content: "Analyze connections",
+		Attachments: []Attachment{
+			{ID: 1, Title: "Main Article"},
+		},
+	}
+
+	err := svc.StreamMessage(context.Background(), "session-exp", "key", "", true, userMsg, nil)
+	if err != nil {
+		t.Fatalf("StreamMessage with expansion failed: %v", err)
+	}
+
+	if !strings.Contains(receivedPrompt, "Main Article Content") {
+		t.Errorf("expected direct mention in prompt, got: %s", receivedPrompt)
+	}
+	if !strings.Contains(receivedPrompt, "Connected Note Content") {
+		t.Errorf("expected 1-hop connected note in prompt, got: %s", receivedPrompt)
+	}
+}
+
+type mockExpansionFetcher struct {
+	articles map[int64]string
+	links    map[int64][]Attachment
+}
+
+func (m *mockExpansionFetcher) GetMarkdownContent(ctx context.Context, id int64) (string, error) {
+	if content, ok := m.articles[id]; ok {
+		return content, nil
+	}
+	return "", errors.New("not found")
+}
+
+func (m *mockExpansionFetcher) GetLinkedArticles(ctx context.Context, id int64) ([]Attachment, error) {
+	if links, ok := m.links[id]; ok {
+		return links, nil
+	}
+	return nil, nil
 }
 
 func TestService_FetchModels(t *testing.T) {
