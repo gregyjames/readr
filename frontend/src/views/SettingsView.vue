@@ -44,6 +44,7 @@ const isLoadingModels = ref(false)
 const modelSearch = ref('')
 const isModelDropdownOpen = ref(false)
 const expandGraphContext = ref(true)
+const enableAgents = ref(localStorage.getItem('ENABLE_AGENTS') !== 'false') // Default true
 
 let timer: ReturnType<typeof setTimeout> | null = null
 
@@ -157,6 +158,7 @@ const saveSettings = () => {
 
   localStorage.setItem('OPENROUTER_MODEL', selectedModel.value)
   localStorage.setItem('GRAPH_CONTEXT_EXPANSION', String(expandGraphContext.value))
+  localStorage.setItem('ENABLE_AGENTS', enableAgents.value ? 'true' : 'false')
   showSavedMessage('Settings saved successfully!')
 }
 
@@ -391,6 +393,30 @@ const clearKey = () => {
           <span
             class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
             :class="expandGraphContext ? 'translate-x-5' : 'translate-x-0'"
+          />
+        </button>
+      </div>
+
+      <!-- Background Agents Toggle -->
+      <div class="pt-4 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between">
+        <div>
+          <div class="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-2">
+            <span>OKF Background Agents</span>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">Vault</span>
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 max-w-md">
+            Allow background agents to automatically extract and format OKF YAML frontmatter when new articles are added.
+          </p>
+        </div>
+        <button
+          type="button"
+          @click="enableAgents = !enableAgents"
+          class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+          :class="enableAgents ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
+        >
+          <span
+            class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+            :class="enableAgents ? 'translate-x-5' : 'translate-x-0'"
           />
         </button>
       </div>

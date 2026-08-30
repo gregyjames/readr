@@ -659,15 +659,17 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		graphEngine.InvalidateCache()
 		logger.Info("Article added successfully", zap.Int64("id", article.ID), zap.String("url", body.URL))
 
-		// Trigger Background Agent to format the markdown frontmatter to OKF spec
-		agents.SubmitJob(agents.Job{
-			ArticleID: article.ID,
-			Type:      agents.JobTypeEnrichFrontmatter,
-			Payload: map[string]interface{}{
-				"api_key": c.Get("X-Openrouter-Key"),
-				"model":   c.Get("X-Openrouter-Model"),
-			},
-		})
+		if c.Get("X-Enable-Agents") == "true" {
+			// Trigger Background Agent to format the markdown frontmatter to OKF spec
+			agents.SubmitJob(agents.Job{
+				ArticleID: article.ID,
+				Type:      agents.JobTypeEnrichFrontmatter,
+				Payload: map[string]interface{}{
+					"api_key": c.Get("X-Openrouter-Key"),
+					"model":   c.Get("X-Openrouter-Model"),
+				},
+			})
+		}
 		return c.JSON(fiber.Map{
 			"status":  "success",
 			"message": "Article saved",

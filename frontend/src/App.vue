@@ -21,13 +21,15 @@ const submitForm = async () => {
   try{
     const apiKey = localStorage.getItem('OPENROUTER_API_KEY') || ''
     const defaultModel = localStorage.getItem('DEFAULT_MODEL') || 'openai/gpt-4o-mini'
+    const enableAgents = localStorage.getItem('ENABLE_AGENTS') !== 'false'
     
     await fetch('/api/add', {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
         'X-Openrouter-Key': apiKey,
-        'X-Openrouter-Model': defaultModel
+        'X-Openrouter-Model': defaultModel,
+        'X-Enable-Agents': enableAgents ? 'true' : 'false'
       },
       body: JSON.stringify({ 
         url: url.value,
