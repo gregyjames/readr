@@ -6,10 +6,16 @@ A self-hosted, AI-native read-it-later app and knowledge graph engine powered by
 
 ## Features
 * **AI-Native Chat**: Query your reading collection using OpenRouter models. Reference notes directly with `@` mentions to feed full article text into the conversation.
+* **Autonomous Background Agents**:
+  * **OKF Frontmatter Enricher**: Automatically extracts clean, standardized Open Knowledge Format (OKF) YAML frontmatter (`type`, `title`, `description`, `resource`, `tags`, `generated` audit metadata) when articles are ingested.
+  * **Autonomous Graph Linker**: Discovers semantic connections between incoming articles and your existing vault, automatically injecting aliased `[[Wikilinks]]` and weaving nodes into the graph.
+  * **On-Demand Reparsing**: Trigger or re-run background agents on any article at any time with live toast progress notifications.
+  * **Configurable Worker Pipeline**: Toggle agents individually from the settings view to tailor background processing to your workflow.
 * **Knowledge Graph Engine**: Global and per-article force-directed graph views mapping relationships between articles, tags, and wikilinks.
+* **Real-Time Event Stream (SSE)**: Live server-sent event updates push background agent completions and graph changes straight to the browser without page refreshes.
 * **1-Hop Graph Context Expansion**: Optional setting that allows the AI to automatically traverse your graph edges and include connected notes and backlinks in its context.
-* **Wikilinks and Backlinks**: Bidirectional links between articles using `[[Title]]` syntax, with edge tracking and floating hover previews.
-* **Portable Markdown Storage**: All articles and chat histories are saved locally as markdown files, making your data easy to back up or sync with Obsidian.
+* **Wikilinks & Backlinks**: Bidirectional links between articles using `[[Title]]` and `[[Title|Alias]]` syntax, with edge tracking and floating hover previews.
+* **Portable Markdown Storage**: All articles, OKF metadata, and chat histories are saved locally as markdown files, making your data easy to back up or sync with Obsidian and Logseq.
 * **Lightweight and Fast**: Compact Go backend and Vue frontend with full dark mode support.
 
 ## Sample
