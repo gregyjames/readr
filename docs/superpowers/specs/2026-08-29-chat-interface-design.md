@@ -8,8 +8,13 @@ Chat history is stored locally in a dual-format (JSON for state management, Mark
 ## Architecture
 
 ### 1. Frontend (Vue 3)
-* **Route:** `/chat` (Dedicated full-page layout).
-* **Layout:**
+* **Routes:** 
+  * `/chat` (Dedicated full-page layout).
+  * `/settings` (Settings configuration screen).
+* **Settings Screen:**
+  * A dedicated page where the user can input and save their `OPENROUTER_API_KEY`.
+  * The key is stored locally (e.g., in `localStorage` or persisted via a backend config endpoint) so the user doesn't have to touch environment variables.
+* **Chat Layout:**
   * **Sidebar:** Lists previous chat sessions. Includes a "New Chat" button and a delete icon for each session.
   * **Main Pane:** Displays the chronological message history and a fixed input area at the bottom.
 * **@Mention System:**
@@ -35,10 +40,10 @@ Chat history is stored locally in a dual-format (JSON for state management, Mark
   * The backend reads the attached markdown files from disk.
   * Files are concatenated and wrapped in XML tags (`<article title="X">...</article>`) and injected into the OpenRouter system prompt.
 * **OpenRouter Proxy:** 
-  * The backend securely authenticates with OpenRouter using an `OPENROUTER_API_KEY` environment variable.
+  * The backend securely authenticates with OpenRouter using the user's configured API key (either passed from the frontend via an `Authorization: Bearer <key>` header, or loaded from backend configuration).
   * Streams the response chunks back to the Vue frontend via SSE (`Content-Type: text/event-stream`).
 
 ## Error Handling
-* Missing `OPENROUTER_API_KEY` returns a 500 error prompting the user to configure their environment.
+* Missing or invalid OpenRouter API key returns a 401 error, prompting the user to visit the `/settings` screen.
 * Attempting to attach a deleted or missing article logs a warning and skips the attachment.
 * Network timeouts to OpenRouter gracefully terminate the SSE stream and append an error message to the chat state.
