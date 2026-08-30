@@ -817,6 +817,68 @@ func TestChatEndpoints_StreamMessage_Unauthorized(t *testing.T) {
 	}
 }
 
+func TestStaticAndSPAFallback(t *testing.T) {
+	tempDataDir := t.TempDir()
+	tempDistDir := t.TempDir()
+	t.Setenv("DATA_DIR", tempDataDir)
+	t.Setenv("DIST_DIR", tempDistDir)
+
+	os.WriteFile(filepath.Join(tempDistDir, "index.html"), []byte("<html><body>Readr App</body></html>"), 0644)
+	os.MkdirAll(filepath.Join(tempDistDir, "assets"), 0755)
+	os.WriteFile(filepath.Join(tempDistDir, "assets", "main.js"), []byte("console.log('readr');"), 0644)
+
+	db := initTestDB()
+	app := setupApp(db)
+
+	// 1. Root / should return index.html
+	req := httptest.NewRequest("GET", "/", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Failed to GET /: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("Expected 200 for /, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "Readr App") {
+		t.Errorf("Expected index.html content, got %s", string(body))
+	}
+
+	// 2. Static asset /assets/main.js should return JS
+	req = httptest.NewRequest("GET", "/assets/main.js", nil)
+	resp, err = app.Test(req)
+	if err != nil {
+		t.Fatalf("Failed to GET /assets/main.js: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("Expected 200 for /assets/main.js, got %d", resp.StatusCode)
+	}
+
+	// 3. SPA Route /chat should fallback to index.html with 200 OK
+	req = httptest.NewRequest("GET", "/chat", nil)
+	resp, err = app.Test(req)
+	if err != nil {
+		t.Fatalf("Failed to GET /chat: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("Expected 200 for /chat (SPA fallback), got %d", resp.StatusCode)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "Readr App") {
+		t.Errorf("Expected index.html on SPA route /chat, got %s", string(body))
+	}
+
+	// 4. API 404 should not return index.html
+	req = httptest.NewRequest("GET", "/api/nonexistent", nil)
+	resp, err = app.Test(req)
+	if err != nil {
+		t.Fatalf("Failed to GET /api/nonexistent: %v", err)
+	}
+	if resp.StatusCode != 404 {
+		t.Errorf("Expected 404 for nonexistent API route, got %d", resp.StatusCode)
+	}
+}
+
 
 
 
