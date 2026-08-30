@@ -2,36 +2,9 @@
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
-import { marked } from 'marked'
-import hljs from 'highlight.js'
-import 'highlight.js/styles/github-dark.css'
-
-interface Article {
-  ID: number
-  title: string
-  article?: string
-  image?: string
-  tags?: string
-}
-
-interface Attachment {
-  id: number
-  title: string
-}
-
-interface Message {
-  role: 'user' | 'assistant' | 'system'
-  content: string
-  attachments?: Attachment[]
-}
-
-interface ChatSession {
-  id: string
-  title: string
-  created_at: string
-  updated_at: string
-  messages: Message[]
-}
+import type { Article, Attachment, Message, ChatSession } from '../types/chat'
+import ChatMessageItem from '../components/chat/ChatMessageItem.vue'
+import MentionDropdown from '../components/chat/MentionDropdown.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -116,7 +89,6 @@ const selectSession = async (id: string) => {
     }
     await nextTick()
     scrollToBottom()
-    highlightCodeBlocks()
   } catch (err) {
     console.error('Failed to get chat session', err)
     errorMessage.value = 'Failed to load conversation.'
@@ -249,22 +221,6 @@ const scrollToBottom = () => {
   }
 }
 
-const highlightCodeBlocks = () => {
-  document.querySelectorAll('.chat-prose pre code').forEach(block => {
-    hljs.highlightElement(block as HTMLElement)
-  })
-}
-
-const renderMarkdown = (content: string): string => {
-  if (!content) return ''
-  try {
-    const html = marked.parse(content, { async: false })
-    return typeof html === 'string' ? html : ''
-  } catch (err) {
-    return content
-  }
-}
-
 const sendMessage = async () => {
   const text = inputContent.value.trim()
   if ((!text && attachments.value.length === 0) || isStreaming.value) return
@@ -352,11 +308,16 @@ const sendMessage = async () => {
       for (const line of lines) {
         const trimmed = line.trim()
         if (trimmed.startsWith('data: ')) {
-          const data = trimmed.slice(6)
-          if (data === '[DONE]') {
+          const dataStr = trimmed.slice(6)
+          if (dataStr === '[DONE]') {
             continue
           }
-          assistantMsg.content += data
+          try {
+            const parsed = JSON.parse(dataStr)
+            assistantMsg.content += parsed.text ?? dataStr
+          } catch {
+            assistantMsg.content += dataStr
+          }
           scrollToBottom()
         } else if (trimmed.startsWith('event: error')) {
           console.error('SSE Error stream event')
@@ -375,9 +336,6 @@ const sendMessage = async () => {
         currentSession.value.title = updatedSessionRes.data.title
       }
     }
-
-    await nextTick()
-    highlightCodeBlocks()
   } catch (err: any) {
     console.error('Streaming error', err)
     errorMessage.value = err.message || 'An error occurred during communication.'
@@ -491,13 +449,13 @@ const sendMessage = async () => {
           <div class="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg w-full text-left">
             <button
               @click="inputContent = 'Summarize key takeaways across my reading list.'"
-              class="p-3 rounded-xl border border-gray-200/80 dark:border-gray-800/80 bg-gray-50/50 dark:bg-[#141414] hover:bg-gray-100 dark:hover:bg-[#1a1a1a] transition-all text-xs text-gray-700 dark:text-gray-300"
+              class="p-3 rounded-xl border border-gray-200/80 dark:border-gray-800/80 bg-gray-50/50 dark:bg-[#141414] hover:bg-gray-100 dark:hover:bg-[#1a1a1a] transition-all text-xs text-gray-700 dark:text-gray-300 cursor-pointer"
             >
               💡 "Summarize key takeaways across my reading list."
             </button>
             <button
               @click="inputContent = 'What are the main concepts covered in my attached articles?'"
-              class="p-3 rounded-xl border border-gray-200/80 dark:border-gray-800/80 bg-gray-50/50 dark:bg-[#141414] hover:bg-gray-100 dark:hover:bg-[#1a1a1a] transition-all text-xs text-gray-700 dark:text-gray-300"
+              class="p-3 rounded-xl border border-gray-200/80 dark:border-gray-800/80 bg-gray-50/50 dark:bg-[#141414] hover:bg-gray-100 dark:hover:bg-[#1a1a1a] transition-all text-xs text-gray-700 dark:text-gray-300 cursor-pointer"
             >
               💡 "What are the main concepts covered in my attached articles?"
             </button>
@@ -506,81 +464,32 @@ const sendMessage = async () => {
 
         <!-- Message List -->
         <template v-else>
-          <div
+          <ChatMessageItem
             v-for="(m, idx) in currentSession.messages"
             :key="idx"
-            class="flex flex-col space-y-2"
-          >
-            <!-- User Bubble -->
-            <div v-if="m.role === 'user'" class="flex justify-end">
-              <div class="max-w-2xl bg-[#111] dark:bg-white text-white dark:text-[#111] px-5 py-3.5 rounded-2xl rounded-tr-sm shadow-sm space-y-2">
-                <!-- Attachments in User Bubble -->
-                <div v-if="m.attachments && m.attachments.length > 0" class="flex flex-wrap gap-1.5 pb-1">
-                  <span
-                    v-for="att in m.attachments"
-                    :key="att.id"
-                    class="inline-flex items-center gap-1 bg-white/20 dark:bg-black/15 text-white dark:text-[#111] text-xs px-2.5 py-1 rounded-full font-medium"
-                  >
-                    📄 {{ att.title }}
-                  </span>
-                </div>
-                <div class="text-sm whitespace-pre-wrap leading-relaxed">{{ m.content }}</div>
-              </div>
-            </div>
-
-            <!-- Assistant Bubble -->
-            <div v-else-if="m.role === 'assistant'" class="flex justify-start">
-              <div class="max-w-3xl bg-gray-50/90 dark:bg-[#161616] border border-gray-200/60 dark:border-gray-800/60 text-gray-900 dark:text-gray-100 px-5 py-4 rounded-2xl rounded-tl-sm shadow-xs space-y-2 w-full sm:w-auto">
-                <div class="flex items-center gap-2 mb-2 pb-2 border-b border-gray-200/40 dark:border-gray-800/40">
-                  <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                  <span class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Readr Assistant</span>
-                </div>
-                <!-- Rendered Markdown -->
-                <div
-                  class="chat-prose text-sm leading-relaxed max-w-none text-gray-800 dark:text-gray-200"
-                  v-html="renderMarkdown(m.content)"
-                ></div>
-                <div v-if="isStreaming && idx === currentSession.messages.length - 1" class="flex items-center gap-1.5 pt-1 text-emerald-600 dark:text-emerald-400 text-xs">
-                  <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
-                  <span>Generating response...</span>
-                </div>
-              </div>
-            </div>
-          </div>
+            :message="m"
+            :is-streaming="isStreaming"
+            :is-last="idx === currentSession.messages.length - 1"
+          />
         </template>
       </div>
 
       <!-- Error Toast / Banner -->
       <div v-if="errorMessage" class="px-6 py-2 bg-red-50 dark:bg-red-950/40 border-t border-red-200 dark:border-red-900/60 text-xs text-red-600 dark:text-red-400 flex items-center justify-between">
         <span>{{ errorMessage }}</span>
-        <button @click="errorMessage = ''" class="hover:text-red-800 font-bold">&times;</button>
+        <button @click="errorMessage = ''" class="hover:text-red-800 font-bold cursor-pointer">&times;</button>
       </div>
 
       <!-- Input Area & Attachments -->
       <div class="p-4 border-t border-gray-200/60 dark:border-gray-800/60 bg-gray-50/30 dark:bg-[#121212]/30 relative">
         
         <!-- Floating Mention Autocomplete Dropdown -->
-        <div
+        <MentionDropdown
           v-if="showMentionDropdown && filteredMentionArticles.length > 0"
-          class="absolute bottom-full left-4 right-4 mb-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-xl overflow-hidden z-50 max-h-56 overflow-y-auto"
-        >
-          <div class="px-3 py-2 text-[11px] font-semibold text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-gray-800 uppercase tracking-wider">
-            Mention an article
-          </div>
-          <div
-            v-for="(art, idx) in filteredMentionArticles"
-            :key="art.ID"
-            @click="addAttachment(art)"
-            class="px-3 py-2.5 flex items-center gap-2.5 text-xs text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 hover:text-emerald-700 dark:hover:text-emerald-300 transition-colors cursor-pointer"
-            :class="selectedMentionIdx === idx ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-medium' : ''"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400 flex-shrink-0">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-            </svg>
-            <span class="truncate">{{ art.title }}</span>
-          </div>
-        </div>
+          :articles="filteredMentionArticles"
+          :selected-index="selectedMentionIdx"
+          @select="addAttachment"
+        />
 
         <!-- Attachment Chips -->
         <div v-if="attachments.length > 0" class="flex flex-wrap gap-2 mb-3">
@@ -593,7 +502,7 @@ const sendMessage = async () => {
             <button
               type="button"
               @click="removeAttachment(att.id)"
-              class="text-emerald-600 dark:text-emerald-400 hover:text-emerald-900 dark:hover:text-emerald-100 font-bold ml-1 transition-colors"
+              class="text-emerald-600 dark:text-emerald-400 hover:text-emerald-900 dark:hover:text-emerald-100 font-bold ml-1 transition-colors cursor-pointer"
             >&times;</button>
           </span>
         </div>
@@ -626,59 +535,3 @@ const sendMessage = async () => {
     </main>
   </div>
 </template>
-
-<style>
-/* Prose markdown formatting inside chat */
-.chat-prose p {
-  margin-bottom: 0.75rem;
-}
-.chat-prose p:last-child {
-  margin-bottom: 0;
-}
-.chat-prose ul, .chat-prose ol {
-  margin-left: 1.25rem;
-  margin-bottom: 0.75rem;
-}
-.chat-prose ul {
-  list-style-type: disc;
-}
-.chat-prose ol {
-  list-style-type: decimal;
-}
-.chat-prose li {
-  margin-bottom: 0.25rem;
-}
-.chat-prose code {
-  background-color: rgba(120, 120, 120, 0.15);
-  padding: 0.15rem 0.35rem;
-  border-radius: 0.25rem;
-  font-family: monospace;
-  font-size: 0.85em;
-}
-.chat-prose pre {
-  background-color: #0d1117;
-  color: #c9d1d9;
-  padding: 0.75rem 1rem;
-  border-radius: 0.75rem;
-  overflow-x: auto;
-  margin-top: 0.5rem;
-  margin-bottom: 0.75rem;
-}
-.chat-prose pre code {
-  background-color: transparent;
-  padding: 0;
-  color: inherit;
-}
-.chat-prose h1, .chat-prose h2, .chat-prose h3, .chat-prose h4 {
-  font-weight: 600;
-  margin-top: 1rem;
-  margin-bottom: 0.5rem;
-}
-.chat-prose blockquote {
-  border-left: 3px solid #10b981;
-  padding-left: 0.75rem;
-  margin-left: 0;
-  margin-bottom: 0.75rem;
-  opacity: 0.85;
-}
-</style>

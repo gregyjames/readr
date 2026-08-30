@@ -1,10 +1,23 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 
 const apiKey = ref('')
 const showKey = ref(false)
 const savedMessage = ref('')
 const isKeyConfigured = ref(false)
+let timer: ReturnType<typeof setTimeout> | null = null
+
+const showSavedMessage = (msg: string) => {
+  if (timer) {
+    clearTimeout(timer)
+    timer = null
+  }
+  savedMessage.value = msg
+  timer = setTimeout(() => {
+    savedMessage.value = ''
+    timer = null
+  }, 3000)
+}
 
 onMounted(() => {
   const existingKey = localStorage.getItem('OPENROUTER_API_KEY') || ''
@@ -12,31 +25,31 @@ onMounted(() => {
   isKeyConfigured.value = Boolean(existingKey.trim())
 })
 
+onUnmounted(() => {
+  if (timer) {
+    clearTimeout(timer)
+    timer = null
+  }
+})
+
 const saveKey = () => {
   const trimmed = apiKey.value.trim()
   if (trimmed) {
     localStorage.setItem('OPENROUTER_API_KEY', trimmed)
     isKeyConfigured.value = true
-    savedMessage.value = 'API key saved successfully!'
+    showSavedMessage('API key saved successfully!')
   } else {
     localStorage.removeItem('OPENROUTER_API_KEY')
     isKeyConfigured.value = false
-    savedMessage.value = 'API key removed.'
+    showSavedMessage('API key removed.')
   }
-
-  setTimeout(() => {
-    savedMessage.value = ''
-  }, 3000)
 }
 
 const clearKey = () => {
   apiKey.value = ''
   localStorage.removeItem('OPENROUTER_API_KEY')
   isKeyConfigured.value = false
-  savedMessage.value = 'API key cleared.'
-  setTimeout(() => {
-    savedMessage.value = ''
-  }, 3000)
+  showSavedMessage('API key cleared.')
 }
 </script>
 

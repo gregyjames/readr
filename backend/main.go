@@ -342,7 +342,8 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 			err := chatService.StreamMessage(c.Context(), sessionID, apiKey, msg, func(chunk string) error {
-				if _, err := fmt.Fprintf(w, "data: %s\n\n", chunk); err != nil {
+				data, _ := json.Marshal(fiber.Map{"text": chunk})
+				if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
 					return err
 				}
 				return w.Flush()
