@@ -10,6 +10,7 @@ type JobType string
 const (
 	JobTypeEnrichFrontmatter JobType = "enrich_frontmatter"
 	JobTypeAutoLinker        JobType = "auto_linker"
+	JobTypeSummarizer        JobType = "summarizer"
 )
 
 type Job struct {
@@ -53,6 +54,8 @@ func (p *AgentPool) worker(id int) {
 			p.processEnrichFrontmatter(job)
 		case JobTypeAutoLinker:
 			p.processAutoLinker(job)
+		case JobTypeSummarizer:
+			p.processSummarizer(job)
 		default:
 			p.logger.Warn("Unknown job type", zap.String("type", string(job.Type)))
 		}

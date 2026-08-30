@@ -95,8 +95,9 @@ saved: {{ saved_date }}
 type: github-repo
 ---
 
-# [{{ title }}]({{ source }})
-{% if description %}
+{% if summary %}
+> 💡 **Summary:** {{ summary }}
+{% elif description %}
 > {{ description }}
 {% endif %}
 

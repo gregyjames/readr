@@ -575,6 +575,16 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 				},
 			})
 		}
+		if apiKey != "" {
+			agents.SubmitJob(agents.Job{
+				ArticleID: article.ID,
+				Type:      agents.JobTypeSummarizer,
+				Payload: map[string]interface{}{
+					"api_key": apiKey,
+					"model":   model,
+				},
+			})
+		}
 
 		return c.JSON(fiber.Map{"status": "ok", "message": "Agents triggered"})
 	})
@@ -830,6 +840,16 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeAutoLinker,
+				Payload: map[string]interface{}{
+					"api_key": apiKey,
+					"model":   model,
+				},
+			})
+		}
+		if apiKey != "" {
+			agents.SubmitJob(agents.Job{
+				ArticleID: article.ID,
+				Type:      agents.JobTypeSummarizer,
 				Payload: map[string]interface{}{
 					"api_key": apiKey,
 					"model":   model,

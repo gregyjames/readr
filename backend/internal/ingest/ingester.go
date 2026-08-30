@@ -108,17 +108,9 @@ func (ing *Ingester) Ingest(ctx context.Context, req IngestRequest) (*IngestedAr
 	if ing.renderer != nil {
 		tplPath := ing.renderer.ResolveTemplate(parsedURL.Hostname(), req.Template)
 		if tplPath != "" {
-			summaryText := extracted.Description
-			if ing.renderer.RequiresSummary(tplPath) && ing.summarizer != nil && strings.TrimSpace(req.APIKey) != "" {
-				aiSummary, err := ing.summarizer.Summarize(ctx, extracted.Title, markdownContent, req.APIKey, req.Model)
-				if err == nil && strings.TrimSpace(aiSummary) != "" {
-					summaryText = strings.TrimSpace(aiSummary)
-				}
-			}
-
 			ctxData := TemplateContext{
 				Title:       extracted.Title,
-				Summary:     summaryText,
+				Summary:     extracted.Description,
 				Source:      trimmedURL,
 				URL:         trimmedURL,
 				Domain:      parsedURL.Hostname(),
