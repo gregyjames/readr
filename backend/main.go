@@ -528,8 +528,16 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		}
 		
 		var results []SearchResult
-		// Escape double quotes to prevent syntax errors in MATCH clause if user types quotes
-		safeQuery := strings.ReplaceAll(query, "\"", "\"\"")
+		// Format query for prefix matching (e.g. "pay" -> "pay*")
+		cleanQuery := strings.ReplaceAll(query, "\"", "")
+		cleanQuery = strings.ReplaceAll(cleanQuery, "'", "")
+		cleanQuery = strings.ReplaceAll(cleanQuery, "*", "")
+		
+		parts := strings.Fields(cleanQuery)
+		for i, p := range parts {
+			parts[i] = p + "*"
+		}
+		safeQuery := strings.Join(parts, " AND ")
 		
 		err := db.Raw(`
 			SELECT rowid as id, title, snippet(articles_fts, 1, '<mark>', '</mark>', '...', 25) as excerpt
