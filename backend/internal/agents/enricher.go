@@ -87,7 +87,7 @@ Output ONLY the YAML block starting and ending with ---. No other text.`, articl
 	}
 
 	reqPayload := openRouterRequest{
-		Model:    "openai/gpt-4o-mini", // Fast and cheap for formatting
+		Model:    model, // Use the user's chosen model passed in from settings
 		Messages: apiMsgs,
 	}
 	bodyJSON, _ := json.Marshal(reqPayload)
