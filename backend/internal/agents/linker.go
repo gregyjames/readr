@@ -44,35 +44,45 @@ func (p *AgentPool) processAutoLinker(job Job) {
 		return
 	}
 
-	// 1. Get the current article metadata so we can exclude it AND its duplicates
-	var currentArticle repository.ArticleRecord
-	if err := p.db.Table("articles").Where("id = ?", job.ArticleID).First(&currentArticle).Error; err != nil {
-		p.logger.Error("AutoLinker could not find current article", zap.Error(err))
+	// 1. Fetch all articles in a single query
+	var allArticles []repository.ArticleRecord
+	if err := p.db.Table("articles").Find(&allArticles).Error; err != nil {
+		p.logger.Error("AutoLinker could not load articles", zap.Error(err))
 		return
 	}
 
-	// 2. Get all other existing articles for linking (exclude duplicates of the same title)
-	var existingVaultText string
-	var allArticles []repository.ArticleRecord
-	if err := p.db.Table("articles").Where("id != ? AND title != ?", job.ArticleID, currentArticle.Title).Find(&allArticles).Error; err == nil {
-		var sb strings.Builder
-		seenTitles := make(map[string]bool)
-		for _, a := range allArticles {
-			title := strings.TrimSpace(a.Title)
-			if len(title) >= 4 && !seenTitles[title] { // skip very short titles and duplicates
-				sb.WriteString(fmt.Sprintf("- ID: %d, Title: %s\n", a.ID, title))
-				seenTitles[title] = true
-			}
+	// 2. Build a deduplicated prompt using a HashSet
+	seenTitles := make(map[string]struct{})
+	var currentTitle string
+
+	// Find the current article's title to exclude it
+	for _, a := range allArticles {
+		if a.ID == job.ArticleID {
+			currentTitle = strings.TrimSpace(a.Title)
+			seenTitles[currentTitle] = struct{}{} // Add to hashset to ignore it
+			break
 		}
-		existingVaultText = sb.String()
 	}
 
+	var sb strings.Builder
+	for _, a := range allArticles {
+		title := strings.TrimSpace(a.Title)
+		if len(title) < 4 { // skip very short titles
+			continue
+		}
+		if _, exists := seenTitles[title]; !exists {
+			sb.WriteString(fmt.Sprintf("- ID: %d, Title: %s\n", a.ID, title))
+			seenTitles[title] = struct{}{} // Mark as seen
+		}
+	}
+	
+	existingVaultText := sb.String()
 	if existingVaultText == "" {
 		p.logger.Info("No other articles in vault to link to", zap.Int64("article_id", job.ArticleID))
 		return
 	}
 
-	// 2. Read the markdown file
+	// 3. Read the markdown file
 	filePath := filepath.Join(p.dataDirectory, "articles", fmt.Sprintf("%d.md", job.ArticleID))
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
@@ -97,7 +107,7 @@ func (p *AgentPool) processAutoLinker(job Job) {
 		truncatedBody = truncatedBody[:10000] // truncate for LLM input
 	}
 
-	// 3. Ask LLM to generate Semantic Links
+	// 4. Ask LLM to generate Semantic Links
 	prompt := fmt.Sprintf(`You are an expert semantic graph builder.
 Identify organic connections between the new article and the existing vault articles. 
 Do NOT rewrite the article body. Instead, return a list of precise phrases from the text that should be converted into wikilinks.
@@ -180,7 +190,7 @@ Article Content:
 		return
 	}
 
-	// 4. Inject Semantic Links using Go
+	// 5. Inject Semantic Links using Go
 	linksAdded := 0
 	if len(parsed.LinksToInject) > 0 {
 		for _, link := range parsed.LinksToInject {
@@ -213,7 +223,7 @@ Article Content:
 		}
 	}
 
-	// 5. Overwrite the file safely
+	// 6. Overwrite the file safely
 	if linksAdded > 0 {
 		newContent := frontmatter + body
 		if err := os.WriteFile(filePath, []byte(newContent), 0644); err != nil {
