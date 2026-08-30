@@ -663,6 +663,10 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		agents.SubmitJob(agents.Job{
 			ArticleID: article.ID,
 			Type:      agents.JobTypeEnrichFrontmatter,
+			Payload: map[string]interface{}{
+				"api_key": c.Get("X-Openrouter-Key"),
+				"model":   c.Get("X-Openrouter-Model"),
+			},
 		})
 		return c.JSON(fiber.Map{
 			"status":  "success",
@@ -714,7 +718,7 @@ func main() {
 	db := initDB()
 	
 	// Start 3 Background Agents for the Vault
-	agents.InitPool(logger, db, dataDirectory, 3)
+	agents.InitPool(logger, db, getDataDir(), 3)
 	
 	app := setupApp(db)
 

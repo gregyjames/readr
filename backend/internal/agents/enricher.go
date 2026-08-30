@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,12 +25,15 @@ type ArticleRecord struct {
 }
 
 func (p *AgentPool) processEnrichFrontmatter(job Job) {
-	apiKey := os.Getenv("OPENROUTER_API_KEY")
+	apiKey, _ := job.Payload["api_key"].(string)
+	model, _ := job.Payload["model"].(string)
+	if model == "" {
+		model = "openai/gpt-4o-mini"
+	}
 	if apiKey == "" {
-		p.logger.Warn("OPENROUTER_API_KEY not set. Agent cannot enrich frontmatter.", zap.Int64("article_id", job.ArticleID))
+		p.logger.Warn("API key not set in job payload. Agent cannot enrich frontmatter.", zap.Int64("article_id", job.ArticleID))
 		return
 	}
-
 	// 1. Get the article metadata from DB
 	var article ArticleRecord
 	if err := p.db.Table("articles").Where("id = ?", job.ArticleID).First(&article).Error; err != nil {

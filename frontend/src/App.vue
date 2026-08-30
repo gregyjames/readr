@@ -19,9 +19,16 @@ const isSubmitting = ref(false)
 const submitForm = async () => {
   isSubmitting.value = true
   try{
+    const apiKey = localStorage.getItem('OPENROUTER_API_KEY') || ''
+    const defaultModel = localStorage.getItem('DEFAULT_MODEL') || 'openai/gpt-4o-mini'
+    
     await fetch('/api/add', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-Openrouter-Key': apiKey,
+        'X-Openrouter-Model': defaultModel
+      },
       body: JSON.stringify({ 
         url: url.value,
         Tags: tags.value
