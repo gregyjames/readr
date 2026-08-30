@@ -51,7 +51,6 @@ func broadcastEvent(event string) {
 	}
 }
 
-
 type articleFileFetcher struct {
 	dataDir string
 	db      *gorm.DB
@@ -167,17 +166,57 @@ func initDB() *gorm.DB {
 	}
 
 	db.AutoMigrate(&Article{}, &ArticleLink{})
+	ensureFTS(db)
 
-	err = db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
+	return db
+}
+
+func ensureFTS(db *gorm.DB) {
+	err := db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
 		title, 
 		content, 
 		tokenize='porter'
 	)`).Error
-	if err != nil && logger != nil {
-		logger.Error("Failed to create FTS5 table", zap.Error(err))
+	if err != nil {
+		if logger != nil {
+			logger.Error("Failed to create FTS5 table", zap.Error(err))
+		}
+		return
 	}
 
-	return db
+	var articleCount, indexedCount int64
+	db.Model(&Article{}).Count(&articleCount)
+	if err := db.Raw("SELECT count(*) FROM articles_fts").Scan(&indexedCount).Error; err != nil {
+		if logger != nil {
+			logger.Error("Failed to count FTS5 rows", zap.Error(err))
+		}
+		return
+	}
+	if articleCount == indexedCount {
+		return
+	}
+
+	var articles []Article
+	if err := db.Find(&articles).Error; err != nil {
+		if logger != nil {
+			logger.Error("Failed to load articles for FTS5 rebuild", zap.Error(err))
+		}
+		return
+	}
+
+	db.Exec("DELETE FROM articles_fts")
+	for _, article := range articles {
+		syncArticleToFTS(db, article.ID, article.Title, article.Tags)
+	}
+	if logger != nil {
+		logger.Info("Rebuilt FTS5 index", zap.Int64("articles", articleCount), zap.Int64("previouslyIndexed", indexedCount))
+	}
+}
+
+type SearchResult struct {
+	ID      int64  `json:"id"`
+	Title   string `json:"title"`
+	Excerpt string `json:"excerpt"`
 }
 
 func syncArticleToFTS(db *gorm.DB, id int64, title string, tags string) {
@@ -291,6 +330,8 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		}
 	}
 
+	ensureFTS(db)
+
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
@@ -320,7 +361,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		filename := c.Params("filename")
 		clean := filepath.Clean(filename)
 		filePath := filepath.Join(dataDirectory, "articles", clean)
-		
+
 		content, err := os.ReadFile(filePath)
 		if err != nil {
 			return c.Status(fiber.StatusNotFound).SendString("Article not found")
@@ -363,9 +404,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return c.JSON(sessions)
 	})
 
-
-
-// @title Readr Vault API
+	// @title Readr Vault API
 	api.Post("/chats", func(c *fiber.Ctx) error {
 		var req struct {
 			Title string `json:"title"`
@@ -592,42 +631,35 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	})
 
 	api.Get("/search", func(c *fiber.Ctx) error {
-		query := c.Query("q")
-		if query == "" {
-			return c.JSON([]interface{}{})
-		}
-		
-		type SearchResult struct {
-			ID      int64  `json:"id"`
-			Title   string `json:"title"`
-			Excerpt string `json:"excerpt"`
-		}
-		
-		var results []SearchResult
+		results := make([]SearchResult, 0)
+
 		// Format query for prefix matching (e.g. "pay" -> "pay*")
-		cleanQuery := strings.ReplaceAll(query, "\"", "")
+		cleanQuery := strings.ReplaceAll(c.Query("q"), "\"", "")
 		cleanQuery = strings.ReplaceAll(cleanQuery, "'", "")
 		cleanQuery = strings.ReplaceAll(cleanQuery, "*", "")
-		
+
 		parts := strings.Fields(cleanQuery)
+		if len(parts) == 0 {
+			return c.JSON(results)
+		}
 		for i, p := range parts {
 			parts[i] = p + "*"
 		}
-		safeQuery := strings.Join(parts, " AND ")
-		
+		safeQuery := strings.Join(parts, " OR ")
+
 		err := db.Raw(`
 			SELECT rowid as id, title, snippet(articles_fts, 1, '<mark>', '</mark>', '...', 25) as excerpt
 			FROM articles_fts
 			WHERE articles_fts MATCH ?
-			ORDER BY rank
+			ORDER BY bm25(articles_fts, 1.0, 3.0)
 			LIMIT 15
 		`, safeQuery).Scan(&results).Error
-		
+
 		if err != nil {
 			logger.Error("FTS search failed", zap.Error(err))
 			return c.Status(500).JSON(fiber.Map{"error": "Search failed"})
 		}
-		
+
 		return c.JSON(results)
 	})
 
@@ -681,7 +713,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	api.Post("/edit/:id", func(c *fiber.Ctx) error {
 		id := c.Params("id")
-		
+
 		var req struct {
 			Content string `json:"content"`
 		}
@@ -698,16 +730,16 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		if err := os.WriteFile(sourcePath, []byte(req.Content), 0644); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save article"})
 		}
-		
+
 		syncArticleToFTS(db, article.ID, article.Title, article.Tags)
-		
+
 		// Sync links to database
 		linkRegex := regexp.MustCompile(`\[\[([^\]|]+)(?:\|([^\]]+))?\]\]`)
 		matches := linkRegex.FindAllStringSubmatch(req.Content, -1)
-		
+
 		// Delete existing outgoing links to prevent stale links
 		db.Where("source_id = ?", article.ID).Delete(&ArticleLink{})
-		
+
 		for _, match := range matches {
 			targetTitle := strings.TrimSpace(match[1])
 			var target Article
@@ -772,8 +804,8 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 				ArticleID: article.ID,
 				Type:      agents.JobTypeEnrichFrontmatter,
 				Payload: map[string]interface{}{
-					"api_key":        apiKey,
-					"model":          model,
+					"api_key": apiKey,
+					"model":   model,
 				},
 			})
 		}
@@ -782,8 +814,8 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 				ArticleID: article.ID,
 				Type:      agents.JobTypeAutoLinker,
 				Payload: map[string]interface{}{
-					"api_key":        apiKey,
-					"model":          model,
+					"api_key": apiKey,
+					"model":   model,
 				},
 			})
 		}
@@ -835,7 +867,7 @@ func main() {
 	logger.Info("Available SQL drivers", zap.Strings("drivers", sql.Drivers()))
 
 	db := initDB()
-	
+
 	app := setupApp(db)
 
 	port := os.Getenv("PORT")
