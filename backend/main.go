@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"example.com/backend/internal/agents"
@@ -27,6 +28,25 @@ import (
 	"gorm.io/gorm"
 	_ "modernc.org/sqlite"
 )
+
+// SSE Event Hub for Agent Broadcasts
+var (
+	eventClients sync.Map
+)
+
+func broadcastEvent(event string) {
+	eventClients.Range(func(key, value interface{}) bool {
+		if ch, ok := key.(chan string); ok {
+			// Non-blocking send
+			select {
+			case ch <- event:
+			default:
+			}
+		}
+		return true
+	})
+}
+
 
 type articleFileFetcher struct {
 	dataDir string
@@ -314,6 +334,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	// Start 3 Background Agents for the Vault
 	agents.InitPool(logger, db, dataDirectory, 3, func() {
 		graphEngine.InvalidateCache()
+		broadcastEvent("graph-updated")
 	})
 
 	ingester := ingest.NewIngester(
@@ -338,6 +359,9 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return c.JSON(sessions)
 	})
 
+
+
+// @title Readr Vault API
 	api.Post("/chats", func(c *fiber.Ctx) error {
 		var req struct {
 			Title string `json:"title"`
@@ -560,6 +584,24 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		}
 		
 		return c.JSON(results)
+	})
+
+	api.Get("/events", func(c *fiber.Ctx) error {
+		c.Set("Content-Type", "text/event-stream")
+		c.Set("Cache-Control", "no-cache")
+		c.Set("Connection", "keep-alive")
+
+		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			ch := make(chan string, 10)
+			eventClients.Store(ch, true)
+			defer eventClients.Delete(ch)
+
+			for msg := range ch {
+				fmt.Fprintf(w, "data: %s\n\n", msg)
+				w.Flush()
+			}
+		})
+		return nil
 	})
 
 	api.Get("/graph", func(c *fiber.Ctx) error {

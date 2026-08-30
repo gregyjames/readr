@@ -9,6 +9,7 @@ import { Network } from 'vis-network'
 import ArticleHoverPreview from './ArticleHoverPreview.vue'
 import GraphZoomControls from './GraphZoomControls.vue'
 import { useGraphZoom } from '../composables/useGraphZoom'
+import emitter from '../event-bus'
 
 defineProps<{ id?: string }>()
 
@@ -454,6 +455,11 @@ onMounted(async () => {
   await fetchArticles()
   await loadContent()
   await loadLocalGraph()
+  
+  emitter.on('article-added', async () => {
+    await fetchArticles()
+    await loadContent()
+  })
   document.addEventListener('mouseup', handleSelection)
   document.addEventListener('mousedown', hideLinker)
   

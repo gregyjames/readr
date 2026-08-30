@@ -23,6 +23,7 @@ import { useRouter } from 'vue-router';
 import axios from 'axios';
 import { Network } from 'vis-network';
 import GraphZoomControls from './GraphZoomControls.vue';
+import emitter from '../event-bus';
 
 const props = defineProps<{
   articleId: string | number;
@@ -199,6 +200,10 @@ onMounted(() => {
   themeObserver.observe(document.documentElement, {
     attributes: true,
     attributeFilter: ['class'],
+  });
+
+  emitter.on('article-added', () => {
+    initLocalGraph();
   });
 });
 

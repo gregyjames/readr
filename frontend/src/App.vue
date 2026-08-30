@@ -4,7 +4,7 @@ import HomeIcon from './assets/home.svg'
 import AddIcon from './assets/add.svg'
 import GraphIcon from './assets/graph.svg'
 import CommandPalette from './components/CommandPalette.vue'
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import emitter from './event-bus.ts'
 
@@ -15,6 +15,15 @@ const url = ref('')
 const tags = ref<string[]>([])
 const tagInput = ref('')
 const isSubmitting = ref(false)
+
+onMounted(() => {
+  const evtSource = new EventSource('/api/events');
+  evtSource.onmessage = (event) => {
+    if (event.data === 'graph-updated') {
+      emitter.emit('article-added') // Refetch graph and articles
+    }
+  }
+})
 
 const submitForm = async () => {
   isSubmitting.value = true
