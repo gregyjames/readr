@@ -265,12 +265,12 @@ const sendMessage = async () => {
   attachments.value = []
   showMentionDropdown.value = false
 
-  // Prepare Assistant message for streaming
-  const assistantMsg: Message = {
+  // Prepare Assistant message for streaming in reactive session array
+  session.messages.push({
     role: 'assistant',
     content: ''
-  }
-  session.messages.push(assistantMsg)
+  })
+  const assistantMsg = session.messages[session.messages.length - 1]
   isStreaming.value = true
 
   await nextTick()
