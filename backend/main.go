@@ -142,7 +142,32 @@ func initDB() *gorm.DB {
 	}
 
 	db.AutoMigrate(&Article{}, &ArticleLink{})
+
+	err = db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
+		title, 
+		content, 
+		tokenize='porter'
+	)`).Error
+	if err != nil && logger != nil {
+		logger.Error("Failed to create FTS5 table", zap.Error(err))
+	}
+
 	return db
+}
+
+func syncArticleToFTS(db *gorm.DB, id int64, title string, content string) {
+	db.Exec("DELETE FROM articles_fts WHERE rowid = ?", id)
+	err := db.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", id, title, content).Error
+	if err != nil && logger != nil {
+		logger.Error("Failed to sync article to FTS5", zap.Int64("id", id), zap.Error(err))
+	}
+}
+
+func deleteArticleFromFTS(db *gorm.DB, id string) {
+	err := db.Exec("DELETE FROM articles_fts WHERE rowid = ?", id).Error
+	if err != nil && logger != nil {
+		logger.Error("Failed to delete article from FTS5", zap.String("id", id), zap.Error(err))
+	}
 }
 
 type LinkError struct {
@@ -452,6 +477,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			})
 		}
 
+		deleteArticleFromFTS(db, id)
 		graphEngine.InvalidateCache()
 		logger.Info("Article deleted successfully", zap.String("id", id))
 		return c.JSON(fiber.Map{
@@ -487,6 +513,38 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 		graphEngine.InvalidateCache()
 		return c.JSON(fiber.Map{"status": "success", "linkId": link.ID})
+	})
+
+	api.Get("/search", func(c *fiber.Ctx) error {
+		query := c.Query("q")
+		if query == "" {
+			return c.JSON([]interface{}{})
+		}
+		
+		type SearchResult struct {
+			ID      int64  `json:"id"`
+			Title   string `json:"title"`
+			Excerpt string `json:"excerpt"`
+		}
+		
+		var results []SearchResult
+		// Escape double quotes to prevent syntax errors in MATCH clause if user types quotes
+		safeQuery := strings.ReplaceAll(query, "\"", "\"\"")
+		
+		err := db.Raw(`
+			SELECT rowid as id, title, snippet(articles_fts, 1, '<mark>', '</mark>', '...', 25) as excerpt
+			FROM articles_fts
+			WHERE articles_fts MATCH ?
+			ORDER BY rank
+			LIMIT 15
+		`, safeQuery).Scan(&results).Error
+		
+		if err != nil {
+			logger.Error("FTS search failed", zap.Error(err))
+			return c.Status(500).JSON(fiber.Map{"error": "Search failed"})
+		}
+		
+		return c.JSON(results)
 	})
 
 	api.Get("/graph", func(c *fiber.Ctx) error {
@@ -532,6 +590,8 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		if err := os.WriteFile(sourcePath, []byte(req.Content), 0644); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save article"})
 		}
+		
+		syncArticleToFTS(db, article.ID, article.Title, req.Content)
 		
 		// Sync links to database
 		linkRegex := regexp.MustCompile(`\[\[([^\]|]+)(?:\|([^\]]+))?\]\]`)
@@ -584,6 +644,9 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			}
 			return c.Status(500).SendString("Failed to fetch the page")
 		}
+
+		contentBytes, _ := os.ReadFile(filepath.Join(dataDirectory, "articles", fmt.Sprintf("%d.md", article.ID)))
+		syncArticleToFTS(db, article.ID, article.Title, string(contentBytes))
 
 		graphEngine.InvalidateCache()
 		logger.Info("Article added successfully", zap.Int64("id", article.ID), zap.String("url", body.URL))
