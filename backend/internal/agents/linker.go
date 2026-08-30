@@ -28,7 +28,6 @@ type llmLinkerResponseJSON struct {
 type linkerOpenRouterRequest struct {
 	Model          string        `json:"model"`
 	Messages       []interface{} `json:"messages"`
-	MaxTokens      int           `json:"max_tokens,omitempty"`
 	ResponseFormat *struct {
 		Type string `json:"type"`
 	} `json:"response_format,omitempty"`
@@ -148,9 +147,8 @@ Article Content:
 	}
 	
 	reqPayload := linkerOpenRouterRequest{
-		Model:     model,
-		Messages:  apiMsgs,
-		MaxTokens: 2500, // Generous token ceiling to allow reasoning models room to think before outputting JSON
+		Model:    model,
+		Messages: apiMsgs,
 		ResponseFormat: &struct {
 			Type string `json:"type"`
 		}{Type: "json_object"},
