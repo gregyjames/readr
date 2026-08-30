@@ -3,21 +3,15 @@
 ![Docker Image Size (tag)](https://img.shields.io/docker/image-size/gjames8/readr-backend/latest?label=Backend)
 
 # Readr
-A minimal, self hosted read it later app written powered by Vue/Tailwind and Go. All documents are stored as markdown files in a shared volume and tracked by the backend in a SQLLite database. Why make this? Because Pocket screwed me over **one** too many times. 
+A self-hosted, AI-native read-it-later app and knowledge graph engine powered by Vue, Tailwind, and Go. Articles are saved as clean markdown files on disk and tracked in a SQLite database.
 
 ## Features
-- Fast and super lightweight (2mb frontend/5mb backend)
-- Automatically save and convert articles and their images as markdown
-- Beautiful typography and syntax hilighting (imo)
-
-## Todo
-- [ ] Add proxy for backend so it's not hardcoded (do not change port)
-- [ ] Dark mode (should have been the first thing I added, do I even code bro)
-  - [ ] I think my tailwind usage **might** be f***** (when dark set to class, it's always showing up) so I need to fix that first.
-- [ ] Make more responsive (the children long for the responsive grids)
-- [ ] Image compression?
-- [ ] Authentication? Protect endpoints? 
-- [ ] Add an edit mode for tags/article details
+* **AI-Native Chat**: Query your reading collection using OpenRouter models. Reference notes directly with `@` mentions to feed full article text into the conversation.
+* **Knowledge Graph Engine**: Global and per-article force-directed graph views mapping relationships between articles, tags, and wikilinks.
+* **1-Hop Graph Context Expansion**: Optional setting that allows the AI to automatically traverse your graph edges and include connected notes and backlinks in its context.
+* **Wikilinks and Backlinks**: Bidirectional links between articles using `[[Title]]` syntax, with edge tracking and floating hover previews.
+* **Portable Markdown Storage**: All articles and chat histories are saved locally as markdown files, making your data easy to back up or sync with Obsidian.
+* **Lightweight and Fast**: Compact Go backend and Vue frontend with full dark mode support.
 
 ## Sample
 <table>
@@ -58,13 +52,10 @@ services:
 
 ## Design choices
 ### Why markdown?
-Yeah it probably would have been easier to just save them as HTML files but I have a script that syncs these with my obsidian vault, so I needed these to be markdown. 
-### Why is the design so meh?
-WELL I LIKE IT ಥ‿ಥ this is what happens when you let backend guys work on GUIs you guys are lucky I didn't make this a CLI app. In all seriousness though, I was going for a very lightweight minimal design so if you see something that needs to be fixed or can be improved please feel free to open a PR! 
+Saving as markdown keeps the library portable and easy to sync with tools like Obsidian.
 
-## Limitations
-1. I am currently kinda hard coding that route to the backend (bad) so it will _not work_ without it running on port 3000. Need to set up a proxy in the frontend to handle all of that.
-2. Not every article will convert perfectly, depending on the design of the website.
+### Why the knowledge graph?
+Articles rarely exist in isolation. Connecting notes with wikilinks and visualizing them in a graph helps surface connections between concepts across long reading lists.
 
 ## License
 MIT License
