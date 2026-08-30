@@ -97,8 +97,9 @@ func (f *articleFileFetcher) GetLinkedArticles(ctx context.Context, id int64) ([
 }
 
 type RequestBody struct {
-	URL  string   `json:"url"`
-	Tags []string `json:"tags"`
+	URL      string   `json:"url"`
+	Tags     []string `json:"tags"`
+	Template string   `json:"template,omitempty"`
 }
 
 type Article = repository.GormArticle
@@ -388,12 +389,24 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		ingest.NewDiskStorage(dataDirectory),
 		repo,
 	)
+	templatesDir := filepath.Join(dataDirectory, "templates")
+	templateRenderer := ingest.NewGonjaTemplateRenderer(templatesDir)
+	ingester.SetTemplateRenderer(templateRenderer)
 
 	chatRepo := chat.NewFileRepository(filepath.Join(dataDirectory, "chats"))
 	articleFetcher := &articleFileFetcher{dataDir: dataDirectory, db: db}
 	chatService := chat.NewService(chatRepo, articleFetcher)
 
 	api := app.Group("/api")
+
+	api.Get("/templates", func(c *fiber.Ctx) error {
+		templates, err := templateRenderer.ListTemplates()
+		if err != nil {
+			logger.Error("Failed to list templates", zap.Error(err))
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to list templates"})
+		}
+		return c.JSON(templates)
+	})
 
 	api.Get("/chats", func(c *fiber.Ctx) error {
 		sessions, err := chatRepo.List(c.Context())
@@ -767,8 +780,9 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		logger.Info("Adding new article", zap.String("url", body.URL))
 
 		article, err := ingester.Ingest(c.Context(), ingest.IngestRequest{
-			URL:  body.URL,
-			Tags: body.Tags,
+			URL:      body.URL,
+			Tags:     body.Tags,
+			Template: body.Template,
 		})
 		if err != nil {
 			logger.Error("Failed to ingest article", zap.String("url", body.URL), zap.Error(err))

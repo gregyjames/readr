@@ -1111,3 +1111,35 @@ func TestSearch_DeletedArticleLeavesTheIndex(t *testing.T) {
 		t.Errorf("expected 0 results after delete, got %v", searchTitles(results))
 	}
 }
+
+func TestGetTemplatesEndpoint(t *testing.T) {
+	tempDir := t.TempDir()
+	templatesDir := filepath.Join(tempDir, "templates")
+	os.MkdirAll(templatesDir, 0755)
+	os.WriteFile(filepath.Join(templatesDir, "github.com.jinja"), []byte("content"), 0644)
+
+	t.Setenv("DATA_DIR", tempDir)
+	db := initTestDB()
+	app := setupApp(db)
+
+	resp, err := app.Test(httptest.NewRequest("GET", "/api/templates", nil))
+	if err != nil {
+		t.Fatalf("GET /api/templates failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("Expected 200, got %d", resp.StatusCode)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	var templates []struct {
+		Name     string `json:"name"`
+		Filename string `json:"filename"`
+	}
+	if err := json.Unmarshal(body, &templates); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+	if len(templates) != 1 || templates[0].Name != "github.com" {
+		t.Errorf("Expected [github.com], got %+v", templates)
+	}
+}
+
