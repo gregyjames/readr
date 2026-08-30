@@ -152,7 +152,7 @@ const goToSelected = () => {
 
 const goTo = (id: number) => {
   isOpen.value = false
-  router.push(`/?article=${id}`)
+  router.push(`/articles/${id}`)
 }
 
 watchDebounced(query, async (newQuery) => {
