@@ -162,6 +162,8 @@ const handleReparseComplete = async () => {
   }
 }
 
+import { getOpenRouterApiKey, getOpenRouterModel, isAgentEnricherEnabled, isAgentLinkerEnabled } from '../utils/settings'
+
 const reparseArticle = async () => {
   const articleID = getArticleId()
   if (!articleID) return
@@ -178,15 +180,17 @@ const reparseArticle = async () => {
   }, 12000)
 
   try {
-    const enricherEnabled = localStorage.getItem('AGENT_ENRICHER') !== 'false'
-    const linkerEnabled = localStorage.getItem('AGENT_LINKER') !== 'false'
+    const apiKey = getOpenRouterApiKey()
+    const model = getOpenRouterModel()
+    const enricherEnabled = isAgentEnricherEnabled()
+    const linkerEnabled = isAgentLinkerEnabled()
 
     await axios.post(`/api/articles/${articleID}/reparse`, null, {
       headers: {
         'X-Agent-Enricher': enricherEnabled ? 'true' : 'false',
         'X-Agent-Linker': linkerEnabled ? 'true' : 'false',
-        'X-Openrouter-Key': localStorage.getItem('OPENROUTER_API_KEY') || '',
-        'X-Openrouter-Model': localStorage.getItem('OPENROUTER_MODEL') || 'openai/gpt-4o-mini'
+        'X-Openrouter-Key': apiKey,
+        'X-Openrouter-Model': model
       }
     })
   } catch (err: any) {

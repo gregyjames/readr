@@ -7,6 +7,7 @@ import CommandPalette from './components/CommandPalette.vue'
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import emitter from './event-bus.ts'
+import { getOpenRouterApiKey, getOpenRouterModel, isAgentEnricherEnabled, isAgentLinkerEnabled } from './utils/settings'
 
 const route = useRoute()
 
@@ -42,10 +43,10 @@ onMounted(() => {
 const submitForm = async () => {
   isSubmitting.value = true
   try{
-    const apiKey = localStorage.getItem('OPENROUTER_API_KEY') || ''
-    const defaultModel = localStorage.getItem('OPENROUTER_MODEL') || 'openai/gpt-4o-mini'
-    const agentEnricher = localStorage.getItem('AGENT_ENRICHER') !== 'false'
-    const agentLinker = localStorage.getItem('AGENT_LINKER') !== 'false'
+    const apiKey = getOpenRouterApiKey()
+    const defaultModel = getOpenRouterModel()
+    const agentEnricher = isAgentEnricherEnabled()
+    const agentLinker = isAgentLinkerEnabled()
     
     await fetch('/api/add', {
       method: 'POST',

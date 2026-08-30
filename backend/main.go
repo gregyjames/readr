@@ -493,13 +493,22 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(404).JSON(fiber.Map{"error": "Article not found"})
 		}
 
+		apiKey := strings.TrimSpace(c.Get("X-Openrouter-Key"))
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
+		}
+		model := strings.TrimSpace(c.Get("X-Openrouter-Model"))
+		if model == "" {
+			model = strings.TrimSpace(os.Getenv("OPENROUTER_MODEL"))
+		}
+
 		if c.Get("X-Agent-Enricher") == "true" {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeEnrichFrontmatter,
 				Payload: map[string]interface{}{
-					"api_key": c.Get("X-Openrouter-Key"),
-					"model":   c.Get("X-Openrouter-Model"),
+					"api_key": apiKey,
+					"model":   model,
 				},
 			})
 		}
@@ -508,8 +517,8 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 				ArticleID: article.ID,
 				Type:      agents.JobTypeAutoLinker,
 				Payload: map[string]interface{}{
-					"api_key": c.Get("X-Openrouter-Key"),
-					"model":   c.Get("X-Openrouter-Model"),
+					"api_key": apiKey,
+					"model":   model,
 				},
 			})
 		}
@@ -749,13 +758,22 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		graphEngine.InvalidateCache()
 		logger.Info("Article added successfully", zap.Int64("id", article.ID), zap.String("url", body.URL))
 
+		apiKey := strings.TrimSpace(c.Get("X-Openrouter-Key"))
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
+		}
+		model := strings.TrimSpace(c.Get("X-Openrouter-Model"))
+		if model == "" {
+			model = strings.TrimSpace(os.Getenv("OPENROUTER_MODEL"))
+		}
+
 		if c.Get("X-Agent-Enricher") == "true" {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeEnrichFrontmatter,
 				Payload: map[string]interface{}{
-					"api_key":        c.Get("X-Openrouter-Key"),
-					"model":          c.Get("X-Openrouter-Model"),
+					"api_key":        apiKey,
+					"model":          model,
 				},
 			})
 		}
@@ -764,8 +782,8 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 				ArticleID: article.ID,
 				Type:      agents.JobTypeAutoLinker,
 				Payload: map[string]interface{}{
-					"api_key":        c.Get("X-Openrouter-Key"),
-					"model":          c.Get("X-Openrouter-Model"),
+					"api_key":        apiKey,
+					"model":          model,
 				},
 			})
 		}
