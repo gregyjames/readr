@@ -20,7 +20,7 @@ const submitForm = async () => {
   isSubmitting.value = true
   try{
     const apiKey = localStorage.getItem('OPENROUTER_API_KEY') || ''
-    const defaultModel = localStorage.getItem('DEFAULT_MODEL') || 'openai/gpt-4o-mini'
+    const defaultModel = localStorage.getItem('OPENROUTER_MODEL') || 'openai/gpt-4o-mini'
     const enableAgents = localStorage.getItem('ENABLE_AGENTS') !== 'false'
     
     await fetch('/api/add', {
