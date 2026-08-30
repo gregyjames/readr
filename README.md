@@ -1,4 +1,4 @@
-[![Go CI](https://github.com/gregyjames/readr/actions/workflows/go.yml/badge.svg)](https://github.com/gregyjames/readr/actions/workflows/go.yml)
+[![CI](https://github.com/gregyjames/readr/actions/workflows/ci.yml/badge.svg)](https://github.com/gregyjames/readr/actions/workflows/ci.yml)
 ![Docker Image Size (tag)](https://img.shields.io/docker/image-size/gjames8/readr/latest?label=Docker)
 
 # Readr
