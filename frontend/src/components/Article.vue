@@ -135,12 +135,26 @@ function getHostname(url: string): string {
   }
 }
 
+type NotificationState = 'idle' | 'running' | 'completed' | 'error'
+const notificationState = ref<NotificationState>('idle')
+const notificationMessage = ref('')
+let notificationTimer: any = null
+
 const isReparsing = ref(false)
+
+const dismissNotification = () => {
+  if (notificationTimer) clearTimeout(notificationTimer)
+  notificationState.value = 'idle'
+}
 
 const reparseArticle = async () => {
   const articleID = getArticleId()
   if (!articleID) return
   isReparsing.value = true
+  notificationState.value = 'running'
+  notificationMessage.value = 'Agents running in background: analyzing, enriching frontmatter, and linking...'
+  if (notificationTimer) clearTimeout(notificationTimer)
+
   try {
     const enricherEnabled = localStorage.getItem('AGENT_ENRICHER') !== 'false'
     const linkerEnabled = localStorage.getItem('AGENT_LINKER') !== 'false'
@@ -153,12 +167,14 @@ const reparseArticle = async () => {
         'X-Openrouter-Model': localStorage.getItem('OPENROUTER_MODEL') || 'openai/gpt-4o-mini'
       }
     })
-  } catch (err) {
+  } catch (err: any) {
     console.error('Failed to trigger agents', err)
-  } finally {
-    // We let the SSE event "graph-updated" reset the state/fetch when finished.
-    // However, if we want to stop spinning immediately after it was queued:
-    isReparsing.value = false 
+    isReparsing.value = false
+    notificationState.value = 'error'
+    notificationMessage.value = err?.response?.data?.error || 'Failed to trigger background agents'
+    notificationTimer = setTimeout(() => {
+      notificationState.value = 'idle'
+    }, 4000)
   }
 }
 
@@ -486,15 +502,21 @@ onMounted(async () => {
   emitter.on('article-added', async () => {
     await fetchArticles()
     await loadContent()
+    if (notificationState.value === 'running') {
+      notificationState.value = 'completed'
+      notificationMessage.value = 'Article successfully reparsed and graph updated!'
+      isReparsing.value = false
+      if (notificationTimer) clearTimeout(notificationTimer)
+      notificationTimer = setTimeout(() => {
+        notificationState.value = 'idle'
+      }, 4000)
+    }
   })
   document.addEventListener('mouseup', handleSelection)
   document.addEventListener('mousedown', hideLinker)
-  
-  // Intercept wikilink clicks
   document.addEventListener('click', handleWikilinkClick)
   document.addEventListener('mouseover', handleMouseOver)
   document.addEventListener('mouseout', handleMouseOut)
-
   
   observer = new MutationObserver(() => {
     if (localNetwork) {
@@ -509,6 +531,9 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  if (notificationTimer) {
+    clearTimeout(notificationTimer)
+  }
   document.removeEventListener('mouseup', handleSelection)
   document.removeEventListener('mousedown', hideLinker)
   document.removeEventListener('click', handleWikilinkClick)
@@ -714,4 +739,79 @@ onBeforeUnmount(() => {
     @mouseenter="cancelPreviewHide"
     @mouseleave="hidePreview"
   />
+
+  <!-- Floating Toast Notification for Reparsing Lifecycle -->
+  <transition name="toast-slide">
+    <div
+      v-if="notificationState !== 'idle'"
+      class="fixed bottom-8 right-8 z-50 max-w-md backdrop-blur-xl bg-white/95 dark:bg-[#161616]/95 border shadow-[0_20px_50px_rgba(0,0,0,0.15)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.7)] rounded-2xl p-4 flex items-center gap-3.5 transition-all duration-300"
+      :class="{
+        'border-emerald-500/30 dark:border-emerald-500/30': notificationState === 'completed',
+        'border-blue-500/30 dark:border-blue-500/30': notificationState === 'running',
+        'border-red-500/30 dark:border-red-500/30': notificationState === 'error'
+      }"
+    >
+      <!-- Icon indicator -->
+      <div class="flex-shrink-0">
+        <!-- Running Spinner -->
+        <div v-if="notificationState === 'running'" class="w-8 h-8 rounded-xl bg-blue-500/10 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+          <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+        </div>
+
+        <!-- Completed Checkmark -->
+        <div v-else-if="notificationState === 'completed'" class="w-8 h-8 rounded-xl bg-emerald-500/10 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+          <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        </div>
+
+        <!-- Error Alert -->
+        <div v-else-if="notificationState === 'error'" class="w-8 h-8 rounded-xl bg-red-500/10 dark:bg-red-500/20 text-red-600 dark:text-red-400 flex items-center justify-center">
+          <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+        </div>
+      </div>
+
+      <!-- Message Text -->
+      <div class="flex-grow min-w-0 pr-2">
+        <p class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-0.5">
+          {{ notificationState === 'running' ? 'Reparsing Article' : (notificationState === 'completed' ? 'Reparse Complete' : 'Agent Error') }}
+        </p>
+        <p class="text-xs font-medium text-gray-800 dark:text-gray-200 leading-snug">
+          {{ notificationMessage }}
+        </p>
+      </div>
+
+      <!-- Dismiss Button -->
+      <button
+        @click="dismissNotification"
+        class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 transition-colors cursor-pointer"
+        aria-label="Dismiss"
+      >
+        <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+  </transition>
 </template>
+
+<style scoped>
+.toast-slide-enter-active,
+.toast-slide-leave-active {
+  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.toast-slide-enter-from,
+.toast-slide-leave-to {
+  opacity: 0;
+  transform: translateY(16px) scale(0.96);
+}
+</style>
