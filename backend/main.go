@@ -665,15 +665,23 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		graphEngine.InvalidateCache()
 		logger.Info("Article added successfully", zap.Int64("id", article.ID), zap.String("url", body.URL))
 
-		if c.Get("X-Agent-Enricher") == "true" || c.Get("X-Agent-Linker") == "true" {
+		if c.Get("X-Agent-Enricher") == "true" {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeEnrichFrontmatter,
 				Payload: map[string]interface{}{
 					"api_key":        c.Get("X-Openrouter-Key"),
 					"model":          c.Get("X-Openrouter-Model"),
-					"do_enricher":    c.Get("X-Agent-Enricher") == "true",
-					"do_linking":     c.Get("X-Agent-Linker") == "true",
+				},
+			})
+		}
+		if c.Get("X-Agent-Linker") == "true" {
+			agents.SubmitJob(agents.Job{
+				ArticleID: article.ID,
+				Type:      agents.JobTypeAutoLinker,
+				Payload: map[string]interface{}{
+					"api_key":        c.Get("X-Openrouter-Key"),
+					"model":          c.Get("X-Openrouter-Model"),
 				},
 			})
 		}
