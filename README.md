@@ -16,6 +16,7 @@ A self-hosted, AI-native read-it-later app and knowledge graph engine powered by
 * **1-Hop Graph Context Expansion**: Optional setting that allows the AI to automatically traverse your graph edges and include connected notes and backlinks in its context.
 * **Wikilinks & Backlinks**: Bidirectional links between articles using `[[Title]]` and `[[Title|Alias]]` syntax, with edge tracking and floating hover previews.
 * **Portable Markdown Storage**: All articles, OKF metadata, and chat histories are saved locally as markdown files, making your data easy to back up or sync with Obsidian and Logseq.
+* **Custom Jinja Templates**: Customize how saved articles are structured with site-specific Jinja templates located in `$DATA_DIR/templates/` with automatic domain matching and rich context variables.
 * **Lightweight and Fast**: Compact Go backend and Vue frontend with full dark mode support.
 
 ## Sample
@@ -49,6 +50,59 @@ services:
     volumes:
       - ./data:/app/data
     restart: unless-stopped
+```
+
+## Custom Markdown Templates (Jinja)
+
+Readr supports custom Jinja templates for controlling the formatting, frontmatter, and layout of ingested markdown articles. Place template files in `$DATA_DIR/templates/` (e.g. `./data/templates/` in Docker volume mounts).
+
+### Domain Resolution Hierarchy
+When an article is ingested from a URL (e.g., `https://gist.github.com/...`), Readr resolves templates in the following order:
+1. **Explicit Template Selection**: Chosen template from ingest options (if specified).
+2. **Subdomain Match**: E.g., `gist.github.com.jinja`.
+3. **Parent Domain Match**: E.g., `github.com.jinja`.
+4. **Default Built-in Template**: Used if no domain-specific template is found.
+
+### Template Context Variables
+The following variables are available inside Jinja templates:
+
+| Variable | Type | Description |
+| :--- | :--- | :--- |
+| `title` | `string` | Title of the article or page |
+| `source` / `url` | `string` | Canonical source URL |
+| `domain` | `string` | Extracted hostname / domain name |
+| `content` | `string` | Clean converted Markdown content of the article |
+| `tags` | `[]string` | Array of extracted or assigned tags |
+| `tags_str` | `string` | Comma-separated tag string |
+| `cover_image` | `string` | URL of the cover or lead image |
+| `saved_date` | `string` | Formatted date string (`YYYY-MM-DD HH:MM:SS`) |
+| `timestamp` | `int64` | Unix epoch timestamp (seconds) |
+| `author` | `string` | Article author (from metadata or OpenGraph) |
+| `description` | `string` | Article summary or OpenGraph description |
+| `site_name` | `string` | Publication or site name |
+| `og` | `map[string]string` | Raw OpenGraph and meta properties (e.g. `og.title`, `og.image`) |
+
+### Example Template (`github.com.jinja`)
+Create `$DATA_DIR/templates/github.com.jinja`:
+
+```jinja
+---
+title: {{ title }}
+source: {{ source }}
+tags: [{% for tag in tags %}"{{ tag }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+cover: {{ cover_image }}
+saved: {{ saved_date }}
+type: github-repo
+---
+
+# [{{ title }}]({{ source }})
+{% if description %}
+> {{ description }}
+{% endif %}
+
+---
+
+{{ content }}
 ```
 
 ## Design choices

@@ -1,0 +1,17 @@
+---
+title: {{ title }}
+source: {{ source }}
+tags: [{% for tag in tags %}"{{ tag }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+cover: {{ cover_image }}
+saved: {{ saved_date }}
+type: github-repo
+---
+
+# [{{ title }}]({{ source }})
+{% if description %}
+> {{ description }}
+{% endif %}
+
+---
+
+{{ content }}
