@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -94,14 +95,22 @@ Output ONLY the YAML block starting and ending with ---. No other text.`, articl
 	req, _ := http.NewRequest(http.MethodPost, "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(bodyJSON))
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("HTTP-Referer", "https://github.com/gregyjames/readr")
+	req.Header.Set("X-Title", "Readr Vault Agent")
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
+	if err != nil {
 		p.logger.Error("Enricher LLM request failed", zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		p.logger.Error("Enricher LLM request returned non-200 status", zap.Int("status", resp.StatusCode), zap.String("body", string(bodyBytes)))
+		return
+	}
 
 	var llmResp struct {
 		Choices []struct {
