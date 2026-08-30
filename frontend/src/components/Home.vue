@@ -58,7 +58,8 @@ function initReveal() {
 function formatDate(unixTs: number): string {
   // IDs under ~1e9 are likely DB sequential IDs, not timestamps — fall back gracefully
   if (unixTs < 1_000_000_000) return ''
-  const d = new Date(unixTs * 1000)
+  const ms = unixTs < 100_000_000_000 ? unixTs * 1000 : unixTs
+  const d = new Date(ms)
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
