@@ -2,20 +2,16 @@
 import BookmarkIcon from './assets/book.svg'
 import HomeIcon from './assets/home.svg'
 import AddIcon from './assets/add.svg'
-import CardIcon from './assets/card.svg'
-import ListIcon from './assets/list.svg'
 import GraphIcon from './assets/graph.svg'
 import CommandPalette from './components/CommandPalette.vue'
 import { ref } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRoute } from 'vue-router'
 import emitter from './event-bus.ts'
 
-const router = useRouter()
 const route = useRoute()
 
 const showModal = ref(false)
 const url = ref('')
-const viewMode = ref<'card' | 'list'>('card')
 const tags = ref<string[]>([])
 const tagInput = ref('')
 const isSubmitting = ref(false)
@@ -49,11 +45,7 @@ function closeModal() {
   showModal.value = false
 }
 
-const toggleViewMode = () => {
-  viewMode.value = viewMode.value === 'card' ? 'list' : 'card'
-  localStorage.setItem('viewMode', viewMode.value)
-  router.push({ name: 'home', query: { view: viewMode.value } })
-}
+
 
 function addTag() {
   const trimmed = tagInput.value.trim()
@@ -67,20 +59,7 @@ function removeTag(tag: string) {
   tags.value = tags.value.filter(t => t !== tag)
 }
 
-const isDark = ref(document.documentElement.classList.contains('dark'))
 
-function toggleTheme() {
-  const root = document.documentElement
-  if (root.classList.contains('dark')) {
-    root.classList.remove('dark')
-    localStorage.setItem('theme', 'light')
-    isDark.value = false
-  } else {
-    root.classList.add('dark')
-    localStorage.setItem('theme', 'dark')
-    isDark.value = true
-  }
-}
 </script>
 
 <template>
@@ -98,10 +77,7 @@ function toggleTheme() {
 
         <!-- Menu -->
         <div class="flex items-center space-x-4">
-          <button @click="toggleTheme" class="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800/60 transition-colors">
-            <svg v-if="!isDark" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
-            <svg v-else xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
-          </button>
+
           
           <button @click="emitter.emit('open-search')" class="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800/60 transition-colors cursor-pointer" title="Search (Cmd+K)">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -132,14 +108,7 @@ function toggleTheme() {
             </svg>
           </router-link>
           
-          <button @click="toggleViewMode" v-if="route.name === 'home'" class="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800/60 transition-colors" title="Toggle layout view">
-            <span v-if="viewMode === 'card'">
-              <ListIcon class="w-5 h-5"/>
-            </span>
-            <span v-else>
-              <CardIcon class="w-5 h-5"/>
-            </span>
-          </button>
+
           
           <button @click="showModal = true" class="flex items-center gap-2 bg-[#111] dark:bg-white hover:bg-[#222] dark:hover:bg-gray-100 active:scale-95 text-white dark:text-[#111] px-4 py-2 rounded-full transition-all duration-300 shadow-sm ml-2 cursor-pointer">
             <AddIcon class="w-4 h-4 text-white dark:text-[#111]" />

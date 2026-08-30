@@ -19,6 +19,27 @@ const isKeyConfigured = ref(false)
 
 const selectedModel = ref('openai/gpt-4o-mini')
 const models = ref<ModelItem[]>([])
+
+const isDark = ref(document.documentElement.classList.contains('dark'))
+const viewMode = ref(localStorage.getItem('viewMode') || 'card')
+
+const toggleTheme = () => {
+  const root = document.documentElement
+  if (root.classList.contains('dark')) {
+    root.classList.remove('dark')
+    localStorage.setItem('theme', 'light')
+    isDark.value = false
+  } else {
+    root.classList.add('dark')
+    localStorage.setItem('theme', 'dark')
+    isDark.value = true
+  }
+}
+
+const setViewMode = (mode: string) => {
+  viewMode.value = mode
+  localStorage.setItem('viewMode', mode)
+}
 const isLoadingModels = ref(false)
 const modelSearch = ref('')
 const isModelDropdownOpen = ref(false)
@@ -298,6 +319,54 @@ const clearKey = () => {
                 </span>
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- App Appearance Settings -->
+      <div class="pt-4 border-t border-gray-100 dark:border-gray-800 space-y-4">
+        <!-- Theme Toggle -->
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm font-medium text-gray-900 dark:text-gray-100">Dark Mode</div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Switch between light and dark themes.</p>
+          </div>
+          <button
+            type="button"
+            @click="toggleTheme"
+            class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+            :class="isDark ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
+          >
+            <span
+              class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+              :class="isDark ? 'translate-x-5' : 'translate-x-0'"
+            />
+          </button>
+        </div>
+
+        <!-- Default View Mode Toggle -->
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm font-medium text-gray-900 dark:text-gray-100">Default Feed Layout</div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Choose between card or list view for articles.</p>
+          </div>
+          <div class="flex bg-gray-100 dark:bg-[#1a1a1a] p-1 rounded-xl">
+            <button
+              type="button"
+              @click="setViewMode('card')"
+              class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all cursor-pointer"
+              :class="viewMode === 'card' ? 'bg-white dark:bg-[#2a2a2a] text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
+            >
+              Card
+            </button>
+            <button
+              type="button"
+              @click="setViewMode('list')"
+              class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all cursor-pointer"
+              :class="viewMode === 'list' ? 'bg-white dark:bg-[#2a2a2a] text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
+            >
+              List
+            </button>
           </div>
         </div>
       </div>
