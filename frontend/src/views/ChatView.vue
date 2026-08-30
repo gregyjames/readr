@@ -301,6 +301,7 @@ const sendMessage = async () => {
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let isErrorEvent = false
 
     while (true) {
       const { done, value } = await reader.read()
@@ -312,10 +313,17 @@ const sendMessage = async () => {
 
       for (const line of lines) {
         const trimmed = line.trim()
+        if (trimmed.startsWith('event: error')) {
+          isErrorEvent = true
+          continue
+        }
         if (trimmed.startsWith('data: ')) {
           const dataStr = trimmed.slice(6)
           if (dataStr === '[DONE]') {
             continue
+          }
+          if (isErrorEvent) {
+            throw new Error(dataStr)
           }
           try {
             const parsed = JSON.parse(dataStr)
@@ -324,8 +332,6 @@ const sendMessage = async () => {
             assistantMsg.content += dataStr
           }
           scrollToBottom()
-        } else if (trimmed.startsWith('event: error')) {
-          console.error('SSE Error stream event')
         }
       }
     }
@@ -344,8 +350,8 @@ const sendMessage = async () => {
   } catch (err: any) {
     console.error('Streaming error', err)
     errorMessage.value = err.message || 'An error occurred during communication.'
-    if (!assistantMsg.content) {
-      assistantMsg.content = `*(Error: ${err.message || 'Failed to stream response'})*`
+    if (!assistantMsg.content || isStreaming.value) {
+      assistantMsg.content = `> ⚠️ **OpenRouter Error:**\n>\n> ${err.message || 'Failed to stream response'}\n\n*Tip: Check that your OpenRouter account has credits, or select a free model (e.g. models ending in \`:free\`) in Settings.*`
     }
   } finally {
     isStreaming.value = false

@@ -163,6 +163,19 @@ func (s *Service) StreamMessage(ctx context.Context, sessionID string, apiKey st
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		bodySnippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		var errPayload struct {
+			Error struct {
+				Message string      `json:"message"`
+				Code    interface{} `json:"code"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(bodySnippet, &errPayload); err == nil && errPayload.Error.Message != "" {
+			return fmt.Errorf("openrouter error (HTTP %d): %s", resp.StatusCode, errPayload.Error.Message)
+		}
+		if len(bodySnippet) > 0 {
+			return fmt.Errorf("openrouter error (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(bodySnippet)))
+		}
 		return fmt.Errorf("openrouter error (HTTP %d)", resp.StatusCode)
 	}
 
