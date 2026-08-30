@@ -11,8 +11,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
+	"example.com/backend/internal/agents"
 	"example.com/backend/internal/chat"
 	"example.com/backend/internal/graph"
 	"example.com/backend/internal/ingest"
@@ -26,6 +28,29 @@ import (
 	"gorm.io/gorm"
 	_ "modernc.org/sqlite"
 )
+
+// SSE Event Hub for Agent Broadcasts
+var (
+	eventClients sync.Map
+)
+
+func broadcastEvent(event string) {
+	clientCount := 0
+	eventClients.Range(func(key, value interface{}) bool {
+		if ch, ok := key.(chan string); ok {
+			clientCount++
+			select {
+			case ch <- event:
+			default:
+			}
+		}
+		return true
+	})
+	if logger != nil {
+		logger.Info("SSE Broadcast sent", zap.String("event", event), zap.Int("connected_clients", clientCount))
+	}
+}
+
 
 type articleFileFetcher struct {
 	dataDir string
@@ -309,6 +334,13 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	repo := repository.NewGormRepository(db)
 	graphEngine := graph.NewEngine(repo)
+
+	// Start 1 Background Agent for the Vault (sequential execution prevents OpenRouter in-flight credit exhaustion)
+	agents.InitPool(logger, db, dataDirectory, 1, func() {
+		graphEngine.InvalidateCache()
+		broadcastEvent("graph-updated")
+	})
+
 	ingester := ingest.NewIngester(
 		ingest.NewHTTPFetcher(30*time.Second),
 		ingest.NewContentExtractor(),
@@ -331,6 +363,9 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return c.JSON(sessions)
 	})
 
+
+
+// @title Readr Vault API
 	api.Post("/chats", func(c *fiber.Ctx) error {
 		var req struct {
 			Title string `json:"title"`
@@ -450,6 +485,47 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return c.JSON(fiber.Map{"message": "Hello from Go!"})
 	})
 
+	api.Post("/articles/:id/reparse", func(c *fiber.Ctx) error {
+		idParam := c.Params("id")
+
+		var article Article
+		if err := db.First(&article, idParam).Error; err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": "Article not found"})
+		}
+
+		apiKey := strings.TrimSpace(c.Get("X-Openrouter-Key"))
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
+		}
+		model := strings.TrimSpace(c.Get("X-Openrouter-Model"))
+		if model == "" {
+			model = strings.TrimSpace(os.Getenv("OPENROUTER_MODEL"))
+		}
+
+		if c.Get("X-Agent-Enricher") == "true" {
+			agents.SubmitJob(agents.Job{
+				ArticleID: article.ID,
+				Type:      agents.JobTypeEnrichFrontmatter,
+				Payload: map[string]interface{}{
+					"api_key": apiKey,
+					"model":   model,
+				},
+			})
+		}
+		if c.Get("X-Agent-Linker") == "true" {
+			agents.SubmitJob(agents.Job{
+				ArticleID: article.ID,
+				Type:      agents.JobTypeAutoLinker,
+				Payload: map[string]interface{}{
+					"api_key": apiKey,
+					"model":   model,
+				},
+			})
+		}
+
+		return c.JSON(fiber.Map{"status": "ok", "message": "Agents triggered"})
+	})
+
 	api.Delete("/delete/:id", func(c *fiber.Ctx) error {
 		id := c.Params("id")
 		logger.Info("Attempting to delete article", zap.String("id", id))
@@ -555,6 +631,30 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return c.JSON(results)
 	})
 
+	api.Get("/events", func(c *fiber.Ctx) error {
+		c.Set("Content-Type", "text/event-stream")
+		c.Set("Cache-Control", "no-cache")
+		c.Set("Connection", "keep-alive")
+
+		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			ch := make(chan string, 10)
+			eventClients.Store(ch, true)
+			defer eventClients.Delete(ch)
+
+			// Send initial comment to establish SSE stream
+			fmt.Fprintf(w, ": connected\n\n")
+			w.Flush()
+
+			for msg := range ch {
+				fmt.Fprintf(w, "data: %s\n\n", msg)
+				if err := w.Flush(); err != nil {
+					return
+				}
+			}
+		})
+		return nil
+	})
+
 	api.Get("/graph", func(c *fiber.Ctx) error {
 		graphData, err := graphEngine.BuildGlobalGraph(c.Context())
 		if err != nil {
@@ -657,6 +757,36 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 		graphEngine.InvalidateCache()
 		logger.Info("Article added successfully", zap.Int64("id", article.ID), zap.String("url", body.URL))
+
+		apiKey := strings.TrimSpace(c.Get("X-Openrouter-Key"))
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
+		}
+		model := strings.TrimSpace(c.Get("X-Openrouter-Model"))
+		if model == "" {
+			model = strings.TrimSpace(os.Getenv("OPENROUTER_MODEL"))
+		}
+
+		if c.Get("X-Agent-Enricher") == "true" {
+			agents.SubmitJob(agents.Job{
+				ArticleID: article.ID,
+				Type:      agents.JobTypeEnrichFrontmatter,
+				Payload: map[string]interface{}{
+					"api_key":        apiKey,
+					"model":          model,
+				},
+			})
+		}
+		if c.Get("X-Agent-Linker") == "true" {
+			agents.SubmitJob(agents.Job{
+				ArticleID: article.ID,
+				Type:      agents.JobTypeAutoLinker,
+				Payload: map[string]interface{}{
+					"api_key":        apiKey,
+					"model":          model,
+				},
+			})
+		}
 		return c.JSON(fiber.Map{
 			"status":  "success",
 			"message": "Article saved",
@@ -705,6 +835,7 @@ func main() {
 	logger.Info("Available SQL drivers", zap.Strings("drivers", sql.Drivers()))
 
 	db := initDB()
+	
 	app := setupApp(db)
 
 	port := os.Getenv("PORT")

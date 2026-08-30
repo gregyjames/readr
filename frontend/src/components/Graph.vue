@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Network } from 'vis-network'
 import GraphZoomControls from './GraphZoomControls.vue'
+import emitter from '../event-bus'
 
 const container = ref<HTMLElement | null>(null)
 const router = useRouter()
@@ -129,6 +130,10 @@ const toggleTags = () => {
 
 onMounted(() => {
   loadGraph()
+
+  emitter.on('article-added', () => {
+    loadGraph()
+  })
 
   themeObserver = new MutationObserver(() => {
     if (network) {

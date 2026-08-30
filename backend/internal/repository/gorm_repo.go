@@ -105,7 +105,15 @@ func (r *GormRepository) GetAllArticles(ctx context.Context) ([]ArticleRecord, e
 
 func (r *GormRepository) GetAllLinks(ctx context.Context) ([]LinkRecord, error) {
 	var links []GormArticleLink
-	if err := r.db.WithContext(ctx).Find(&links).Error; err != nil {
+	
+	// Join with articles to ensure both source and target are NOT deleted
+	err := r.db.WithContext(ctx).
+		Joins("JOIN articles AS source ON source.id = article_links.source_id").
+		Joins("JOIN articles AS target ON target.id = article_links.target_id").
+		Where("source.deleted_at IS NULL AND target.deleted_at IS NULL").
+		Find(&links).Error
+
+	if err != nil {
 		return nil, err
 	}
 
@@ -136,5 +144,6 @@ func (r *GormRepository) CreateLink(ctx context.Context, sourceID, targetID int6
 }
 
 func (r *GormRepository) DeleteArticle(ctx context.Context, id int64) error {
+	r.db.WithContext(ctx).Exec("DELETE FROM article_links WHERE source_id = ? OR target_id = ?", id, id)
 	return r.db.WithContext(ctx).Delete(&GormArticle{}, id).Error
 }

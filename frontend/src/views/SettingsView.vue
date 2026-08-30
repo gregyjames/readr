@@ -44,6 +44,8 @@ const isLoadingModels = ref(false)
 const modelSearch = ref('')
 const isModelDropdownOpen = ref(false)
 const expandGraphContext = ref(true)
+const enableAgentEnricher = ref(localStorage.getItem('AGENT_ENRICHER') !== 'false') // Default true
+const enableAgentLinker = ref(localStorage.getItem('AGENT_LINKER') !== 'false') // Default true
 
 let timer: ReturnType<typeof setTimeout> | null = null
 
@@ -157,6 +159,8 @@ const saveSettings = () => {
 
   localStorage.setItem('OPENROUTER_MODEL', selectedModel.value)
   localStorage.setItem('GRAPH_CONTEXT_EXPANSION', String(expandGraphContext.value))
+  localStorage.setItem('AGENT_ENRICHER', enableAgentEnricher.value ? 'true' : 'false')
+  localStorage.setItem('AGENT_LINKER', enableAgentLinker.value ? 'true' : 'false')
   showSavedMessage('Settings saved successfully!')
 }
 
@@ -393,6 +397,64 @@ const clearKey = () => {
             :class="expandGraphContext ? 'translate-x-5' : 'translate-x-0'"
           />
         </button>
+      </div>
+
+      <!-- Background Agents Toggles -->
+      <div class="pt-4 border-t border-gray-100 dark:border-gray-800 space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Background Agents
+          </label>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+            Automate vault enrichment and graph weaving when new articles are added or reparsed.
+          </p>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-2">
+              <span>OKF Frontmatter Enricher</span>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">LLM</span>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 max-w-md">
+              Extract and format OKF YAML frontmatter when new articles are added.
+            </p>
+          </div>
+          <button
+            type="button"
+            @click="enableAgentEnricher = !enableAgentEnricher"
+            class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+            :class="enableAgentEnricher ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
+          >
+            <span
+              class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+              :class="enableAgentEnricher ? 'translate-x-5' : 'translate-x-0'"
+            />
+          </button>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-2">
+              <span>Autonomous Graph Linker</span>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">LLM</span>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 max-w-md">
+              Automatically weave new articles into the Knowledge Graph by injecting markdown wikilinks.
+            </p>
+          </div>
+          <button
+            type="button"
+            @click="enableAgentLinker = !enableAgentLinker"
+            class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+            :class="enableAgentLinker ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
+          >
+            <span
+              class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+              :class="enableAgentLinker ? 'translate-x-5' : 'translate-x-0'"
+            />
+          </button>
+        </div>
       </div>
 
       <!-- Action buttons & Feedback -->

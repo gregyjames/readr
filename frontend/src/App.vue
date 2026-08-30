@@ -4,9 +4,10 @@ import HomeIcon from './assets/home.svg'
 import AddIcon from './assets/add.svg'
 import GraphIcon from './assets/graph.svg'
 import CommandPalette from './components/CommandPalette.vue'
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import emitter from './event-bus.ts'
+import { getOpenRouterApiKey, getOpenRouterModel, isAgentEnricherEnabled, isAgentLinkerEnabled } from './utils/settings'
 
 const route = useRoute()
 
@@ -16,12 +17,46 @@ const tags = ref<string[]>([])
 const tagInput = ref('')
 const isSubmitting = ref(false)
 
+onMounted(() => {
+  let evtSource: EventSource | null = null;
+  const connectSSE = () => {
+    try {
+      evtSource = new EventSource('/api/events');
+      evtSource.onmessage = (event) => {
+        const msg = (event.data || '').trim();
+        if (msg === 'graph-updated') {
+          emitter.emit('article-added');
+          emitter.emit('graph-updated');
+        }
+      };
+      evtSource.onerror = () => {
+        evtSource?.close();
+        setTimeout(connectSSE, 3000);
+      };
+    } catch (e) {
+      console.warn('EventSource failed:', e);
+    }
+  };
+  connectSSE();
+})
+
 const submitForm = async () => {
   isSubmitting.value = true
   try{
+    const apiKey = getOpenRouterApiKey()
+    const defaultModel = getOpenRouterModel()
+    const agentEnricher = isAgentEnricherEnabled()
+    const agentLinker = isAgentLinkerEnabled()
+    
     await fetch('/api/add', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-Openrouter-Key': apiKey,
+        'X-Openrouter-Model': defaultModel,
+        'X-Agent-Enricher': agentEnricher ? 'true' : 'false',
+        'X-Agent-Linker': agentLinker ? 'true' : 'false'
+      },
       body: JSON.stringify({ 
         url: url.value,
         Tags: tags.value
