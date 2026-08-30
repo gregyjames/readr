@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -49,7 +50,31 @@ type openRouterRequest struct {
 	Stream   bool          `json:"stream"`
 }
 
-func (s *Service) StreamMessage(ctx context.Context, sessionID string, apiKey string, userMsg Message, onChunk func(string) error) error {
+func (s *Service) FetchModels(ctx context.Context, apiKey string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://openrouter.ai/api/v1/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	req.Header.Set("HTTP-Referer", "https://github.com/gregyjames/readr")
+	req.Header.Set("X-Title", "Readr Chat")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch models failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch models returned status: %d", resp.StatusCode)
+	}
+
+	return io.ReadAll(resp.Body)
+}
+
+func (s *Service) StreamMessage(ctx context.Context, sessionID string, apiKey string, model string, userMsg Message, onChunk func(string) error) error {
 	if apiKey == "" {
 		return errors.New("missing OpenRouter API key")
 	}
@@ -57,10 +82,11 @@ func (s *Service) StreamMessage(ctx context.Context, sessionID string, apiKey st
 	session, err := s.repo.Get(ctx, sessionID)
 	if err != nil || session == nil {
 		title := "New Chat"
-		if len(userMsg.Content) > 30 {
-			title = userMsg.Content[:30] + "..."
-		} else if len(userMsg.Content) > 0 {
-			title = userMsg.Content
+		runes := []rune(userMsg.Content)
+		if len(runes) > 30 {
+			title = string(runes[:30]) + "..."
+		} else if len(runes) > 0 {
+			title = string(runes)
 		}
 		session = &ChatSession{
 			ID:        sessionID,
@@ -104,8 +130,13 @@ func (s *Service) StreamMessage(ctx context.Context, sessionID string, apiKey st
 		})
 	}
 
+	chosenModel := strings.TrimSpace(model)
+	if chosenModel == "" {
+		chosenModel = s.defaultModel
+	}
+
 	reqPayload := openRouterRequest{
-		Model:    s.defaultModel,
+		Model:    chosenModel,
 		Messages: apiMsgs,
 		Stream:   true,
 	}

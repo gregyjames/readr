@@ -1,10 +1,28 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+
+interface ModelItem {
+  id: string
+  name: string
+  description?: string
+  context_length?: number
+  pricing?: {
+    prompt: string
+    completion: string
+  }
+}
 
 const apiKey = ref('')
 const showKey = ref(false)
 const savedMessage = ref('')
 const isKeyConfigured = ref(false)
+
+const selectedModel = ref('openai/gpt-4o-mini')
+const models = ref<ModelItem[]>([])
+const isLoadingModels = ref(false)
+const modelSearch = ref('')
+const isModelDropdownOpen = ref(false)
+
 let timer: ReturnType<typeof setTimeout> | null = null
 
 const showSavedMessage = (msg: string) => {
@@ -19,10 +37,71 @@ const showSavedMessage = (msg: string) => {
   }, 3000)
 }
 
+const popularModels = [
+  'openai/gpt-4o',
+  'openai/gpt-4o-mini',
+  'anthropic/claude-3.5-sonnet',
+  'anthropic/claude-3.5-haiku',
+  'meta-llama/llama-3.3-70b-instruct',
+  'google/gemini-2.0-flash-exp:free',
+  'deepseek/deepseek-chat',
+  'deepseek/deepseek-r1',
+]
+
+const filteredModels = computed(() => {
+  if (!modelSearch.value.trim()) {
+    return models.value
+  }
+  const q = modelSearch.value.toLowerCase()
+  return models.value.filter(m => 
+    m.id.toLowerCase().includes(q) || (m.name && m.name.toLowerCase().includes(q))
+  )
+})
+
+const selectedModelObj = computed(() => {
+  return models.value.find(m => m.id === selectedModel.value) || {
+    id: selectedModel.value,
+    name: selectedModel.value,
+  }
+})
+
+const fetchModels = async () => {
+  isLoadingModels.value = true
+  try {
+    const headers: Record<string, string> = {}
+    if (apiKey.value.trim()) {
+      headers['Authorization'] = `Bearer ${apiKey.value.trim()}`
+    }
+    const res = await fetch('/api/models', { headers })
+    if (res.ok) {
+      const json = await res.json()
+      if (json.data && Array.isArray(json.data)) {
+        models.value = json.data.sort((a: ModelItem, b: ModelItem) => {
+          const aPop = popularModels.includes(a.id) ? 0 : 1
+          const bPop = popularModels.includes(b.id) ? 0 : 1
+          if (aPop !== bPop) return aPop - bPop
+          return a.name ? a.name.localeCompare(b.name || '') : a.id.localeCompare(b.id)
+        })
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load OpenRouter models:', err)
+  } finally {
+    isLoadingModels.value = false
+  }
+}
+
 onMounted(() => {
   const existingKey = localStorage.getItem('OPENROUTER_API_KEY') || ''
   apiKey.value = existingKey
   isKeyConfigured.value = Boolean(existingKey.trim())
+
+  const savedModel = localStorage.getItem('OPENROUTER_MODEL')
+  if (savedModel) {
+    selectedModel.value = savedModel
+  }
+
+  fetchModels()
 })
 
 onUnmounted(() => {
@@ -32,17 +111,25 @@ onUnmounted(() => {
   }
 })
 
-const saveKey = () => {
+const selectModel = (modelId: string) => {
+  selectedModel.value = modelId
+  localStorage.setItem('OPENROUTER_MODEL', modelId)
+  isModelDropdownOpen.value = false
+  showSavedMessage(`Model set to ${modelId}`)
+}
+
+const saveSettings = () => {
   const trimmed = apiKey.value.trim()
   if (trimmed) {
     localStorage.setItem('OPENROUTER_API_KEY', trimmed)
     isKeyConfigured.value = true
-    showSavedMessage('API key saved successfully!')
   } else {
     localStorage.removeItem('OPENROUTER_API_KEY')
     isKeyConfigured.value = false
-    showSavedMessage('API key removed.')
   }
+
+  localStorage.setItem('OPENROUTER_MODEL', selectedModel.value)
+  showSavedMessage('Settings saved successfully!')
 }
 
 const clearKey = () => {
@@ -59,7 +146,7 @@ const clearKey = () => {
     <div class="mb-8">
       <h1 class="text-3xl font-bold tracking-tight text-gray-900 dark:text-gray-100">Settings</h1>
       <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
-        Configure your integrations and API credentials for Readr AI assistant.
+        Configure your OpenRouter API key and preferred AI model for Readr chat.
       </p>
     </div>
 
@@ -119,21 +206,110 @@ const clearKey = () => {
         </p>
       </div>
 
+      <!-- Model Selection Dropdown -->
+      <div class="space-y-2 pt-2 border-t border-gray-100 dark:border-gray-800">
+        <div class="flex items-center justify-between">
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Default AI Model
+          </label>
+          <button 
+            type="button" 
+            @click="fetchModels" 
+            class="text-xs text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
+            :disabled="isLoadingModels"
+          >
+            <svg v-if="isLoadingModels" class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+            </svg>
+            {{ isLoadingModels ? 'Refreshing...' : 'Refresh Models' }}
+          </button>
+        </div>
+
+        <!-- Custom Dropdown with search -->
+        <div class="relative">
+          <button
+            type="button"
+            @click="isModelDropdownOpen = !isModelDropdownOpen"
+            class="w-full px-4 py-3 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-xl flex items-center justify-between text-left text-sm text-gray-900 dark:text-gray-100 hover:border-gray-300 dark:hover:border-gray-700 transition-colors cursor-pointer"
+          >
+            <div class="truncate pr-4">
+              <div class="font-medium text-gray-900 dark:text-gray-100">
+                {{ selectedModelObj.name || selectedModelObj.id }}
+              </div>
+              <div class="text-xs text-gray-400 dark:text-gray-500 font-mono truncate">
+                {{ selectedModelObj.id }}
+              </div>
+            </div>
+            <svg class="w-4 h-4 text-gray-400 shrink-0 transition-transform" :class="{ 'rotate-180': isModelDropdownOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          <!-- Dropdown Menu -->
+          <div 
+            v-if="isModelDropdownOpen"
+            class="absolute z-50 mt-2 w-full bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-xl overflow-hidden"
+          >
+            <!-- Search input inside dropdown -->
+            <div class="p-3 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-[#161616]">
+              <input
+                v-model="modelSearch"
+                type="text"
+                placeholder="Search models (e.g. claude, gpt, llama, deepseek)..."
+                class="w-full px-3 py-2 text-xs bg-white dark:bg-[#111] border border-gray-200 dark:border-gray-800 rounded-lg focus:outline-none focus:border-emerald-500 text-gray-900 dark:text-gray-100 placeholder:text-gray-400"
+                @click.stop
+              />
+            </div>
+
+            <!-- Options list -->
+            <div class="max-h-64 overflow-y-auto py-1">
+              <div 
+                v-if="filteredModels.length === 0" 
+                class="p-4 text-center text-xs text-gray-400 dark:text-gray-500"
+              >
+                {{ isLoadingModels ? 'Loading OpenRouter models...' : 'No matching models found.' }}
+              </div>
+              <button
+                v-for="m in filteredModels"
+                :key="m.id"
+                type="button"
+                @click="selectModel(m.id)"
+                class="w-full px-4 py-2.5 text-left text-xs hover:bg-gray-100 dark:hover:bg-white/5 transition-colors flex items-center justify-between cursor-pointer"
+                :class="{ 'bg-emerald-50/60 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 font-medium': m.id === selectedModel }"
+              >
+                <div class="truncate pr-2">
+                  <div class="font-medium text-gray-900 dark:text-gray-100 truncate">
+                    {{ m.name || m.id }}
+                  </div>
+                  <div class="text-[11px] text-gray-400 dark:text-gray-500 font-mono truncate">
+                    {{ m.id }}
+                  </div>
+                </div>
+                <span v-if="m.id === selectedModel" class="text-emerald-600 dark:text-emerald-400 shrink-0 text-xs">
+                  ✓
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Action buttons & Feedback -->
-      <div class="flex items-center justify-between pt-2">
+      <div class="flex items-center justify-between pt-4">
         <div class="flex items-center gap-3">
           <button
-            @click="saveKey"
+            @click="saveSettings"
             class="bg-[#111] dark:bg-white text-white dark:text-[#111] px-5 py-2.5 rounded-xl hover:bg-[#222] dark:hover:bg-gray-100 active:scale-[0.98] text-sm font-medium transition-all duration-200 shadow-sm cursor-pointer"
           >
-            Save Key
+            Save Settings
           </button>
           <button
             v-if="isKeyConfigured"
             @click="clearKey"
             class="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 cursor-pointer"
           >
-            Remove
+            Clear Key
           </button>
         </div>
 
@@ -162,7 +338,7 @@ const clearKey = () => {
               <line x1="10" y1="14" x2="21" y2="3"></line>
             </svg>
           </a>.
-          OpenRouter provides access to models like Claude 3.5 Sonnet, GPT-4o, and Llama 3 with unified pay-as-you-go pricing.
+          OpenRouter provides access to 200+ models like Claude 3.5 Sonnet, GPT-4o, DeepSeek R1, and Llama 3.3.
         </p>
       </div>
     </div>

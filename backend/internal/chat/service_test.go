@@ -45,7 +45,7 @@ func TestService_StreamMessage_MissingAPIKey(t *testing.T) {
 	repo := NewFileRepository(tmpDir)
 	svc := NewService(repo, nil)
 
-	err := svc.StreamMessage(context.Background(), "session-1", "", Message{
+	err := svc.StreamMessage(context.Background(), "session-1", "", "", Message{
 		Role:    RoleUser,
 		Content: "Hello",
 	}, nil)
@@ -123,7 +123,7 @@ func TestService_StreamMessage_Success(t *testing.T) {
 
 	ctx := context.Background()
 	sessionID := "session-abc"
-	err := svc.StreamMessage(ctx, sessionID, "test-api-key", userMsg, onChunk)
+	err := svc.StreamMessage(ctx, sessionID, "test-api-key", "anthropic/claude-3.5-sonnet", userMsg, onChunk)
 	if err != nil {
 		t.Fatalf("StreamMessage failed: %v", err)
 	}
@@ -146,8 +146,8 @@ func TestService_StreamMessage_Success(t *testing.T) {
 	if !receivedReq.Stream {
 		t.Errorf("expected stream to be true")
 	}
-	if receivedReq.Model != "openai/gpt-3.5-turbo" {
-		t.Errorf("expected default model openai/gpt-3.5-turbo, got %q", receivedReq.Model)
+	if receivedReq.Model != "anthropic/claude-3.5-sonnet" {
+		t.Errorf("expected model anthropic/claude-3.5-sonnet, got %q", receivedReq.Model)
 	}
 	if len(receivedReq.Messages) != 1 {
 		t.Fatalf("expected 1 message in payload, got %d", len(receivedReq.Messages))
@@ -243,7 +243,7 @@ func TestService_StreamMessage_MultiTurnAndLongTitle(t *testing.T) {
 		Content: "This is a very long message that definitely exceeds thirty characters in length.",
 	}
 
-	err := svc.StreamMessage(ctx, sessionID, "key", longUserMsg, nil)
+	err := svc.StreamMessage(ctx, sessionID, "key", "", longUserMsg, nil)
 	if err != nil {
 		t.Fatalf("StreamMessage failed: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestService_StreamMessage_TitleTruncationNewSession(t *testing.T) {
 
 	longMsg := "This is a very long message that definitely exceeds thirty characters in length."
 	sessionID := "truncated-title-session"
-	err := svc.StreamMessage(context.Background(), sessionID, "key", Message{
+	err := svc.StreamMessage(context.Background(), sessionID, "key", "", Message{
 		Role:    RoleUser,
 		Content: longMsg,
 	}, nil)
@@ -319,7 +319,7 @@ func TestService_StreamMessage_ServerError(t *testing.T) {
 	svc := NewService(repo, nil)
 	svc.SetHTTPClient(mockClient)
 
-	err := svc.StreamMessage(context.Background(), "session-err", "bad-key", Message{
+	err := svc.StreamMessage(context.Background(), "session-err", "bad-key", "", Message{
 		Role:    RoleUser,
 		Content: "Hi",
 	}, nil)
@@ -353,7 +353,7 @@ func TestService_StreamMessage_CallbackError(t *testing.T) {
 		return expectedErr
 	}
 
-	err := svc.StreamMessage(context.Background(), "session-cb-err", "key", Message{
+	err := svc.StreamMessage(context.Background(), "session-cb-err", "key", "", Message{
 		Role:    RoleUser,
 		Content: "Hi",
 	}, onChunk)
@@ -375,7 +375,7 @@ func TestService_StreamMessage_RequestFailure(t *testing.T) {
 	svc := NewService(repo, nil)
 	svc.SetHTTPClient(mockClient)
 
-	err := svc.StreamMessage(context.Background(), "session-req-err", "key", Message{
+	err := svc.StreamMessage(context.Background(), "session-req-err", "key", "", Message{
 		Role:    RoleUser,
 		Content: "Hi",
 	}, nil)
@@ -385,5 +385,31 @@ func TestService_StreamMessage_RequestFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "openrouter request failed") {
 		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestService_FetchModels(t *testing.T) {
+	tmpDir := t.TempDir()
+	repo := NewFileRepository(tmpDir)
+
+	mockClient := newMockHTTPClient(func(req *http.Request) (*http.Response, error) {
+		if req.Header.Get("Authorization") != "Bearer test-key" {
+			t.Errorf("expected Bearer test-key, got %s", req.Header.Get("Authorization"))
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"openai/gpt-4o"}]}`)),
+		}, nil
+	})
+
+	svc := NewService(repo, nil)
+	svc.SetHTTPClient(mockClient)
+
+	data, err := svc.FetchModels(context.Background(), "test-key")
+	if err != nil {
+		t.Fatalf("FetchModels failed: %v", err)
+	}
+	if !strings.Contains(string(data), "openai/gpt-4o") {
+		t.Errorf("unexpected response: %s", string(data))
 	}
 }

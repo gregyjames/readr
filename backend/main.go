@@ -318,6 +318,20 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return c.JSON(fiber.Map{"status": "success"})
 	})
 
+	api.Get("/models", func(c *fiber.Ctx) error {
+		authHeader := c.Get("Authorization")
+		apiKey := strings.TrimPrefix(authHeader, "Bearer ")
+		apiKey = strings.TrimSpace(apiKey)
+
+		data, err := chatService.FetchModels(c.Context(), apiKey)
+		if err != nil {
+			logger.Error("Failed to fetch models from OpenRouter", zap.Error(err))
+			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Failed to fetch models from OpenRouter"})
+		}
+		c.Set("Content-Type", "application/json")
+		return c.Send(data)
+	})
+
 	api.Post("/chats/:id/message", func(c *fiber.Ctx) error {
 		authHeader := c.Get("Authorization")
 		apiKey := strings.TrimPrefix(authHeader, "Bearer ")
@@ -326,12 +340,23 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Authorization header required with Bearer API key"})
 		}
 
-		var msg chat.Message
-		if err := c.BodyParser(&msg); err != nil {
+		var req struct {
+			Role        chat.MessageRole  `json:"role"`
+			Content     string            `json:"content"`
+			Attachments []chat.Attachment `json:"attachments,omitempty"`
+			Model       string            `json:"model,omitempty"`
+		}
+		if err := c.BodyParser(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid message payload"})
 		}
-		if msg.Role == "" {
-			msg.Role = chat.RoleUser
+		if req.Role == "" {
+			req.Role = chat.RoleUser
+		}
+
+		msg := chat.Message{
+			Role:        req.Role,
+			Content:     req.Content,
+			Attachments: req.Attachments,
 		}
 
 		sessionID := c.Params("id")
@@ -341,7 +366,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		c.Set("Connection", "keep-alive")
 
 		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
-			err := chatService.StreamMessage(c.Context(), sessionID, apiKey, msg, func(chunk string) error {
+			err := chatService.StreamMessage(c.Context(), sessionID, apiKey, req.Model, msg, func(chunk string) error {
 				data, _ := json.Marshal(fiber.Map{"text": chunk})
 				if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
 					return err

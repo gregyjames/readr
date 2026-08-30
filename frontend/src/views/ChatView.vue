@@ -29,6 +29,7 @@ const mentionIndex = ref(0)
 const selectedMentionIdx = ref(0)
 
 const apiKey = ref('')
+const currentModel = ref('openai/gpt-4o-mini')
 const hasApiKey = computed(() => Boolean(apiKey.value.trim()))
 
 const filteredMentionArticles = computed(() => {
@@ -41,6 +42,7 @@ const filteredMentionArticles = computed(() => {
 
 onMounted(async () => {
   apiKey.value = localStorage.getItem('OPENROUTER_API_KEY') || ''
+  currentModel.value = localStorage.getItem('OPENROUTER_MODEL') || 'openai/gpt-4o-mini'
   await Promise.all([fetchSessions(), fetchArticles()])
 
   const sessionId = route.params.id as string | undefined
@@ -281,7 +283,10 @@ const sendMessage = async () => {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey.value.trim()}`
       },
-      body: JSON.stringify(userMsg)
+      body: JSON.stringify({
+        ...userMsg,
+        model: currentModel.value
+      })
     })
 
     if (!response.ok) {
@@ -423,6 +428,23 @@ const sendMessage = async () => {
         </div>
         <router-link to="/settings" class="font-medium underline hover:text-amber-900 dark:hover:text-amber-100">
           Go to Settings
+        </router-link>
+      </div>
+
+      <!-- Chat Top Header with Active Model -->
+      <div class="px-6 py-3 border-b border-gray-100 dark:border-gray-800/80 flex items-center justify-between bg-white/70 dark:bg-[#0e0e0e]/70 backdrop-blur-md sticky top-0 z-10">
+        <div class="flex items-center gap-2 truncate">
+          <span class="font-semibold text-sm text-gray-900 dark:text-gray-100 truncate">
+            {{ currentSession?.title || 'New Conversation' }}
+          </span>
+        </div>
+        <router-link
+          to="/settings"
+          title="Change model in settings"
+          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono bg-gray-100 dark:bg-[#181818] text-gray-600 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors"
+        >
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+          {{ currentModel }}
         </router-link>
       </div>
 
