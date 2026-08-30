@@ -118,7 +118,7 @@ const fetchModels = async () => {
 }
 
 onMounted(() => {
-  const existingKey = localStorage.getItem('OPENROUTER_API_KEY') || ''
+  const existingKey = getOpenRouterApiKey()
   apiKey.value = existingKey
   isKeyConfigured.value = Boolean(existingKey.trim())
 
@@ -153,9 +153,17 @@ const saveSettings = () => {
   const trimmed = apiKey.value.trim()
   if (trimmed) {
     localStorage.setItem('OPENROUTER_API_KEY', trimmed)
+    localStorage.setItem('openrouter_key', trimmed)
+    localStorage.setItem('openrouter_api_key', trimmed)
     isKeyConfigured.value = true
   } else {
     localStorage.removeItem('OPENROUTER_API_KEY')
+    localStorage.removeItem('openrouter_key')
+    localStorage.removeItem('openrouter_api_key')
+    localStorage.removeItem('OPENROUTER_KEY')
+    localStorage.removeItem('readr_openrouter_key')
+    localStorage.removeItem('apiKey')
+    localStorage.removeItem('api_key')
     isKeyConfigured.value = false
   }
 
@@ -173,6 +181,12 @@ const saveSettings = () => {
 const clearKey = () => {
   apiKey.value = ''
   localStorage.removeItem('OPENROUTER_API_KEY')
+  localStorage.removeItem('openrouter_key')
+  localStorage.removeItem('openrouter_api_key')
+  localStorage.removeItem('OPENROUTER_KEY')
+  localStorage.removeItem('readr_openrouter_key')
+  localStorage.removeItem('apiKey')
+  localStorage.removeItem('api_key')
   isKeyConfigured.value = false
   showSavedMessage('API key cleared.')
 }

@@ -3,6 +3,10 @@ export function getOpenRouterApiKey(): string {
     localStorage.getItem('OPENROUTER_API_KEY') ||
     localStorage.getItem('openrouter_key') ||
     localStorage.getItem('OPENROUTER_KEY') ||
+    localStorage.getItem('openrouter_api_key') ||
+    localStorage.getItem('readr_openrouter_key') ||
+    localStorage.getItem('apiKey') ||
+    localStorage.getItem('api_key') ||
     ''
   ).trim()
 }

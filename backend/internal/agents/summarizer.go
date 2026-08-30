@@ -18,9 +18,13 @@ import (
 var summaryBlockRegex = regexp.MustCompile(`(?m)^>\s*(?:💡\s*)?(?:\*\*)?(?:AI\s+)?Summary:(?:\*\*)?.*(?:\n>.*)*`)
 
 func (p *AgentPool) processSummarizer(job Job) {
-	apiKey, _ := job.Payload["api_key"].(string)
+	rawAPIKey, _ := job.Payload["api_key"].(string)
 	model, _ := job.Payload["model"].(string)
 
+	apiKey := strings.TrimSpace(rawAPIKey)
+	apiKey = strings.TrimPrefix(apiKey, "Bearer ")
+	apiKey = strings.TrimPrefix(apiKey, "bearer ")
+	apiKey = strings.Trim(apiKey, `"'`)
 	apiKey = strings.TrimSpace(apiKey)
 	model = strings.TrimSpace(model)
 
@@ -86,7 +90,18 @@ func (p *AgentPool) processSummarizer(job Job) {
 	}
 	bodyJSON, _ := json.Marshal(reqPayload)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			if len(via) > 0 {
+				req.Header.Set("Authorization", via[0].Header.Get("Authorization"))
+			}
+			return nil
+		},
+	}
 	var resp *http.Response
 	var bodyBytes []byte
 

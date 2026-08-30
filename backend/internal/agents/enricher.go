@@ -25,9 +25,13 @@ type ArticleRecord struct {
 }
 
 func (p *AgentPool) processEnrichFrontmatter(job Job) {
-	apiKey, _ := job.Payload["api_key"].(string)
+	rawAPIKey, _ := job.Payload["api_key"].(string)
 	model, _ := job.Payload["model"].(string)
 
+	apiKey := strings.TrimSpace(rawAPIKey)
+	apiKey = strings.TrimPrefix(apiKey, "Bearer ")
+	apiKey = strings.TrimPrefix(apiKey, "bearer ")
+	apiKey = strings.Trim(apiKey, `"'`)
 	apiKey = strings.TrimSpace(apiKey)
 	model = strings.TrimSpace(model)
 

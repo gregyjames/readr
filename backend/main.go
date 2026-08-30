@@ -538,6 +538,44 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return c.JSON(fiber.Map{"message": "Hello from Go!"})
 	})
 
+	extractOpenRouterCredentials := func(c *fiber.Ctx) (string, string) {
+	apiKey := strings.TrimSpace(c.Get("X-Openrouter-Key"))
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(c.Get("X-OpenRouter-Key"))
+	}
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(c.Get("X-Api-Key"))
+	}
+	if apiKey == "" {
+		authHeader := strings.TrimSpace(c.Get("Authorization"))
+		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+			apiKey = strings.TrimSpace(authHeader[7:])
+		}
+	}
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
+	}
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_KEY"))
+	}
+
+	model := strings.TrimSpace(c.Get("X-Openrouter-Model"))
+	if model == "" {
+		model = strings.TrimSpace(c.Get("X-OpenRouter-Model"))
+	}
+	if model == "" {
+		model = strings.TrimSpace(os.Getenv("OPENROUTER_MODEL"))
+	}
+	if model == "" {
+		model = strings.TrimSpace(os.Getenv("OPENROUTER_DEFAULT_MODEL"))
+	}
+	if model == "" {
+		model = "openai/gpt-4o-mini"
+	}
+
+	return apiKey, model
+}
+
 	api.Post("/articles/:id/reparse", func(c *fiber.Ctx) error {
 		idParam := c.Params("id")
 
@@ -546,14 +584,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(404).JSON(fiber.Map{"error": "Article not found"})
 		}
 
-		apiKey := strings.TrimSpace(c.Get("X-Openrouter-Key"))
-		if apiKey == "" {
-			apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
-		}
-		model := strings.TrimSpace(c.Get("X-Openrouter-Model"))
-		if model == "" {
-			model = strings.TrimSpace(os.Getenv("OPENROUTER_MODEL"))
-		}
+		apiKey, model := extractOpenRouterCredentials(c)
 
 		if c.Get("X-Agent-Enricher") == "true" {
 			agents.SubmitJob(agents.Job{
@@ -790,14 +821,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 		logger.Info("Adding new article", zap.String("url", body.URL))
 
-		apiKey := strings.TrimSpace(c.Get("X-Openrouter-Key"))
-		if apiKey == "" {
-			apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
-		}
-		model := strings.TrimSpace(c.Get("X-Openrouter-Model"))
-		if model == "" {
-			model = strings.TrimSpace(os.Getenv("OPENROUTER_DEFAULT_MODEL"))
-		}
+		apiKey, model := extractOpenRouterCredentials(c)
 
 		article, err := ingester.Ingest(c.Context(), ingest.IngestRequest{
 			URL:      body.URL,
