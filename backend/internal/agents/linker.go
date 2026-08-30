@@ -44,14 +44,24 @@ func (p *AgentPool) processAutoLinker(job Job) {
 		return
 	}
 
-	// 1. Get all other existing articles for linking
+	// 1. Get the current article metadata so we can exclude it AND its duplicates
+	var currentArticle repository.ArticleRecord
+	if err := p.db.Table("articles").Where("id = ?", job.ArticleID).First(&currentArticle).Error; err != nil {
+		p.logger.Error("AutoLinker could not find current article", zap.Error(err))
+		return
+	}
+
+	// 2. Get all other existing articles for linking (exclude duplicates of the same title)
 	var existingVaultText string
 	var allArticles []repository.ArticleRecord
-	if err := p.db.Table("articles").Where("id != ?", job.ArticleID).Find(&allArticles).Error; err == nil {
+	if err := p.db.Table("articles").Where("id != ? AND title != ?", job.ArticleID, currentArticle.Title).Find(&allArticles).Error; err == nil {
 		var sb strings.Builder
+		seenTitles := make(map[string]bool)
 		for _, a := range allArticles {
-			if len(strings.TrimSpace(a.Title)) >= 4 { // skip very short titles
-				sb.WriteString(fmt.Sprintf("- ID: %d, Title: %s\n", a.ID, a.Title))
+			title := strings.TrimSpace(a.Title)
+			if len(title) >= 4 && !seenTitles[title] { // skip very short titles and duplicates
+				sb.WriteString(fmt.Sprintf("- ID: %d, Title: %s\n", a.ID, title))
+				seenTitles[title] = true
 			}
 		}
 		existingVaultText = sb.String()
