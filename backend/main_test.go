@@ -7,12 +7,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/gofiber/fiber/v2"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -29,6 +31,7 @@ func initTestDB() *gorm.DB {
 	db.AutoMigrate(&Article{}, &ArticleLink{})
 	db.Exec("DELETE FROM article_links")
 	db.Exec("DELETE FROM articles")
+	db.Exec("DELETE FROM articles_fts")
 
 	db.Create(&Article{
 		ID:      1,
@@ -879,7 +882,232 @@ func TestStaticAndSPAFallback(t *testing.T) {
 	}
 }
 
+func searchRequest(t *testing.T, app *fiber.App, query string) []SearchResult {
+	t.Helper()
+	target := "/api/search?q=" + url.QueryEscape(query)
+	resp, err := app.Test(httptest.NewRequest("GET", target, nil))
+	if err != nil {
+		t.Fatalf("Failed to GET %s: %v", target, err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("Expected 200 for %s, got %d", target, resp.StatusCode)
+	}
+	var results []SearchResult
+	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+		t.Fatalf("Failed to decode response for %s: %v", target, err)
+	}
+	return results
+}
 
+func searchTitles(results []SearchResult) []string {
+	titles := make([]string, len(results))
+	for i, r := range results {
+		titles[i] = r.Title
+	}
+	return titles
+}
 
+func containsTitle(results []SearchResult, title string) bool {
+	for _, r := range results {
+		if r.Title == title {
+			return true
+		}
+	}
+	return false
+}
 
+func TestSearch_FindsPreExistingArticles(t *testing.T) {
+	db := initTestDB()
+	db.Exec("DELETE FROM articles")
+	db.Create(&Article{ID: 10, Title: "Overview", Tags: "k8s"})
+	db.Create(&Article{ID: 11, Title: "Ceramics Weekly", Tags: "pottery"})
 
+	app := setupApp(db)
+
+	results := searchRequest(t, app, "Overview")
+	if !containsTitle(results, "Overview") {
+		t.Errorf("expected to find \"Overview\", got %v", searchTitles(results))
+	}
+
+	results = searchRequest(t, app, "pottery")
+	if !containsTitle(results, "Ceramics Weekly") {
+		t.Errorf("expected to find \"Ceramics Weekly\", got %v", searchTitles(results))
+	}
+}
+
+func TestSearch_RebuildsPartiallyPopulatedIndex(t *testing.T) {
+	db := initTestDB()
+	db.Exec("DELETE FROM articles")
+	db.Create(&Article{ID: 20, Title: "Alpha Document", Tags: ""})
+	db.Create(&Article{ID: 21, Title: "Beta Document", Tags: ""})
+	db.Create(&Article{ID: 22, Title: "Gamma Document", Tags: ""})
+
+	setupApp(db)
+
+	// The real upgrade state: an index holding only what was saved since the feature shipped.
+	db.Exec("DELETE FROM articles_fts WHERE rowid != ?", 20)
+
+	app := setupApp(db)
+
+	results := searchRequest(t, app, "Document")
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results after rebuild, got %d (%v)", len(results), searchTitles(results))
+	}
+}
+
+func TestSearch_NoMatchesReturnsEmptyArrayNotNull(t *testing.T) {
+	db := initTestDB()
+	app := setupApp(db)
+
+	resp, err := app.Test(httptest.NewRequest("GET", "/api/search?q=zzzznomatch", nil))
+	if err != nil {
+		t.Fatalf("Failed to GET /api/search: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("Expected 200, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read response body: %v", err)
+	}
+	if strings.TrimSpace(string(body)) != "[]" {
+		t.Errorf("expected [], got %s", string(body))
+	}
+}
+
+func TestSearch_EmptyQueryReturnsEmptyArray(t *testing.T) {
+	db := initTestDB()
+	app := setupApp(db)
+
+	for _, target := range []string{"/api/search", "/api/search?q="} {
+		resp, err := app.Test(httptest.NewRequest("GET", target, nil))
+		if err != nil {
+			t.Fatalf("Failed to GET %s: %v", target, err)
+		}
+		if resp.StatusCode != 200 {
+			t.Errorf("expected 200 for %s, got %d", target, resp.StatusCode)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if strings.TrimSpace(string(body)) != "[]" {
+			t.Errorf("expected [] for %s, got %s", target, string(body))
+		}
+	}
+}
+
+func TestSearch_PunctuationOnlyQueryIsNotAnError(t *testing.T) {
+	db := initTestDB()
+	app := setupApp(db)
+
+	for _, query := range []string{"*", "\"", "'", "**  ''"} {
+		target := "/api/search?q=" + url.QueryEscape(query)
+		resp, err := app.Test(httptest.NewRequest("GET", target, nil))
+		if err != nil {
+			t.Fatalf("Failed to GET %s: %v", target, err)
+		}
+		if resp.StatusCode != 200 {
+			t.Errorf("expected 200 for q=%q, got %d", query, resp.StatusCode)
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if strings.TrimSpace(string(body)) != "[]" {
+			t.Errorf("expected [] for q=%q, got %s", query, string(body))
+		}
+	}
+}
+
+func TestSearch_MatchesAnyTermNotAllTerms(t *testing.T) {
+	db := initTestDB()
+	db.Exec("DELETE FROM articles")
+	db.Create(&Article{ID: 30, Title: "Service Meshes Explained", Tags: "kubernetes"})
+	db.Create(&Article{ID: 31, Title: "Networking Basics", Tags: "hardware"})
+
+	app := setupApp(db)
+
+	results := searchRequest(t, app, "kubernetes networking")
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d (%v)", len(results), searchTitles(results))
+	}
+}
+
+func TestSearch_TagMatchOutranksTitleMatch(t *testing.T) {
+	db := initTestDB()
+	db.Exec("DELETE FROM articles")
+	db.Create(&Article{ID: 40, Title: "Kubernetes Handbook", Tags: "unrelated"})
+	db.Create(&Article{ID: 41, Title: "Unrelated Handbook", Tags: "kubernetes"})
+
+	app := setupApp(db)
+
+	results := searchRequest(t, app, "kubernetes")
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d (%v)", len(results), searchTitles(results))
+	}
+	if results[0].Title != "Unrelated Handbook" {
+		t.Errorf("expected the tag match first, got %v", searchTitles(results))
+	}
+}
+
+func TestSearch_MatchesTagsRegardlessOfCase(t *testing.T) {
+	db := initTestDB()
+	db.Exec("DELETE FROM articles")
+	db.Create(&Article{ID: 50, Title: "Mixed Case", Tags: "AI, ai, Ai, Tech, tech "})
+
+	app := setupApp(db)
+
+	for _, query := range []string{"TECH", "tech", "Ai"} {
+		results := searchRequest(t, app, query)
+		if len(results) != 1 {
+			t.Errorf("expected 1 result for %q, got %d (%v)", query, len(results), searchTitles(results))
+		}
+	}
+}
+
+func TestSearch_FindsUntaggedArticleByTitle(t *testing.T) {
+	db := initTestDB()
+	db.Exec("DELETE FROM articles")
+	db.Create(&Article{ID: 60, Title: "Untagged Piece", Tags: ""})
+
+	app := setupApp(db)
+
+	results := searchRequest(t, app, "Untagged")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d (%v)", len(results), searchTitles(results))
+	}
+	if results[0].Title != "Untagged Piece" {
+		t.Errorf("expected \"Untagged Piece\", got %q", results[0].Title)
+	}
+}
+
+func TestSearch_DeletedArticleLeavesTheIndex(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("DATA_DIR", tempDir)
+
+	db := initTestDB()
+	db.Exec("DELETE FROM articles")
+	db.Create(&Article{ID: 70, Title: "Doomed Article", Article: "/articles/70.md", Tags: "temporary"})
+
+	articlesDir := filepath.Join(tempDir, "articles")
+	if err := os.MkdirAll(articlesDir, os.ModePerm); err != nil {
+		t.Fatalf("Failed to create articles dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(articlesDir, "70.md"), []byte("doomed"), 0644); err != nil {
+		t.Fatalf("Failed to write article file: %v", err)
+	}
+
+	app := setupApp(db)
+
+	if results := searchRequest(t, app, "Doomed"); len(results) != 1 {
+		t.Fatalf("expected 1 result before delete, got %d", len(results))
+	}
+
+	resp, err := app.Test(httptest.NewRequest("DELETE", "/api/delete/70", nil))
+	if err != nil {
+		t.Fatalf("Failed to DELETE article: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("Expected 200 from delete, got %d", resp.StatusCode)
+	}
+
+	if results := searchRequest(t, app, "Doomed"); len(results) != 0 {
+		t.Errorf("expected 0 results after delete, got %v", searchTitles(results))
+	}
+}
