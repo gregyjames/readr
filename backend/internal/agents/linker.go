@@ -37,6 +37,9 @@ func (p *AgentPool) processAutoLinker(job Job) {
 	apiKey, _ := job.Payload["api_key"].(string)
 	model, _ := job.Payload["model"].(string)
 
+	apiKey = strings.TrimSpace(apiKey)
+	model = strings.TrimSpace(model)
+
 	if model == "" {
 		model = "openai/gpt-4o-mini"
 	}
