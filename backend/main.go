@@ -155,9 +155,9 @@ func initDB() *gorm.DB {
 	return db
 }
 
-func syncArticleToFTS(db *gorm.DB, id int64, title string, content string) {
+func syncArticleToFTS(db *gorm.DB, id int64, title string, tags string) {
 	db.Exec("DELETE FROM articles_fts WHERE rowid = ?", id)
-	err := db.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", id, title, content).Error
+	err := db.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", id, title, tags).Error
 	if err != nil && logger != nil {
 		logger.Error("Failed to sync article to FTS5", zap.Int64("id", id), zap.Error(err))
 	}
@@ -591,7 +591,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save article"})
 		}
 		
-		syncArticleToFTS(db, article.ID, article.Title, req.Content)
+		syncArticleToFTS(db, article.ID, article.Title, article.Tags)
 		
 		// Sync links to database
 		linkRegex := regexp.MustCompile(`\[\[([^\]|]+)(?:\|([^\]]+))?\]\]`)
@@ -645,8 +645,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(500).SendString("Failed to fetch the page")
 		}
 
-		contentBytes, _ := os.ReadFile(filepath.Join(dataDirectory, "articles", fmt.Sprintf("%d.md", article.ID)))
-		syncArticleToFTS(db, article.ID, article.Title, string(contentBytes))
+		syncArticleToFTS(db, article.ID, article.Title, article.Tags)
 
 		graphEngine.InvalidateCache()
 		logger.Info("Article added successfully", zap.Int64("id", article.ID), zap.String("url", body.URL))
