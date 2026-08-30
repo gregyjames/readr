@@ -1,26 +1,67 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 version: 2
 updates:
+  # 1. Frontend Bun / NPM Dependencies
   - package-ecosystem: "bun"
-    # Look for `package.json` and `bun.lock` files in the frontend directory
-    directory: "/frontend/"
-    # Check the Bun registry for updates every day (weekdays)
+    directory: "/frontend"
     schedule:
-      interval: "weekly"
+      interval: "daily"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "frontend"
+    commit-message:
+      prefix: "chore(deps-frontend)"
     groups:
-      bun-dependencies:
+      frontend-dependencies:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # 2. Backend Go Modules
   - package-ecosystem: "gomod"
-    # Look for `go.mod` and `go.sum` files in the backend directory
-    directory: "/backend/"
-    # Check the Go modules registry for updates monthly
+    directory: "/backend"
     schedule:
-      interval: "weekly"
+      interval: "daily"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "backend"
+    commit-message:
+      prefix: "chore(deps-backend)"
     groups:
-      go-dependencies:
+      backend-dependencies:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # 3. GitHub Actions Workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "chore(deps-ci)"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # 4. Root Dockerfile Base Images
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(deps-docker)"
