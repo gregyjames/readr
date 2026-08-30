@@ -401,6 +401,15 @@ const clearKey = () => {
 
       <!-- Background Agents Toggles -->
       <div class="pt-4 border-t border-gray-100 dark:border-gray-800 space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Background Agents
+          </label>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+            Automate vault enrichment and graph weaving when new articles are added or reparsed.
+          </p>
+        </div>
+
         <div class="flex items-center justify-between">
           <div>
             <div class="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-2">
@@ -428,10 +437,10 @@ const clearKey = () => {
           <div>
             <div class="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-2">
               <span>Autonomous Graph Linker</span>
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400">Zero-Token</span>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">LLM</span>
             </div>
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 max-w-md">
-              Automatically weave new articles into the Knowledge Graph by injecting markdown wikilinks locally.
+              Automatically weave new articles into the Knowledge Graph by injecting markdown wikilinks.
             </p>
           </div>
           <button
