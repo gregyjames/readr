@@ -119,11 +119,15 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		return
 	}
 
+	retryCount := 0
 	retryClient := retryablehttp.NewClient()
 	retryClient.RetryMax = 3
 	retryClient.RetryWaitMin = 1 * time.Second
 	retryClient.RetryWaitMax = 10 * time.Second
 	retryClient.Logger = nil // suppress stdout default logging; logged via zap
+	retryClient.RequestLogHook = func(l retryablehttp.Logger, req *http.Request, retryNumber int) {
+		retryCount = retryNumber
+	}
 	retryClient.HTTPClient.Timeout = 60 * time.Second
 	retryClient.HTTPClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
@@ -150,9 +154,28 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		zap.String("model", model),
 	)
 
+	recordMetric := func(status string, promptTokens, completionTokens, tokensSaved int, errMsg string) {
+		if repo != nil {
+			_ = repo.RecordPipelineMetric(context.Background(), &repository.PipelineMetric{
+				ArticleID:           job.ArticleID,
+				ArticleTitle:        articleTitle,
+				Model:               model,
+				Status:              status,
+				DurationMs:          time.Since(startTime).Milliseconds(),
+				RetryCount:          retryCount,
+				PromptTokens:        promptTokens,
+				CompletionTokens:    completionTokens,
+				TokensSavedEstimate: tokensSaved,
+				ErrorMessage:        errMsg,
+				CreatedAt:           time.Now(),
+			})
+		}
+	}
+
 	req, err := retryablehttp.NewRequestWithContext(context.Background(), http.MethodPost, apiURL, bytes.NewReader(bodyJSON))
 	if err != nil {
 		p.logger.Error("Pipeline failed to create HTTP request", zap.Error(err))
+		recordMetric("failed", 0, 0, 0, err.Error())
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -163,6 +186,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	resp, err := retryClient.Do(req)
 	if err != nil {
 		p.logger.Error("Pipeline LLM request failed", zap.Error(err), zap.Int64("article_id", job.ArticleID))
+		recordMetric("failed", 0, 0, 0, err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -170,11 +194,13 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		p.logger.Error("Pipeline failed to read LLM response body", zap.Error(err), zap.Int64("article_id", job.ArticleID))
+		recordMetric("failed", 0, 0, 0, err.Error())
 		return
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		p.logger.Error("Pipeline LLM request returned non-200 status", zap.Int("status", resp.StatusCode), zap.String("body", string(respBytes)), zap.Int64("article_id", job.ArticleID))
+		recordMetric("failed", 0, 0, 0, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBytes)))
 		return
 	}
 
@@ -190,6 +216,11 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
+		Usage *struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
 		Error *struct {
 			Message string      `json:"message"`
 			Code    interface{} `json:"code"`
@@ -198,16 +229,19 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 
 	if err := json.Unmarshal(respBytes, &llmResp); err != nil {
 		p.logger.Error("Pipeline failed to parse LLM response JSON", zap.Error(err), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
+		recordMetric("failed", 0, 0, 0, "JSON parse error: "+err.Error())
 		return
 	}
 
 	if llmResp.Error != nil {
 		p.logger.Error("Pipeline received API error from LLM provider", zap.String("error_message", llmResp.Error.Message), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
+		recordMetric("failed", 0, 0, 0, llmResp.Error.Message)
 		return
 	}
 
 	if len(llmResp.Choices) == 0 {
 		p.logger.Error("Pipeline LLM response contained no choices", zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
+		recordMetric("failed", 0, 0, 0, "no choices returned from LLM provider")
 		return
 	}
 
@@ -216,13 +250,30 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 
 	if rawJSON == "" {
 		p.logger.Error("Pipeline LLM response message content was empty", zap.String("finish_reason", llmResp.Choices[0].FinishReason), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
+		recordMetric("failed", 0, 0, 0, "empty message content from LLM provider")
 		return
 	}
 
 	var pipelineResp UnifiedPipelineResponse
 	if err := json.Unmarshal([]byte(rawJSON), &pipelineResp); err != nil {
 		p.logger.Error("Pipeline failed to unmarshal JSON into UnifiedPipelineResponse", zap.Error(err), zap.String("raw", rawJSON), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
+		recordMetric("failed", 0, 0, 0, "schema parse error: "+err.Error())
 		return
+	}
+
+	// Calculate token analytics
+	promptTokens := 0
+	completionTokens := 0
+	if llmResp.Usage != nil {
+		promptTokens = llmResp.Usage.PromptTokens
+		completionTokens = llmResp.Usage.CompletionTokens
+	} else {
+		promptTokens = len(prompt) / 4
+		completionTokens = len(rawJSON) / 4
+	}
+	tokensSaved := (promptTokens * 2) - 150
+	if tokensSaved < 0 {
+		tokensSaved = 0
 	}
 
 	// 5. In-memory transformations
@@ -314,15 +365,19 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	tmpFile := filepath.Join(dir, fmt.Sprintf("%d.md.tmp", job.ArticleID))
 	if err := os.WriteFile(tmpFile, []byte(newContent), 0644); err != nil {
 		p.logger.Error("Pipeline failed to write tmp markdown file", zap.Error(err))
+		recordMetric("failed", promptTokens, completionTokens, 0, "file write error: "+err.Error())
 		return
 	}
 	if err := os.Rename(tmpFile, filePath); err != nil {
 		_ = os.Remove(tmpFile)
 		if err := os.WriteFile(filePath, []byte(newContent), 0644); err != nil {
 			p.logger.Error("Pipeline failed to write markdown file", zap.Error(err))
+			recordMetric("failed", promptTokens, completionTokens, 0, "file write error: "+err.Error())
 			return
 		}
 	}
+
+	recordMetric("success", promptTokens, completionTokens, tokensSaved, "")
 
 	p.logger.Info("Successfully completed unified pipeline execution and saved file!",
 		zap.Int64("article_id", job.ArticleID),
