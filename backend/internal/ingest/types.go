@@ -49,6 +49,7 @@ type PageFetcher interface {
 
 type FileStorage interface {
 	SaveMarkdown(filenameID int64, content []byte) (string, error)
+	SaveMarkdownByTitle(title string, fallbackID int64, content []byte) (string, error)
 	SaveImage(filenameID int64, filename string, data []byte) (string, error)
 	GetImagesDir(filenameID int64) string
 }
