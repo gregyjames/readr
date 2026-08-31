@@ -6,10 +6,11 @@ import (
 	"go.uber.org/zap"
 )
 
-func RegisterLibrarian(router fiber.Router, h *HandlerContext, runner *agents.LibrarianRunner) {
+func RegisterLibrarian(router fiber.Router, h *HandlerContext, runner *agents.LibrarianRunner, cronManager *agents.LibrarianCronManager) {
 	router.Get("/librarian/status", func(c *fiber.Ctx) error {
 		settings := h.SettingsStore.Get()
-		status := runner.GetStatus(settings.LibrarianEnabled, settings.LibrarianCron, settings.LibrarianMinClusterSize, nil)
+		var nextRun = cronManager.GetNextRun()
+		status := runner.GetStatus(settings.LibrarianEnabled, settings.LibrarianCron, settings.LibrarianMinClusterSize, nextRun)
 		return c.JSON(status)
 	})
 

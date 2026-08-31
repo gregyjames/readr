@@ -38,9 +38,10 @@ func setupTestLibrarianHandler(t *testing.T) (*fiber.App, *HandlerContext, *agen
 	}
 
 	runner := agents.NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	cronManager := agents.NewLibrarianCronManager(runner, zap.NewNop())
 
 	app := fiber.New()
-	RegisterLibrarian(app, hCtx, runner)
+	RegisterLibrarian(app, hCtx, runner, cronManager)
 
 	return app, hCtx, runner
 }

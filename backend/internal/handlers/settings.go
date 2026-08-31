@@ -133,14 +133,17 @@ func RegisterSettings(router fiber.Router, h *HandlerContext) {
 	router.Get("/settings", func(c *fiber.Ctx) error {
 		fresh := h.SettingsStore.Reload()
 		return c.JSON(fiber.Map{
-			"api_key":                 fresh.APIKey,
-			"model":                   fresh.Model,
-			"agent_enricher":          fresh.AgentEnricher,
-			"agent_linker":            fresh.AgentLinker,
-			"agent_summarizer":        fresh.AgentSummarizer,
-			"theme":                   fresh.Theme,
-			"view_mode":               fresh.ViewMode,
-			"graph_context_expansion": fresh.GraphContextExpansion,
+			"api_key":                    fresh.APIKey,
+			"model":                      fresh.Model,
+			"agent_enricher":             fresh.AgentEnricher,
+			"agent_linker":               fresh.AgentLinker,
+			"agent_summarizer":           fresh.AgentSummarizer,
+			"librarian_enabled":          fresh.LibrarianEnabled,
+			"librarian_cron":             fresh.LibrarianCron,
+			"librarian_min_cluster_size": fresh.LibrarianMinClusterSize,
+			"theme":                      fresh.Theme,
+			"view_mode":                  fresh.ViewMode,
+			"graph_context_expansion":    fresh.GraphContextExpansion,
 		})
 	})
 
@@ -160,6 +163,13 @@ func RegisterSettings(router fiber.Router, h *HandlerContext) {
 			current.AgentEnricher = req.AgentEnricher
 			current.AgentLinker = req.AgentLinker
 			current.AgentSummarizer = req.AgentSummarizer
+			current.LibrarianEnabled = req.LibrarianEnabled
+			if req.LibrarianCron != "" {
+				current.LibrarianCron = req.LibrarianCron
+			}
+			if req.LibrarianMinClusterSize > 0 {
+				current.LibrarianMinClusterSize = req.LibrarianMinClusterSize
+			}
 			if req.Theme != "" {
 				current.Theme = req.Theme
 			}

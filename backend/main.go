@@ -232,7 +232,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	handlers.RegisterSearch(api, hCtx)
 	handlers.RegisterEvents(api, hCtx)
 	handlers.RegisterDiagnostics(api, hCtx)
-	handlers.RegisterLibrarian(api, hCtx, librarianRunner)
+	handlers.RegisterLibrarian(api, hCtx, librarianRunner, librarianCron)
 
 	distDir := os.Getenv("DIST_DIR")
 	if distDir == "" {
