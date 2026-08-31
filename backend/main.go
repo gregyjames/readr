@@ -462,6 +462,44 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	api := app.Group("/api")
 
+	api.Use(func(c *fiber.Ctx) error {
+		path := c.Path()
+		if path == "/api/auth/status" || path == "/api/auth/login" || path == "/api/auth/setup" {
+			return c.Next()
+		}
+
+		settingsMu.RLock()
+		pwdHash := serverSettings.PasswordHash
+		secret := serverSettings.SessionSecret
+		settingsMu.RUnlock()
+
+		// If no password is set, allow access
+		if pwdHash == "" {
+			return c.Next()
+		}
+
+		// Check cookie
+		token := c.Cookies("readr_session")
+		if token == "" {
+			// Check Authorization: Bearer <token>
+			authHeader := c.Get("Authorization")
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+			}
+		}
+
+		if token == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+		}
+
+		valid, err := auth.VerifySession(secret, token, time.Now())
+		if err != nil || !valid {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+		}
+
+		return c.Next()
+	})
+
 	api.Get("/auth/status", func(c *fiber.Ctx) error {
 		settingsMu.RLock()
 		pwdHash := serverSettings.PasswordHash

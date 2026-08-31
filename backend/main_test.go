@@ -1195,3 +1195,56 @@ func TestAuthEndpoints_Flow(t *testing.T) {
 	}
 }
 
+func TestAuthMiddleware_Protection(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("DATA_DIR", tempDir)
+	db := initTestDB()
+	app := setupApp(db)
+
+	// Setup password
+	setupPayload, _ := json.Marshal(map[string]string{"password": "secretPassword"})
+	req := httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(setupPayload))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("POST /api/auth/setup failed: %v", err)
+	}
+	cookie := resp.Header.Get("Set-Cookie")
+
+	// Protected endpoint without cookie -> 401
+	req = httptest.NewRequest("GET", "/api/getarticles", nil)
+	resp, err = app.Test(req)
+	if err != nil {
+		t.Fatalf("GET /api/getarticles failed: %v", err)
+	}
+	if resp.StatusCode != 401 {
+		t.Fatalf("expected 401 for unauthenticated request, got %d", resp.StatusCode)
+	}
+
+	// Protected endpoint with valid cookie -> 200
+	req = httptest.NewRequest("GET", "/api/getarticles", nil)
+	req.Header.Set("Cookie", cookie)
+	resp, err = app.Test(req)
+	if err != nil {
+		t.Fatalf("GET /api/getarticles with cookie failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 for authenticated request, got %d", resp.StatusCode)
+	}
+
+	// Protected endpoint with Bearer token -> 200
+	// Extract token from cookie (readr_session=<token>; ...)
+	parts := strings.Split(cookie, ";")
+	tokenPart := strings.TrimPrefix(parts[0], "readr_session=")
+	req = httptest.NewRequest("GET", "/api/getarticles", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenPart)
+	resp, err = app.Test(req)
+	if err != nil {
+		t.Fatalf("GET /api/getarticles with Bearer failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 for Bearer authenticated request, got %d", resp.StatusCode)
+	}
+}
+
+
