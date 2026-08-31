@@ -89,12 +89,16 @@ export async function changePassword(currentPassword: string, newPassword: strin
   }
 }
 
-export async function logout(): Promise<void> {
+export async function logout(): Promise<boolean> {
   try {
-    await fetch('/api/auth/logout', { method: 'POST' })
+    const res = await fetch('/api/auth/logout', { method: 'POST' })
+    if (res.ok) {
+      authState.isAuthenticated = false
+      return true
+    }
+    return false
   } catch (err) {
     console.error('Logout error', err)
-  } finally {
-    authState.isAuthenticated = false
+    return false
   }
 }

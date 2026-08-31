@@ -20,8 +20,10 @@ const route = useRoute()
 const router = useRouter()
 
 const handleLogout = async () => {
-  await logout()
-  router.push('/login')
+  const success = await logout()
+  if (success) {
+    router.push('/login')
+  }
 }
 
 const showModal = ref(false)
