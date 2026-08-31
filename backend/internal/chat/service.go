@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/go-retryablehttp"
 )
 
 type ArticleFetcher interface {
@@ -21,16 +23,32 @@ type ArticleFetcher interface {
 type Service struct {
 	repo          *FileRepository
 	fetcher       ArticleFetcher
-	client        *http.Client
+	client        *retryablehttp.Client
 	openRouterURL string
 	defaultModel  string
 }
 
 func NewService(repo *FileRepository, fetcher ArticleFetcher) *Service {
+	client := retryablehttp.NewClient()
+	client.RetryMax = 2
+	client.RetryWaitMin = 500 * time.Millisecond
+	client.RetryWaitMax = 3 * time.Second
+	client.Logger = nil
+	client.HTTPClient.Timeout = 120 * time.Second
+	client.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {
+		if err != nil {
+			return retryablehttp.DefaultRetryPolicy(ctx, resp, err)
+		}
+		if resp != nil && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500) {
+			return true, nil
+		}
+		return false, nil
+	}
+
 	return &Service{
 		repo:          repo,
 		fetcher:       fetcher,
-		client:        &http.Client{Timeout: 120 * time.Second},
+		client:        client,
 		openRouterURL: "https://openrouter.ai/api/v1/chat/completions",
 		defaultModel:  "openai/gpt-3.5-turbo",
 	}
@@ -42,7 +60,9 @@ func (s *Service) SetOpenRouterURL(url string) {
 }
 
 func (s *Service) SetHTTPClient(client *http.Client) {
-	s.client = client
+	if client != nil {
+		s.client.HTTPClient = client
+	}
 }
 
 type openRouterRequest struct {
@@ -52,7 +72,7 @@ type openRouterRequest struct {
 }
 
 func (s *Service) FetchModels(ctx context.Context, apiKey string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://openrouter.ai/api/v1/models", nil)
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodGet, "https://openrouter.ai/api/v1/models", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +194,7 @@ func (s *Service) StreamMessage(ctx context.Context, sessionID string, apiKey st
 		return fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.openRouterURL, bytes.NewReader(bodyBytes))
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, s.openRouterURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
