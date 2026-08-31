@@ -587,51 +587,9 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	})
 
 	extractOpenRouterCredentials := func(c *fiber.Ctx) (string, string) {
-		apiKey := strings.TrimSpace(c.Get("X-Openrouter-Key"))
-		if apiKey == "" {
-			apiKey = strings.TrimSpace(c.Get("X-OpenRouter-Key"))
-		}
-		if apiKey == "" {
-			apiKey = strings.TrimSpace(c.Get("X-Api-Key"))
-		}
-		if apiKey == "" {
-			authHeader := strings.TrimSpace(c.Get("Authorization"))
-			if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-				apiKey = strings.TrimSpace(authHeader[7:])
-			}
-		}
-		if apiKey == "" {
-			apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
-		}
-		if apiKey == "" {
-			apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_KEY"))
-		}
-		if apiKey == "" {
-			settingsMu.RLock()
-			apiKey = strings.TrimSpace(serverSettings.APIKey)
-			settingsMu.RUnlock()
-		}
-
-		model := strings.TrimSpace(c.Get("X-Openrouter-Model"))
-		if model == "" {
-			model = strings.TrimSpace(c.Get("X-OpenRouter-Model"))
-		}
-		if model == "" {
-			model = strings.TrimSpace(os.Getenv("OPENROUTER_MODEL"))
-		}
-		if model == "" {
-			model = strings.TrimSpace(os.Getenv("OPENROUTER_DEFAULT_MODEL"))
-		}
-		if model == "" {
-			settingsMu.RLock()
-			model = strings.TrimSpace(serverSettings.Model)
-			settingsMu.RUnlock()
-		}
-		if model == "" {
-			model = "openai/gpt-4o-mini"
-		}
-
-		return apiKey, model
+		settingsMu.RLock()
+		defer settingsMu.RUnlock()
+		return serverSettings.APIKey, serverSettings.Model
 	}
 
 	api.Get("/settings", func(c *fiber.Ctx) error {
