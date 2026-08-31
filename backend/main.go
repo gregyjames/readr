@@ -215,6 +215,14 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return c.JSON(fiber.Map{"message": "Hello from Go!"})
 	})
 
+	librarianRunner := agents.NewLibrarianRunner(logger, db, repo, dataDirectory, func() {
+		graphEngine.InvalidateCache()
+		eventHub.Broadcast("graph-updated")
+	})
+	librarianCron := agents.NewLibrarianCronManager(librarianRunner, logger)
+	initialSettings := settingsStore.Get()
+	_ = librarianCron.Start(initialSettings.LibrarianCron, initialSettings.LibrarianEnabled)
+
 	handlers.RegisterAuth(api, hCtx)
 	handlers.RegisterArticles(api, hCtx)
 	handlers.RegisterGraph(api, hCtx)
@@ -224,6 +232,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	handlers.RegisterSearch(api, hCtx)
 	handlers.RegisterEvents(api, hCtx)
 	handlers.RegisterDiagnostics(api, hCtx)
+	handlers.RegisterLibrarian(api, hCtx, librarianRunner)
 
 	distDir := os.Getenv("DIST_DIR")
 	if distDir == "" {
