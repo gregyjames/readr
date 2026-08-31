@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -66,6 +67,11 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 
 	router.Get("/articles/:filename", func(c *fiber.Ctx) error {
 		filename := c.Params("filename")
+		if unescaped, err := url.PathUnescape(filename); err == nil && unescaped != "" {
+			filename = unescaped
+		} else if unescaped, err := url.QueryUnescape(filename); err == nil && unescaped != "" {
+			filename = unescaped
+		}
 		clean := filepath.Clean(filename)
 
 		// 1. Direct file lookup in data/articles/<clean>
@@ -76,7 +82,16 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			return c.Send(content)
 		}
 
-		// 2. If not found and filename is numeric (e.g. "123" or "123.md"), look up article by ID
+		// 2. Direct file lookup with .md appended
+		if !strings.HasSuffix(clean, ".md") {
+			if content, err := os.ReadFile(filePath + ".md"); err == nil {
+				c.Set("Content-Type", "text/markdown; charset=utf-8")
+				c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+				return c.Send(content)
+			}
+		}
+
+		// 3. Lookup by numeric ID (e.g. "123" or "123.md")
 		numStr := strings.TrimSuffix(clean, ".md")
 		if id, err := strconv.ParseInt(numStr, 10, 64); err == nil && id > 0 {
 			var a repository.GormArticle
@@ -89,6 +104,21 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 						c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
 						return c.Send(content)
 					}
+				}
+			}
+		}
+
+		// 4. Lookup by Title in DB
+		titleToLookup := strings.TrimSuffix(clean, ".md")
+		var a repository.GormArticle
+		if err := h.DB.WithContext(c.Context()).Where("LOWER(title) = LOWER(?) AND deleted_at IS NULL", titleToLookup).First(&a).Error; err == nil {
+			if a.Article != "" {
+				relPath := strings.TrimPrefix(a.Article, "/")
+				candidate := filepath.Join(h.DataDir, relPath)
+				if content, err := os.ReadFile(candidate); err == nil {
+					c.Set("Content-Type", "text/markdown; charset=utf-8")
+					c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+					return c.Send(content)
 				}
 			}
 		}

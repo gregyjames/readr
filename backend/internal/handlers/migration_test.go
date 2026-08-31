@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"example.com/backend/internal/repository"
+	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -87,5 +89,54 @@ func TestMigrateLegacyArticleFilenames(t *testing.T) {
 	}
 	if countSecond != 0 {
 		t.Errorf("expected 0 migrated articles on rerun, got %d", countSecond)
+	}
+}
+
+func TestGetArticleContent_EndpointVariations(t *testing.T) {
+	tempDir := t.TempDir()
+	articlesDir := filepath.Join(tempDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0755)
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.AutoMigrate(&repository.GormArticle{})
+
+	_ = os.WriteFile(filepath.Join(articlesDir, "Building Distributed Systems in Go.md"), []byte("# Distributed Systems Content"), 0644)
+	db.Create(&repository.GormArticle{
+		ID:      101,
+		Title:   "Building Distributed Systems in Go",
+		Article: "/articles/Building Distributed Systems in Go.md",
+	})
+
+	repo := repository.NewGormRepository(db)
+	hCtx := &HandlerContext{
+		DB:      db,
+		DataDir: tempDir,
+		Repo:    repo,
+	}
+
+	app := fiber.New()
+	RegisterArticles(app, hCtx)
+
+	pathsToTest := []string{
+		"/articles/Building%20Distributed%20Systems%20in%20Go.md",
+		"/articles/101.md",
+		"/articles/101",
+		"/articles/Building%20Distributed%20Systems%20in%20Go",
+	}
+
+	for _, p := range pathsToTest {
+		t.Run(p, func(t *testing.T) {
+			req := httptest.NewRequest("GET", p, nil)
+			resp, err := app.Test(req, 5000)
+			if err != nil {
+				t.Fatalf("request %s failed: %v", p, err)
+			}
+			if resp.StatusCode != 200 {
+				t.Fatalf("expected 200 for %s, got %d", p, resp.StatusCode)
+			}
+		})
 	}
 }
