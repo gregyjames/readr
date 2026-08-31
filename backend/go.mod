@@ -10,6 +10,7 @@ require (
 	github.com/nikolalohinski/gonja/v2 v2.9.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	go.uber.org/zap v1.28.0
+	golang.org/x/crypto v0.55.0
 	golang.org/x/net v0.58.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.2
