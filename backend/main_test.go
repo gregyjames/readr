@@ -24,9 +24,12 @@ func TestMain(m *testing.M) {
 	tempDir, err := os.MkdirTemp("", "readr-test-*")
 	if err == nil {
 		os.Setenv("DATA_DIR", tempDir)
-		defer os.RemoveAll(tempDir)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if err == nil {
+		os.RemoveAll(tempDir)
+	}
+	os.Exit(code)
 }
 
 func initTestDB() *gorm.DB {
