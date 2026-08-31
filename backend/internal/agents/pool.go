@@ -17,12 +17,20 @@ const (
 	JobTypeEnrichFrontmatter JobType = "enrich_frontmatter"
 	JobTypeAutoLinker        JobType = "auto_linker"
 	JobTypeSummarizer        JobType = "summarizer"
+	JobTypePipeline          JobType = "pipeline"
 )
+
+type PipelineSettings struct {
+	Summarizer bool
+	Enricher   bool
+	Linker     bool
+}
 
 type Job struct {
 	ArticleID int64
 	Type      JobType
 	Payload   map[string]interface{}
+	Settings  PipelineSettings
 }
 
 type openRouterRequest struct {
@@ -73,6 +81,8 @@ func (p *AgentPool) worker(id int) {
 			p.processAutoLinker(job)
 		case JobTypeSummarizer:
 			p.processSummarizer(job)
+		case JobTypePipeline:
+			p.processPipeline(job)
 		default:
 			p.logger.Warn("Unknown job type", zap.String("type", string(job.Type)))
 		}
