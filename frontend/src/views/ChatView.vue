@@ -6,6 +6,8 @@ import type { Article, Attachment, Message, ChatSession } from '../types/chat'
 import ChatMessageItem from '../components/chat/ChatMessageItem.vue'
 import MentionDropdown from '../components/chat/MentionDropdown.vue'
 
+import { settings } from '../store/settings'
+
 const route = useRoute()
 const router = useRouter()
 
@@ -28,9 +30,8 @@ const mentionQuery = ref('')
 const mentionIndex = ref(0)
 const selectedMentionIdx = ref(0)
 
-const apiKey = ref('')
-const currentModel = ref('openai/gpt-4o-mini')
-const hasApiKey = computed(() => Boolean(apiKey.value.trim()))
+const hasApiKey = computed(() => Boolean(settings.api_key?.trim()))
+const currentModel = computed(() => settings.model)
 
 const filteredMentionArticles = computed(() => {
   const q = mentionQuery.value.toLowerCase().trim()
@@ -41,8 +42,6 @@ const filteredMentionArticles = computed(() => {
 })
 
 onMounted(async () => {
-  apiKey.value = localStorage.getItem('OPENROUTER_API_KEY') || ''
-  currentModel.value = localStorage.getItem('OPENROUTER_MODEL') || 'openai/gpt-4o-mini'
   await Promise.all([fetchSessions(), fetchArticles()])
 
   const sessionId = route.params.id as string | undefined
@@ -277,16 +276,15 @@ const sendMessage = async () => {
   scrollToBottom()
 
   try {
-    const expandGraph = localStorage.getItem('GRAPH_CONTEXT_EXPANSION') !== 'false'
+    const expandGraph = settings.graph_context_expansion
     const response = await fetch(`/api/chats/${session.id}/message`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey.value.trim()}`
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
         ...userMsg,
-        model: currentModel.value,
+        model: settings.model,
         expandContext: expandGraph
       })
     })
