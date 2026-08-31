@@ -146,6 +146,14 @@ func (m *mockArticleRepository) UpdateArticleTags(ctx context.Context, id int64,
 	return nil
 }
 
+func (m *mockArticleRepository) RecordPipelineMetric(ctx context.Context, metric *repository.PipelineMetric) error {
+	return nil
+}
+
+func (m *mockArticleRepository) GetPipelineDiagnostics(ctx context.Context, limit int) (*repository.PipelineDiagnosticsSummary, []repository.PipelineMetric, error) {
+	return &repository.PipelineDiagnosticsSummary{}, nil, nil
+}
+
 func TestIngester_Success(t *testing.T) {
 	sampleHTML := `<!DOCTYPE html>
 <html>

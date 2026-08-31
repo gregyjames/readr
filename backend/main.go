@@ -222,6 +222,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	handlers.RegisterTemplates(api, hCtx)
 	handlers.RegisterSearch(api, hCtx)
 	handlers.RegisterEvents(api, hCtx)
+	handlers.RegisterDiagnostics(api, hCtx)
 
 	distDir := os.Getenv("DIST_DIR")
 	if distDir == "" {
