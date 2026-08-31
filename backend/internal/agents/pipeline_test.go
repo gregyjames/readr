@@ -660,7 +660,7 @@ func TestProcessPipeline_RecordsMetrics(t *testing.T) {
 	if recent[0].PromptTokens != 150 || recent[0].CompletionTokens != 40 {
 		t.Errorf("expected prompt 150 and completion 40, got %d / %d", recent[0].PromptTokens, recent[0].CompletionTokens)
 	}
-	if recent[0].TokensSavedEstimate <= 0 {
-		t.Errorf("expected tokens saved estimate > 0, got %d", recent[0].TokensSavedEstimate)
+	if recent[0].TotalTokens != 190 {
+		t.Errorf("expected total tokens 190, got %d", recent[0].TotalTokens)
 	}
 }

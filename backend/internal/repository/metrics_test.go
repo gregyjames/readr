@@ -32,29 +32,29 @@ func TestRecordAndGetPipelineDiagnostics(t *testing.T) {
 
 	// 2. Record metrics
 	m1 := &PipelineMetric{
-		ArticleID:           101,
-		ArticleTitle:        "Go Concurrency",
-		Model:               "google/gemini-2.5-flash",
-		Status:              "success",
-		DurationMs:          2000,
-		RetryCount:          0,
-		PromptTokens:        1000,
-		CompletionTokens:    200,
-		TokensSavedEstimate: 1850,
-		CreatedAt:           time.Now().Add(-2 * time.Minute),
+		ArticleID:        101,
+		ArticleTitle:     "Go Concurrency",
+		Model:            "google/gemini-2.5-flash",
+		Status:           "success",
+		DurationMs:       2000,
+		RetryCount:       0,
+		PromptTokens:     1000,
+		CompletionTokens: 200,
+		TotalTokens:      1200,
+		CreatedAt:        time.Now().Add(-2 * time.Minute),
 	}
 	m2 := &PipelineMetric{
-		ArticleID:           102,
-		ArticleTitle:        "Docker Guide",
-		Model:               "google/gemini-2.5-flash",
-		Status:              "failed",
-		DurationMs:          4000,
-		RetryCount:          2,
-		PromptTokens:        1200,
-		CompletionTokens:    0,
-		TokensSavedEstimate: 0,
-		ErrorMessage:        "LLM provider timeout",
-		CreatedAt:           time.Now().Add(-1 * time.Minute),
+		ArticleID:        102,
+		ArticleTitle:     "Docker Guide",
+		Model:            "google/gemini-2.5-flash",
+		Status:           "failed",
+		DurationMs:       4000,
+		RetryCount:       2,
+		PromptTokens:     1200,
+		CompletionTokens: 0,
+		TotalTokens:      1200,
+		ErrorMessage:     "LLM provider timeout",
+		CreatedAt:        time.Now().Add(-1 * time.Minute),
 	}
 
 	if err := repo.RecordPipelineMetric(ctx, m1); err != nil {
@@ -88,8 +88,11 @@ func TestRecordAndGetPipelineDiagnostics(t *testing.T) {
 	if summary.TotalTokensUsed != 2400 {
 		t.Errorf("expected total tokens used 2400, got %d", summary.TotalTokensUsed)
 	}
-	if summary.TotalTokensSaved != 1850 {
-		t.Errorf("expected total tokens saved 1850, got %d", summary.TotalTokensSaved)
+	if summary.TotalPromptTokens != 2200 {
+		t.Errorf("expected total prompt tokens 2200, got %d", summary.TotalPromptTokens)
+	}
+	if summary.TotalCompletionTokens != 200 {
+		t.Errorf("expected total completion tokens 200, got %d", summary.TotalCompletionTokens)
 	}
 	if len(recent) != 2 {
 		t.Errorf("expected 2 recent runs, got %d", len(recent))

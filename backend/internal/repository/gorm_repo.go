@@ -357,13 +357,14 @@ func (r *GormRepository) GetPipelineDiagnostics(ctx context.Context, limit int) 
 
 	var summary PipelineDiagnosticsSummary
 	type aggResult struct {
-		TotalRuns        int64 `gorm:"column:total_runs"`
-		SuccessfulRuns   int64 `gorm:"column:successful_runs"`
-		FailedRuns       int64 `gorm:"column:failed_runs"`
-		TotalRetries     int64 `gorm:"column:total_retries"`
-		TotalDuration    int64 `gorm:"column:total_duration"`
-		TotalTokensUsed  int64 `gorm:"column:total_tokens_used"`
-		TotalTokensSaved int64 `gorm:"column:total_tokens_saved"`
+		TotalRuns             int64 `gorm:"column:total_runs"`
+		SuccessfulRuns        int64 `gorm:"column:successful_runs"`
+		FailedRuns            int64 `gorm:"column:failed_runs"`
+		TotalRetries          int64 `gorm:"column:total_retries"`
+		TotalDuration         int64 `gorm:"column:total_duration"`
+		TotalTokensUsed       int64 `gorm:"column:total_tokens_used"`
+		TotalPromptTokens     int64 `gorm:"column:total_prompt_tokens"`
+		TotalCompletionTokens int64 `gorm:"column:total_completion_tokens"`
 	}
 
 	var agg aggResult
@@ -374,7 +375,8 @@ func (r *GormRepository) GetPipelineDiagnostics(ctx context.Context, limit int) 
 		COALESCE(SUM(retry_count), 0) as total_retries,
 		COALESCE(SUM(duration_ms), 0) as total_duration,
 		COALESCE(SUM(prompt_tokens + completion_tokens), 0) as total_tokens_used,
-		COALESCE(SUM(tokens_saved_estimate), 0) as total_tokens_saved
+		COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
+		COALESCE(SUM(completion_tokens), 0) as total_completion_tokens
 	`).Scan(&agg)
 
 	totalRuns := agg.TotalRuns
@@ -397,14 +399,15 @@ func (r *GormRepository) GetPipelineDiagnostics(ctx context.Context, limit int) 
 	}
 
 	summary = PipelineDiagnosticsSummary{
-		TotalRuns:        totalRuns,
-		SuccessfulRuns:   agg.SuccessfulRuns,
-		FailedRuns:       agg.FailedRuns,
-		TotalRetries:     agg.TotalRetries,
-		AvgDurationMs:    avgDuration,
-		P95DurationMs:    p95Duration,
-		TotalTokensUsed:  agg.TotalTokensUsed,
-		TotalTokensSaved: agg.TotalTokensSaved,
+		TotalRuns:             totalRuns,
+		SuccessfulRuns:        agg.SuccessfulRuns,
+		FailedRuns:            agg.FailedRuns,
+		TotalRetries:          agg.TotalRetries,
+		AvgDurationMs:         avgDuration,
+		P95DurationMs:         p95Duration,
+		TotalTokensUsed:       agg.TotalTokensUsed,
+		TotalPromptTokens:     agg.TotalPromptTokens,
+		TotalCompletionTokens: agg.TotalCompletionTokens,
 	}
 
 	return &summary, metrics, nil

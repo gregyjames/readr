@@ -16,7 +16,7 @@ interface PipelineRun {
   retry_count: number
   prompt_tokens: number
   completion_tokens: number
-  tokens_saved_estimate: number
+  total_tokens?: number
   error_message: string
   created_at: string
 }
@@ -35,7 +35,8 @@ interface PipelineDiagnosticsData {
     avg_duration_ms: number
     p95_duration_ms: number
     total_tokens_used: number
-    total_tokens_saved: number
+    total_prompt_tokens: number
+    total_completion_tokens: number
   }
   recent_runs: PipelineRun[]
 }
@@ -1004,19 +1005,19 @@ const handleChangePassword = async () => {
           </p>
         </div>
 
-        <!-- Card 4: Token Efficiency -->
+        <!-- Card 4: Total Token Consumption -->
         <div class="bg-white dark:bg-[#111] rounded-2xl border border-gray-200/70 dark:border-gray-800/70 p-5 shadow-sm space-y-2">
           <div class="flex items-center justify-between text-xs font-medium text-gray-500 dark:text-gray-400">
-            <span>Token Efficiency</span>
-            <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-              ~68% saved
+            <span>Tokens Consumed</span>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-700 dark:bg-white/5 dark:text-gray-300">
+              API Exact
             </span>
           </div>
-          <div class="text-2xl font-bold tracking-tight text-emerald-600 dark:text-emerald-400 font-mono">
-            +{{ formatTokens(diagnosticsData?.summary.total_tokens_saved ?? 0) }}
+          <div class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 font-mono">
+            {{ formatTokens(diagnosticsData?.summary.total_tokens_used ?? 0) }}
           </div>
           <p class="text-[11px] text-gray-400 dark:text-gray-500">
-            {{ formatTokens(diagnosticsData?.summary.total_tokens_used ?? 0) }} tokens consumed
+            {{ formatTokens(diagnosticsData?.summary.total_prompt_tokens ?? 0) }} prompt • {{ formatTokens(diagnosticsData?.summary.total_completion_tokens ?? 0) }} completion
           </p>
         </div>
       </div>
@@ -1072,7 +1073,7 @@ const handleChangePassword = async () => {
                 <th class="px-5 py-3">Model</th>
                 <th class="px-5 py-3">Duration</th>
                 <th class="px-5 py-3">Retries</th>
-                <th class="px-5 py-3">Tokens (Used / Saved)</th>
+                <th class="px-5 py-3">Tokens (Prompt / Comp)</th>
                 <th class="px-5 py-3 text-right">Status</th>
               </tr>
             </thead>
@@ -1125,11 +1126,11 @@ const handleChangePassword = async () => {
                     <span v-else class="text-gray-400 dark:text-gray-600 font-mono">0</span>
                   </td>
 
-                  <!-- Tokens (Used / Saved) -->
+                  <!-- Tokens (Prompt / Comp) -->
                   <td class="px-5 py-3.5 whitespace-nowrap font-mono">
-                    <span class="text-gray-900 dark:text-gray-100">{{ formatTokens(run.prompt_tokens + run.completion_tokens) }}</span>
-                    <span v-if="run.tokens_saved_estimate > 0" class="ml-1.5 text-emerald-600 dark:text-emerald-400 text-[11px]">
-                      (+{{ formatTokens(run.tokens_saved_estimate) }})
+                    <span class="text-gray-900 dark:text-gray-100 font-semibold">{{ formatTokens(run.prompt_tokens + run.completion_tokens) }}</span>
+                    <span class="ml-1.5 text-gray-400 dark:text-gray-500 text-[11px]">
+                      ({{ formatTokens(run.prompt_tokens) }} / {{ formatTokens(run.completion_tokens) }})
                     </span>
                   </td>
 

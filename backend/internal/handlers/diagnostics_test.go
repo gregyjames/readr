@@ -25,16 +25,16 @@ func TestGetPipelineDiagnostics_Endpoint(t *testing.T) {
 
 	// Seed one metric
 	_ = repo.RecordPipelineMetric(context.Background(), &repository.PipelineMetric{
-		ArticleID:           101,
-		ArticleTitle:        "Diagnostics Test Article",
-		Model:               "google/gemini-2.5-flash",
-		Status:              "success",
-		DurationMs:          1500,
-		RetryCount:          1,
-		PromptTokens:        500,
-		CompletionTokens:    100,
-		TokensSavedEstimate: 850,
-		CreatedAt:           time.Now(),
+		ArticleID:        101,
+		ArticleTitle:     "Diagnostics Test Article",
+		Model:            "google/gemini-2.5-flash",
+		Status:           "success",
+		DurationMs:       1500,
+		RetryCount:       1,
+		PromptTokens:     500,
+		CompletionTokens: 100,
+		TotalTokens:      600,
+		CreatedAt:        time.Now(),
 	})
 
 	app := fiber.New()

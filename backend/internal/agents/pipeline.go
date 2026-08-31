@@ -154,20 +154,20 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		zap.String("model", model),
 	)
 
-	recordMetric := func(status string, promptTokens, completionTokens, tokensSaved int, errMsg string) {
+	recordMetric := func(status string, promptTokens, completionTokens, totalTokens int, errMsg string) {
 		if repo != nil {
 			_ = repo.RecordPipelineMetric(context.Background(), &repository.PipelineMetric{
-				ArticleID:           job.ArticleID,
-				ArticleTitle:        articleTitle,
-				Model:               model,
-				Status:              status,
-				DurationMs:          time.Since(startTime).Milliseconds(),
-				RetryCount:          retryCount,
-				PromptTokens:        promptTokens,
-				CompletionTokens:    completionTokens,
-				TokensSavedEstimate: tokensSaved,
-				ErrorMessage:        errMsg,
-				CreatedAt:           time.Now(),
+				ArticleID:        job.ArticleID,
+				ArticleTitle:     articleTitle,
+				Model:            model,
+				Status:           status,
+				DurationMs:       time.Since(startTime).Milliseconds(),
+				RetryCount:       retryCount,
+				PromptTokens:     promptTokens,
+				CompletionTokens: completionTokens,
+				TotalTokens:      totalTokens,
+				ErrorMessage:     errMsg,
+				CreatedAt:        time.Now(),
 			})
 		}
 	}
@@ -261,19 +261,21 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		return
 	}
 
-	// Calculate token analytics
+	// Calculate token analytics (exact from API usage if present, or deterministic estimate)
 	promptTokens := 0
 	completionTokens := 0
+	totalTokens := 0
 	if llmResp.Usage != nil {
 		promptTokens = llmResp.Usage.PromptTokens
 		completionTokens = llmResp.Usage.CompletionTokens
+		totalTokens = llmResp.Usage.TotalTokens
+		if totalTokens == 0 {
+			totalTokens = promptTokens + completionTokens
+		}
 	} else {
 		promptTokens = len(prompt) / 4
 		completionTokens = len(rawJSON) / 4
-	}
-	tokensSaved := (promptTokens * 2) - 150
-	if tokensSaved < 0 {
-		tokensSaved = 0
+		totalTokens = promptTokens + completionTokens
 	}
 
 	// 5. In-memory transformations
@@ -377,7 +379,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		}
 	}
 
-	recordMetric("success", promptTokens, completionTokens, tokensSaved, "")
+	recordMetric("success", promptTokens, completionTokens, totalTokens, "")
 
 	p.logger.Info("Successfully completed unified pipeline execution and saved file!",
 		zap.Int64("article_id", job.ArticleID),
