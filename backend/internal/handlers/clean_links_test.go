@@ -1,12 +1,15 @@
 package handlers
 
 import (
+	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"example.com/backend/internal/repository"
+	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -103,5 +106,55 @@ We use [[Valid Target Article|valid topic]] and explore [[Deleted Article|quantu
 	}
 	if len(remainingLinks) > 0 && (remainingLinks[0].SourceID != 202 || remainingLinks[0].TargetID != 201) {
 		t.Errorf("expected link from 202 to 201, got %+v", remainingLinks[0])
+	}
+}
+
+func TestCleanLinksEndpoint(t *testing.T) {
+	tempDir := t.TempDir()
+	articlesDir := filepath.Join(tempDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0755)
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{})
+
+	db.Create(&repository.GormArticle{
+		ID:      301,
+		Title:   "Vault Target",
+		Article: "/articles/Vault Target.md",
+	})
+	_ = os.WriteFile(filepath.Join(articlesDir, "Vault Target.md"), []byte("# Target Content"), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      302,
+		Title:   "Vault Note",
+		Article: "/articles/Vault Note.md",
+	})
+	_ = os.WriteFile(filepath.Join(articlesDir, "Vault Note.md"), []byte("Note with [[Broken Note|phrase]]"), 0644)
+
+	hCtx := &HandlerContext{
+		DB:      db,
+		DataDir: tempDir,
+		Logger:  zap.NewNop(),
+	}
+
+	app := fiber.New()
+	RegisterArticles(app, hCtx)
+
+	req := httptest.NewRequest("POST", "/vault/clean-links", nil)
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 OK, got %d", resp.StatusCode)
+	}
+
+	var res CleanLinksResult
+	json.NewDecoder(resp.Body).Decode(&res)
+	if res.CleanedLinks != 1 {
+		t.Errorf("expected 1 cleaned link, got %d", res.CleanedLinks)
 	}
 }

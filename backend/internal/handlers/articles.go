@@ -301,4 +301,25 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		}
 		return c.JSON(fiber.Map{"status": "success"})
 	})
+
+	router.Post("/vault/clean-links", func(c *fiber.Ctx) error {
+		res, err := CleanBrokenLinks(h.DB, h.DataDir, h.Logger)
+		if err != nil {
+			if h.Logger != nil {
+				h.Logger.Error("Failed to clean broken links in vault", zap.Error(err))
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to clean broken links in vault",
+			})
+		}
+
+		if h.GraphEngine != nil {
+			h.GraphEngine.InvalidateCache()
+		}
+		if h.EventHub != nil {
+			h.EventHub.Broadcast("graph-updated")
+		}
+
+		return c.JSON(res)
+	})
 }
