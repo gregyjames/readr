@@ -9,151 +9,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
 	"example.com/backend/internal/repository"
 	"go.uber.org/zap"
-	"gopkg.in/yaml.v3"
-	"gorm.io/gorm"
 )
-
-type llmLink struct {
-	ExistingArticleID int64  `json:"existing_article_id"`
-	ExactPhraseInText string `json:"exact_phrase_in_text"`
-}
-
-type OKFMetadata struct {
-	Type        string           `json:"type" yaml:"type"`
-	Title       string           `json:"title" yaml:"title"`
-	Description string           `json:"description" yaml:"description"`
-	Resource    string           `json:"resource,omitempty" yaml:"resource,omitempty"`
-	Tags        []string         `json:"tags" yaml:"tags"`
-	Generated   OKFGeneratedInfo `json:"-" yaml:"generated"`
-}
-
-type OKFGeneratedInfo struct {
-	By string `yaml:"by"`
-	At string `yaml:"at"`
-}
-
-type OKFFrontmatterResponse struct {
-	Type        string   `json:"type"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Resource    string   `json:"resource"`
-	Tags        []string `json:"tags"`
-}
-
-type jsonSchemaField struct {
-	Type                 string                     `json:"type"`
-	Properties           map[string]jsonSchemaField `json:"properties,omitempty"`
-	Items                *jsonSchemaField           `json:"items,omitempty"`
-	Required             []string                   `json:"required,omitempty"`
-	AdditionalProperties bool                       `json:"additionalProperties"`
-}
-
-type jsonSchemaDefinition struct {
-	Name   string          `json:"name"`
-	Strict bool            `json:"strict"`
-	Schema jsonSchemaField `json:"schema"`
-}
-
-type responseFormat struct {
-	Type       string                `json:"type"`
-	JSONSchema *jsonSchemaDefinition `json:"json_schema,omitempty"`
-}
-
-type UnifiedPipelineResponse struct {
-	Summary       string                  `json:"summary,omitempty"`
-	Frontmatter   *OKFFrontmatterResponse `json:"frontmatter,omitempty"`
-	LinksToInject []llmLink               `json:"links_to_inject,omitempty"`
-}
-
-type pipelineOpenRouterRequest struct {
-	Model          string          `json:"model"`
-	Messages       []interface{}   `json:"messages"`
-	ResponseFormat *responseFormat `json:"response_format,omitempty"`
-}
-
-type ArticleRecord struct {
-	ID    int64
-	Title string
-}
-
-var summaryBlockRegex = regexp.MustCompile(`(?m)^>\s*(?:💡\s*)?(?:\*\*)?(?:AI\s+)?Summary:(?:\*\*)?.*(?:\n>.*)*`)
-var reProtected = regexp.MustCompile(`(\[\[[\s\S]*?\]\]|\[[\s\S]*?\]\([\s\S]*?\)|` + "`[\\s\\S]*?`" + `)`)
-
-func injectLinksIntoBody(body string, links []llmLink, candidates []repository.ArticleRecord, sourceID int64, db *gorm.DB) (string, []string) {
-	var injectedLinks []string
-	if len(links) == 0 {
-		return body, injectedLinks
-	}
-
-	for _, link := range links {
-		phrase := strings.TrimSpace(link.ExactPhraseInText)
-		if phrase == "" {
-			continue
-		}
-
-		var targetTitle string
-		for _, a := range candidates {
-			if a.ID == link.ExistingArticleID {
-				targetTitle = a.Title
-				break
-			}
-		}
-		if targetTitle == "" {
-			continue
-		}
-
-		// Format wikilink (aliased if phrase is different from title)
-		var replacement string
-		if strings.EqualFold(phrase, targetTitle) {
-			replacement = fmt.Sprintf("[[%s]]", targetTitle)
-		} else {
-			replacement = fmt.Sprintf("[[%s|%s]]", targetTitle, phrase)
-		}
-
-		// Don't inject if already linked to this target anywhere in body
-		alreadyLinkedSimple := fmt.Sprintf("[[%s]]", targetTitle)
-		alreadyLinkedAliasedPrefix := fmt.Sprintf("[[%s|", targetTitle)
-		if strings.Contains(body, alreadyLinkedSimple) || strings.Contains(body, alreadyLinkedAliasedPrefix) {
-			continue
-		}
-
-		// Split into protected tokens and unprotected segments
-		parts := reProtected.Split(body, -1)
-		matches := reProtected.FindAllString(body, -1)
-
-		replaced := false
-		var newBody strings.Builder
-		for i, part := range parts {
-			if !replaced && strings.Contains(part, phrase) {
-				part = strings.Replace(part, phrase, replacement, 1)
-				replaced = true
-			}
-			newBody.WriteString(part)
-			if i < len(matches) {
-				newBody.WriteString(matches[i])
-			}
-		}
-
-		if replaced {
-			body = newBody.String()
-			injectedLinks = append(injectedLinks, fmt.Sprintf("%s (target_id: %d)", replacement, link.ExistingArticleID))
-			if db != nil {
-				var count int64
-				db.Table("article_links").Where("source_id = ? AND target_id = ?", sourceID, link.ExistingArticleID).Count(&count)
-				if count == 0 {
-					db.Exec("INSERT INTO article_links (source_id, target_id) VALUES (?, ?)", sourceID, link.ExistingArticleID)
-				}
-			}
-		}
-	}
-	return body, injectedLinks
-}
 
 func (p *AgentPool) processPipeline(job Job) {
 	p.processPipelineWithURL(job, "https://openrouter.ai/api/v1/chat/completions")
@@ -225,24 +86,11 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		zap.Bool("linker", job.Settings.Linker),
 	)
 
-	// 3. Candidates for Linker & Taxonomy for Enricher
+	// 3. Retrieve candidates for Linker & Taxonomy for Enricher
 	var candidates []repository.ArticleRecord
-	var existingVaultText string
 	if job.Settings.Linker && p.repo != nil {
-		candList, err := p.repo.FindCandidates(context.Background(), job.ArticleID, articleTitle, body, 15)
-		if err != nil {
-			p.logger.Error("Pipeline could not find candidates", zap.Error(err))
-		} else {
+		if candList, err := p.repo.FindCandidates(context.Background(), job.ArticleID, articleTitle, body, 15); err == nil {
 			candidates = candList
-			var sb strings.Builder
-			for _, a := range candidates {
-				title := strings.TrimSpace(a.Title)
-				if len(title) < 4 {
-					continue
-				}
-				sb.WriteString(fmt.Sprintf("- ID: %d, Title: %s\n", a.ID, title))
-			}
-			existingVaultText = sb.String()
 		}
 		p.logger.Info("Pipeline retrieved candidate articles for auto-linking",
 			zap.Int64("article_id", job.ArticleID),
@@ -257,138 +105,14 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		}
 	}
 
-	// 4. Assemble dynamic json_schema and prompt tasks
-	properties := make(map[string]jsonSchemaField)
-	var required []string
-	var promptTasks []string
-
-	if job.Settings.Summarizer {
-		properties["summary"] = jsonSchemaField{
-			Type: "string",
-		}
-		required = append(required, "summary")
-		promptTasks = append(promptTasks, `1. SUMMARY: Generate a concise, high-signal 2-3 sentence executive summary of the article in the "summary" field.`)
+	// 4. Assemble dynamic schema, prompt, and payload
+	properties, required := buildPipelineSchema(job.Settings)
+	prompt := buildPipelinePrompt(job.Settings, body, candidates, existingVaultTags)
+	bodyJSON, err := buildPipelinePayload(model, prompt, properties, required)
+	if err != nil {
+		p.logger.Error("Pipeline failed to marshal payload", zap.Error(err))
+		return
 	}
-
-	if job.Settings.Enricher {
-		properties["frontmatter"] = jsonSchemaField{
-			Type: "object",
-			Properties: map[string]jsonSchemaField{
-				"type": {
-					Type: "string",
-				},
-				"title": {
-					Type: "string",
-				},
-				"description": {
-					Type: "string",
-				},
-				"resource": {
-					Type: "string",
-				},
-				"tags": {
-					Type: "array",
-					Items: &jsonSchemaField{
-						Type: "string",
-					},
-				},
-			},
-			Required:             []string{"type", "title", "description", "resource", "tags"},
-			AdditionalProperties: false,
-		}
-		required = append(required, "frontmatter")
-
-		enricherPrompt := `2. FRONTMATTER (OKF Metadata):
-- "type": A descriptive content type like "Reference Article", "News", "Documentation", "Playbook", "Tutorial", or "Essay".
-- "title": Clean, readable, informative title.
-- "description": A concise single sentence summarizing the core insight.
-- "resource": Original source URL if known or found in text, otherwise empty string.
-- "tags": 3 to 5 lowercase keyword tags.`
-
-		if len(existingVaultTags) > 0 {
-			enricherPrompt += fmt.Sprintf(`
-- RULE FOR TAGS: PREFER reusing matching tags from the "Existing Vault Tags" list below to maintain taxonomy consistency (e.g. use "ai" instead of "artificial intelligence" if "ai" is in the list).
-
-Existing Vault Tags:
-%s`, strings.Join(existingVaultTags, ", "))
-		}
-
-		promptTasks = append(promptTasks, enricherPrompt)
-	}
-
-	if job.Settings.Linker {
-		properties["links_to_inject"] = jsonSchemaField{
-			Type: "array",
-			Items: &jsonSchemaField{
-				Type: "object",
-				Properties: map[string]jsonSchemaField{
-					"existing_article_id": {
-						Type: "integer",
-					},
-					"exact_phrase_in_text": {
-						Type: "string",
-					},
-				},
-				Required:             []string{"existing_article_id", "exact_phrase_in_text"},
-				AdditionalProperties: false,
-			},
-		}
-		required = append(required, "links_to_inject")
-
-		if existingVaultText != "" {
-			promptTasks = append(promptTasks, fmt.Sprintf(`3. SMART LINKING:
-Identify connections (2 to 5 where applicable) to existing vault articles.
-RULES:
-1. "exact_phrase_in_text" must be a verbatim, case-sensitive substring from the article body.
-2. Link to distinct relevant vault articles.
-
-Existing Vault Articles:
-%s`, existingVaultText))
-		} else {
-			promptTasks = append(promptTasks, `3. SMART LINKING:
-(No existing vault articles available to link. Return an empty list [] for "links_to_inject").`)
-		}
-	}
-
-	bodyRunes := []rune(body)
-	truncatedBody := body
-	if len(bodyRunes) > 10000 {
-		truncatedBody = string(bodyRunes[:10000])
-	}
-
-	prompt := fmt.Sprintf(`You are an intelligent knowledge curation pipeline. Analyze the article and perform ALL the following requested tasks.
-
-%s
-
-Article Content:
-%s`, strings.Join(promptTasks, "\n\n"), truncatedBody)
-
-	apiMsgs := []interface{}{
-		map[string]interface{}{
-			"role":    "user",
-			"content": prompt,
-		},
-	}
-
-	reqPayload := pipelineOpenRouterRequest{
-		Model:    model,
-		Messages: apiMsgs,
-		ResponseFormat: &responseFormat{
-			Type: "json_schema",
-			JSONSchema: &jsonSchemaDefinition{
-				Name:   "unified_pipeline_response",
-				Strict: true,
-				Schema: jsonSchemaField{
-					Type:                 "object",
-					Properties:           properties,
-					Required:             required,
-					AdditionalProperties: false,
-				},
-			},
-		},
-	}
-
-	bodyJSON, _ := json.Marshal(reqPayload)
 
 	client := &http.Client{
 		Timeout: 60 * time.Second,
@@ -472,23 +196,17 @@ Article Content:
 		return
 	}
 
-	// In-memory transformations
-	// 1. Summarizer
+	// 5. In-memory transformations
+	// Step 1: Summarizer
 	if job.Settings.Summarizer && strings.TrimSpace(pipelineResp.Summary) != "" {
-		summaryText := strings.TrimSpace(pipelineResp.Summary)
+		body = applySummary(body, pipelineResp.Summary)
 		p.logger.Info("Pipeline step [1/3]: Generated executive summary",
 			zap.Int64("article_id", job.ArticleID),
-			zap.String("summary", summaryText),
+			zap.String("summary", strings.TrimSpace(pipelineResp.Summary)),
 		)
-		newSummaryBlock := fmt.Sprintf("> 💡 **Summary:** %s", summaryText)
-		if summaryBlockRegex.MatchString(body) {
-			body = summaryBlockRegex.ReplaceAllString(body, newSummaryBlock)
-		} else {
-			body = newSummaryBlock + "\n\n" + strings.TrimLeft(body, "\n")
-		}
 	}
 
-	// 2. Linker
+	// Step 2: Linker
 	if job.Settings.Linker {
 		var injectedLinks []string
 		if len(pipelineResp.LinksToInject) > 0 {
@@ -507,57 +225,21 @@ Article Content:
 		}
 	}
 
-	// 3. Enricher Frontmatter & Tag Synchronization
+	// Step 3: Enricher Frontmatter & Tag Synchronization
 	if job.Settings.Enricher && pipelineResp.Frontmatter != nil {
-		// Fetch existing tags from the article record
-		var existingArticleTags []string
-		if articleRecord != nil && strings.TrimSpace(articleRecord.Tags) != "" {
-			for _, t := range strings.Split(articleRecord.Tags, ",") {
-				cleaned := strings.ToLower(strings.TrimSpace(t))
-				if cleaned != "" {
-					existingArticleTags = append(existingArticleTags, cleaned)
-				}
-			}
+		existingTagsStr := ""
+		if articleRecord != nil {
+			existingTagsStr = articleRecord.Tags
 		}
+		mergedTags := mergeArticleTags(existingTagsStr, pipelineResp.Frontmatter.Tags)
 
-		// Merge user tags with AI generated tags (user tags prioritized, no duplicates)
-		seenTags := make(map[string]struct{})
-		var mergedTags []string
-		for _, t := range existingArticleTags {
-			if _, exists := seenTags[t]; !exists {
-				seenTags[t] = struct{}{}
-				mergedTags = append(mergedTags, t)
-			}
-		}
-		for _, t := range pipelineResp.Frontmatter.Tags {
-			cleaned := strings.ToLower(strings.TrimSpace(t))
-			if cleaned != "" {
-				if _, exists := seenTags[cleaned]; !exists {
-					seenTags[cleaned] = struct{}{}
-					mergedTags = append(mergedTags, cleaned)
-				}
-			}
-		}
-
-		metadata := OKFMetadata{
-			Type:        pipelineResp.Frontmatter.Type,
-			Title:       pipelineResp.Frontmatter.Title,
-			Description: pipelineResp.Frontmatter.Description,
-			Resource:    pipelineResp.Frontmatter.Resource,
-			Tags:        mergedTags,
-			Generated: OKFGeneratedInfo{
-				By: "agent/readr-pipeline",
-				At: time.Now().UTC().Format(time.RFC3339),
-			},
-		}
-		yamlBytes, err := yaml.Marshal(&metadata)
+		yamlHeader, metadata, err := serializeOKFMetadata(pipelineResp.Frontmatter, mergedTags)
 		if err != nil {
 			p.logger.Error("Pipeline failed to serialize YAML frontmatter", zap.Error(err))
 			return
 		}
-		frontmatter = "---\n" + string(yamlBytes) + "---\n\n"
+		frontmatter = yamlHeader
 
-		// Update database and FTS index with merged tags
 		mergedTagsStr := strings.Join(mergedTags, ", ")
 		if p.repo != nil {
 			_ = p.repo.UpdateArticleTags(context.Background(), job.ArticleID, mergedTagsStr)
@@ -577,7 +259,7 @@ Article Content:
 		)
 	}
 
-	// Build consolidated content
+	// 6. Build consolidated content
 	var newContent string
 	if frontmatter != "" {
 		newContent = strings.TrimRight(frontmatter, "\n") + "\n\n" + strings.TrimSpace(body) + "\n"
@@ -585,7 +267,7 @@ Article Content:
 		newContent = strings.TrimSpace(body) + "\n"
 	}
 
-	// Write consolidated file in 1 atomic write (write to tmp file then rename)
+	// 7. Atomic file write
 	dir := filepath.Dir(filePath)
 	tmpFile := filepath.Join(dir, fmt.Sprintf("%d.md.tmp", job.ArticleID))
 	if err := os.WriteFile(tmpFile, []byte(newContent), 0644); err != nil {
