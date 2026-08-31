@@ -21,7 +21,7 @@ func applySummary(body string, summary string) string {
 	}
 	newSummaryBlock := fmt.Sprintf("> 💡 **Summary:** %s", summaryText)
 	if summaryBlockRegex.MatchString(body) {
-		return summaryBlockRegex.ReplaceAllString(body, newSummaryBlock)
+		return summaryBlockRegex.ReplaceAllLiteralString(body, newSummaryBlock)
 	}
 	return newSummaryBlock + "\n\n" + strings.TrimLeft(body, "\n")
 }
@@ -144,4 +144,42 @@ func serializeOKFMetadata(frontmatter *OKFFrontmatterResponse, mergedTags []stri
 		return "", nil, err
 	}
 	return "---\n" + string(yamlBytes) + "---\n\n", &metadata, nil
+}
+
+func extractMessageContent(raw interface{}) string {
+	if raw == nil {
+		return ""
+	}
+	if s, ok := raw.(string); ok {
+		return s
+	}
+	if parts, ok := raw.([]interface{}); ok {
+		var sb strings.Builder
+		for _, part := range parts {
+			if m, ok := part.(map[string]interface{}); ok {
+				if txt, ok := m["text"].(string); ok {
+					sb.WriteString(txt)
+				}
+			}
+		}
+		return sb.String()
+	}
+	return fmt.Sprint(raw)
+}
+
+func cleanJSONBlock(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "```") {
+		lines := strings.Split(raw, "\n")
+		if len(lines) >= 2 {
+			firstLine := strings.TrimSpace(lines[0])
+			lastLine := strings.TrimSpace(lines[len(lines)-1])
+			if strings.HasPrefix(firstLine, "```") && strings.HasPrefix(lastLine, "```") {
+				raw = strings.Join(lines[1:len(lines)-1], "\n")
+			} else if strings.HasPrefix(firstLine, "```") {
+				raw = strings.Join(lines[1:], "\n")
+			}
+		}
+	}
+	return strings.TrimSpace(raw)
 }
