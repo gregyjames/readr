@@ -19,30 +19,25 @@ func ExtractSessionToken(c *fiber.Ctx) string {
 	return token
 }
 
-func SetSessionCookie(c *fiber.Ctx, token string) {
+func buildSessionCookie(c *fiber.Ctx, value string, maxAge int) *fiber.Cookie {
 	isSecure := c.Protocol() == "https" || c.Get("X-Forwarded-Proto") == "https"
-	c.Cookie(&fiber.Cookie{
+	return &fiber.Cookie{
 		Name:     "readr_session",
-		Value:    token,
+		Value:    value,
 		Path:     "/",
-		MaxAge:   int(auth.SessionMaxAge.Seconds()),
+		MaxAge:   maxAge,
 		HTTPOnly: true,
 		Secure:   isSecure,
 		SameSite: "Lax",
-	})
+	}
+}
+
+func SetSessionCookie(c *fiber.Ctx, token string) {
+	c.Cookie(buildSessionCookie(c, token, int(auth.SessionMaxAge.Seconds())))
 }
 
 func ClearSessionCookie(c *fiber.Ctx) {
-	isSecure := c.Protocol() == "https" || c.Get("X-Forwarded-Proto") == "https"
-	c.Cookie(&fiber.Cookie{
-		Name:     "readr_session",
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		HTTPOnly: true,
-		Secure:   isSecure,
-		SameSite: "Lax",
-	})
+	c.Cookie(buildSessionCookie(c, "", -1))
 }
 
 func AuthMiddleware(h *HandlerContext) fiber.Handler {
