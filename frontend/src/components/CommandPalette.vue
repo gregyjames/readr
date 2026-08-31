@@ -73,10 +73,11 @@
 
 <script setup lang="ts">
 import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useMagicKeys, watchDebounced } from '@vueuse/core'
 import axios from 'axios'
 import emitter from '../event-bus'
+import { authState } from '../store/auth'
 
 interface SearchResult {
   id: number
@@ -85,10 +86,14 @@ interface SearchResult {
 }
 
 const router = useRouter()
+const route = useRoute()
 const isOpen = ref(false)
 const query = ref('')
 
 const openSearch = () => {
+  if (!authState.isAuthenticated || route.path === '/login') {
+    return
+  }
   isOpen.value = true
   query.value = ''
   results.value = []
@@ -104,6 +109,12 @@ onMounted(() => {
 onUnmounted(() => {
   emitter.off('open-search', openSearch)
 })
+
+watch(() => route.path, (newPath) => {
+  if (newPath === '/login' && isOpen.value) {
+    isOpen.value = false
+  }
+})
 const results = ref<SearchResult[]>([])
 const isLoading = ref(false)
 const selectedIndex = ref(0)
@@ -116,6 +127,9 @@ const ctrlK = keys['Control+K']
 
 watch([cmdK, ctrlK], ([cmd, ctrl]) => {
   if (cmd || ctrl) {
+    if (!authState.isAuthenticated || route.path === '/login') {
+      return
+    }
     // Prevent browser default behavior (like search bar focus)
     isOpen.value = !isOpen.value
     if (isOpen.value) {
