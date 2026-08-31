@@ -57,14 +57,8 @@ func (p *AgentPool) processSummarizer(job Job) {
 		return
 	}
 
-	promptBody := body
-	bodyRunes := []rune(promptBody)
-	if len(bodyRunes) > 6000 {
-		promptBody = string(bodyRunes[:6000]) // rune safe truncation
-	}
-
 	// 3. Ask LLM to generate summary
-	prompt := fmt.Sprintf("Generate a concise, high-signal 2-3 sentence executive summary of the following article.\n\nTitle: %s\n\nContent:\n%s\n\nReturn ONLY the summary text without any quotation marks or prefixes.", article.Title, promptBody)
+	prompt := fmt.Sprintf("Generate a concise, high-signal 2-3 sentence executive summary of the following article.\n\nTitle: %s\n\nContent:\n%s\n\nReturn ONLY the summary text without any quotation marks or prefixes.", article.Title, body)
 
 	apiMsgs := []interface{}{
 		map[string]string{

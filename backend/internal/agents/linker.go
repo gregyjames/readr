@@ -97,12 +97,6 @@ func (p *AgentPool) processAutoLinker(job Job) {
 			body = parts[2]
 		}
 	}
-	bodyRunes := []rune(body)
-	if len(bodyRunes) > 10000 {
-		body = string(bodyRunes[:10000]) // rune safe truncation
-	}
-	truncatedBody := body
-
 	// 4. Ask LLM to generate Semantic Links
 	prompt := fmt.Sprintf(`You are an expert semantic knowledge graph builder.
 Analyze the article content and identify ALL relevant connections (aim for 2 to 5 connections where applicable) to existing articles in the user's vault.
@@ -132,7 +126,7 @@ You must output a strictly valid JSON object matching this schema. Output ONLY J
 }
 
 Article Content:
-%s`, existingVaultText, truncatedBody)
+%s`, existingVaultText, body)
 
 	apiMsgs := []interface{}{
 		map[string]interface{}{

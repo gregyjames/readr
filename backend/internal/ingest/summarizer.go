@@ -37,12 +37,7 @@ func (s *OpenRouterSummarizer) Summarize(ctx context.Context, title, body, apiKe
 		model = "openai/gpt-4o-mini"
 	}
 
-	content := body
-	if len(content) > 6000 {
-		content = content[:6000]
-	}
-
-	prompt := fmt.Sprintf("Generate a concise, high-signal 2-3 sentence executive summary of the following article.\n\nTitle: %s\n\nContent:\n%s\n\nReturn ONLY the summary text.", title, content)
+	prompt := fmt.Sprintf("Generate a concise, high-signal 2-3 sentence executive summary of the following article.\n\nTitle: %s\n\nContent:\n%s\n\nReturn ONLY the summary text.", title, body)
 
 	reqPayload := map[string]interface{}{
 		"model": model,
