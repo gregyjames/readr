@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -1140,6 +1141,57 @@ func TestGetTemplatesEndpoint(t *testing.T) {
 	}
 	if len(templates) != 1 || templates[0].Name != "github.com" {
 		t.Errorf("Expected [github.com], got %+v", templates)
+	}
+}
+
+func TestAuthEndpoints_Flow(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("DATA_DIR", tempDir)
+	db := initTestDB()
+	app := setupApp(db)
+
+	// 1. Initial status: unconfigured
+	req := httptest.NewRequest("GET", "/api/auth/status", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("GET /api/auth/status failed: %v", err)
+	}
+	var status struct {
+		AuthConfigured bool `json:"auth_configured"`
+		Authenticated  bool `json:"authenticated"`
+	}
+	body, _ := io.ReadAll(resp.Body)
+	json.Unmarshal(body, &status)
+	if status.AuthConfigured {
+		t.Fatalf("expected auth_configured to be false initially")
+	}
+
+	// 2. Setup master password
+	setupPayload, _ := json.Marshal(map[string]string{"password": "testPassword123"})
+	req = httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(setupPayload))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = app.Test(req)
+	if err != nil {
+		t.Fatalf("POST /api/auth/setup failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("POST /api/auth/setup failed with status %d", resp.StatusCode)
+	}
+
+	// 3. Login with password
+	loginPayload, _ := json.Marshal(map[string]string{"password": "testPassword123"})
+	req = httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(loginPayload))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = app.Test(req)
+	if err != nil {
+		t.Fatalf("POST /api/auth/login failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("POST /api/auth/login failed with status %d", resp.StatusCode)
+	}
+	cookieHeader := resp.Header.Get("Set-Cookie")
+	if !strings.Contains(cookieHeader, "readr_session=") {
+		t.Fatalf("expected Set-Cookie readr_session, got: %s", cookieHeader)
 	}
 }
 
