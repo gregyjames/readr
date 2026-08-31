@@ -449,6 +449,12 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	api := app.Group("/api")
 
+	extractOpenRouterCredentials := func(c *fiber.Ctx) (string, string) {
+		settingsMu.RLock()
+		defer settingsMu.RUnlock()
+		return serverSettings.APIKey, serverSettings.Model
+	}
+
 	api.Get("/templates", func(c *fiber.Ctx) error {
 		templates, err := templateRenderer.ListTemplates()
 		if err != nil {
@@ -513,9 +519,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	})
 
 	api.Get("/models", func(c *fiber.Ctx) error {
-		authHeader := c.Get("Authorization")
-		apiKey := strings.TrimPrefix(authHeader, "Bearer ")
-		apiKey = strings.TrimSpace(apiKey)
+		apiKey, _ := extractOpenRouterCredentials(c)
 
 		data, err := chatService.FetchModels(c.Context(), apiKey)
 		if err != nil {
@@ -527,11 +531,9 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	})
 
 	api.Post("/chats/:id/message", func(c *fiber.Ctx) error {
-		authHeader := c.Get("Authorization")
-		apiKey := strings.TrimPrefix(authHeader, "Bearer ")
-		apiKey = strings.TrimSpace(apiKey)
+		apiKey, _ := extractOpenRouterCredentials(c)
 		if apiKey == "" {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Authorization header required with Bearer API key"})
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "API key required in settings.json to use chat"})
 		}
 
 		var req struct {
@@ -587,11 +589,6 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return c.JSON(fiber.Map{"message": "Hello from Go!"})
 	})
 
-	extractOpenRouterCredentials := func(c *fiber.Ctx) (string, string) {
-		settingsMu.RLock()
-		defer settingsMu.RUnlock()
-		return serverSettings.APIKey, serverSettings.Model
-	}
 
 	api.Get("/settings", func(c *fiber.Ctx) error {
 		// Reload from disk to catch manual edits
