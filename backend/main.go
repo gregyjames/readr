@@ -462,6 +462,28 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	api := app.Group("/api")
 
+	extractSessionToken := func(c *fiber.Ctx) string {
+		token := c.Cookies("readr_session")
+		if token == "" {
+			authHeader := c.Get("Authorization")
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+			}
+		}
+		return token
+	}
+
+	setSessionCookie := func(c *fiber.Ctx, token string) {
+		c.Cookie(&fiber.Cookie{
+			Name:     "readr_session",
+			Value:    token,
+			Path:     "/",
+			MaxAge:   int(auth.SessionMaxAge.Seconds()),
+			HTTPOnly: true,
+			SameSite: "Lax",
+		})
+	}
+
 	api.Use(func(c *fiber.Ctx) error {
 		path := c.Path()
 		if path == "/api/auth/status" || path == "/api/auth/login" || path == "/api/auth/setup" {
@@ -478,16 +500,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Next()
 		}
 
-		// Check cookie
-		token := c.Cookies("readr_session")
-		if token == "" {
-			// Check Authorization: Bearer <token>
-			authHeader := c.Get("Authorization")
-			if strings.HasPrefix(authHeader, "Bearer ") {
-				token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-			}
-		}
-
+		token := extractSessionToken(c)
 		if token == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
 		}
@@ -509,17 +522,8 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		authConfigured := pwdHash != ""
 		authenticated := false
 
-		if !authConfigured {
-			// If not configured, everything is accessible
-			authenticated = true
-		} else {
-			token := c.Cookies("readr_session")
-			if token == "" {
-				authHeader := c.Get("Authorization")
-				if strings.HasPrefix(authHeader, "Bearer ") {
-					token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-				}
-			}
+		if authConfigured {
+			token := extractSessionToken(c)
 			if token != "" {
 				valid, err := auth.VerifySession(secret, token, time.Now())
 				if err == nil && valid {
@@ -567,14 +571,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 		// Issue session
 		token := auth.SignSession(serverSettings.SessionSecret, time.Now())
-		c.Cookie(&fiber.Cookie{
-			Name:     "readr_session",
-			Value:    token,
-			Path:     "/",
-			MaxAge:   int(auth.SessionMaxAge.Seconds()),
-			HTTPOnly: true,
-			SameSite: "Lax",
-		})
+		setSessionCookie(c, token)
 
 		return c.JSON(fiber.Map{"status": "success", "token": token})
 	})
@@ -601,14 +598,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		}
 
 		token := auth.SignSession(secret, time.Now())
-		c.Cookie(&fiber.Cookie{
-			Name:     "readr_session",
-			Value:    token,
-			Path:     "/",
-			MaxAge:   int(auth.SessionMaxAge.Seconds()),
-			HTTPOnly: true,
-			SameSite: "Lax",
-		})
+		setSessionCookie(c, token)
 
 		return c.JSON(fiber.Map{"status": "success", "token": token})
 	})
@@ -656,14 +646,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		serverSettings = newSettings
 
 		token := auth.SignSession(serverSettings.SessionSecret, time.Now())
-		c.Cookie(&fiber.Cookie{
-			Name:     "readr_session",
-			Value:    token,
-			Path:     "/",
-			MaxAge:   int(auth.SessionMaxAge.Seconds()),
-			HTTPOnly: true,
-			SameSite: "Lax",
-		})
+		setSessionCookie(c, token)
 
 		return c.JSON(fiber.Map{"status": "success", "token": token})
 	})

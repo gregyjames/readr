@@ -20,6 +20,15 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestMain(m *testing.M) {
+	tempDir, err := os.MkdirTemp("", "readr-test-*")
+	if err == nil {
+		os.Setenv("DATA_DIR", tempDir)
+		defer os.RemoveAll(tempDir)
+	}
+	os.Exit(m.Run())
+}
+
 func initTestDB() *gorm.DB {
 	sqlDB, err := sql.Open("sqlite", "file::memory:?cache=shared")
 	if err != nil {

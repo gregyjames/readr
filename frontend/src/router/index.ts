@@ -25,11 +25,11 @@ router.beforeEach(async (to, _from, next) => {
     await checkAuthStatus()
   }
 
-  if (authState.isAuthConfigured && !authState.isAuthenticated) {
+  if (!authState.isAuthenticated) {
     if (to.path !== '/login') {
       return next('/login')
     }
-  } else if (authState.isAuthenticated) {
+  } else {
     if (to.path === '/login') {
       return next('/')
     }

@@ -78,7 +78,7 @@ const handleSubmit = async () => {
           <Lock v-else class="w-7 h-7" />
         </div>
         <h1 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100">
-          {{ isSetup ? 'Setup Master Password' : 'Unlock Readr Vault' }}
+          {{ isSetup ? 'Welcome to Readr — Set Master Password' : 'Unlock Readr Vault' }}
         </h1>
         <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
           {{ isSetup 
