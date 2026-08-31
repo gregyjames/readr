@@ -22,6 +22,27 @@ type RequestBody struct {
 	Template string   `json:"template,omitempty"`
 }
 
+func dispatchArticleJobs(articleID int64, apiKey string, settings ServerSettings) {
+	if settings.AgentEnricher {
+		agents.SubmitJob(agents.Job{
+			ArticleID: articleID,
+			Type:      agents.JobTypeEnrichFrontmatter,
+		})
+	}
+	if settings.AgentLinker {
+		agents.SubmitJob(agents.Job{
+			ArticleID: articleID,
+			Type:      agents.JobTypeAutoLinker,
+		})
+	}
+	if apiKey != "" && settings.AgentSummarizer {
+		agents.SubmitJob(agents.Job{
+			ArticleID: articleID,
+			Type:      agents.JobTypeSummarizer,
+		})
+	}
+}
+
 func RegisterArticles(router fiber.Router, h *HandlerContext) {
 	router.Get("/getarticles", func(c *fiber.Ctx) error {
 		var articles []repository.GormArticle
@@ -99,24 +120,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		}
 
 		settings := h.SettingsStore.Get()
-		if settings.AgentEnricher {
-			agents.SubmitJob(agents.Job{
-				ArticleID: article.ID,
-				Type:      agents.JobTypeEnrichFrontmatter,
-			})
-		}
-		if settings.AgentLinker {
-			agents.SubmitJob(agents.Job{
-				ArticleID: article.ID,
-				Type:      agents.JobTypeAutoLinker,
-			})
-		}
-		if apiKey != "" && settings.AgentSummarizer {
-			agents.SubmitJob(agents.Job{
-				ArticleID: article.ID,
-				Type:      agents.JobTypeSummarizer,
-			})
-		}
+		dispatchArticleJobs(article.ID, apiKey, settings)
 
 		return c.JSON(fiber.Map{
 			"status":  "success",
@@ -183,25 +187,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 
 		apiKey, _ := h.SettingsStore.ExtractOpenRouterCredentials()
 		settings := h.SettingsStore.Get()
-
-		if settings.AgentEnricher {
-			agents.SubmitJob(agents.Job{
-				ArticleID: article.ID,
-				Type:      agents.JobTypeEnrichFrontmatter,
-			})
-		}
-		if settings.AgentLinker {
-			agents.SubmitJob(agents.Job{
-				ArticleID: article.ID,
-				Type:      agents.JobTypeAutoLinker,
-			})
-		}
-		if apiKey != "" && settings.AgentSummarizer {
-			agents.SubmitJob(agents.Job{
-				ArticleID: article.ID,
-				Type:      agents.JobTypeSummarizer,
-			})
-		}
+		dispatchArticleJobs(article.ID, apiKey, settings)
 
 		return c.JSON(fiber.Map{"status": "ok", "message": "Agents triggered"})
 	})
