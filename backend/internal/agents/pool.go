@@ -1,6 +1,11 @@
 package agents
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -70,4 +75,65 @@ func SubmitJob(job Job) {
 	if Pool != nil {
 		Pool.Queue <- job
 	}
+}
+
+func cleanAPIKey(raw string) string {
+	k := strings.TrimSpace(raw)
+	k = strings.TrimPrefix(k, "Bearer ")
+	k = strings.TrimPrefix(k, "bearer ")
+	k = strings.TrimPrefix(k, "BEARER ")
+	k = strings.Trim(k, `"'`+"`")
+	k = strings.ReplaceAll(k, "\r", "")
+	k = strings.ReplaceAll(k, "\n", "")
+	k = strings.TrimSpace(k)
+	if k == "undefined" || k == "null" || k == "none" || k == "false" {
+		return ""
+	}
+	return k
+}
+
+func (p *AgentPool) resolveCredentials(job Job) (string, string) {
+	rawAPIKey, _ := job.Payload["api_key"].(string)
+	model, _ := job.Payload["model"].(string)
+
+	apiKey := cleanAPIKey(rawAPIKey)
+	model = strings.TrimSpace(model)
+
+	// Fallback 1: Read settings.json in data directory
+	if apiKey == "" || model == "" {
+		settingsPath := filepath.Join(p.dataDirectory, "settings.json")
+		if data, err := os.ReadFile(settingsPath); err == nil {
+			var s struct {
+				APIKey string `json:"api_key"`
+				Model  string `json:"model"`
+			}
+			if json.Unmarshal(data, &s) == nil {
+				if apiKey == "" && s.APIKey != "" {
+					apiKey = cleanAPIKey(s.APIKey)
+				}
+				if model == "" && s.Model != "" {
+					model = strings.TrimSpace(s.Model)
+				}
+			}
+		}
+	}
+
+	// Fallback 2: Environment variables
+	if apiKey == "" {
+		apiKey = cleanAPIKey(os.Getenv("OPENROUTER_API_KEY"))
+	}
+	if apiKey == "" {
+		apiKey = cleanAPIKey(os.Getenv("OPENROUTER_KEY"))
+	}
+	if model == "" {
+		model = strings.TrimSpace(os.Getenv("OPENROUTER_MODEL"))
+	}
+	if model == "" {
+		model = strings.TrimSpace(os.Getenv("OPENROUTER_DEFAULT_MODEL"))
+	}
+	if model == "" {
+		model = "openai/gpt-4o-mini"
+	}
+
+	return apiKey, model
 }

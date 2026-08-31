@@ -18,21 +18,9 @@ import (
 var summaryBlockRegex = regexp.MustCompile(`(?m)^>\s*(?:💡\s*)?(?:\*\*)?(?:AI\s+)?Summary:(?:\*\*)?.*(?:\n>.*)*`)
 
 func (p *AgentPool) processSummarizer(job Job) {
-	rawAPIKey, _ := job.Payload["api_key"].(string)
-	model, _ := job.Payload["model"].(string)
-
-	apiKey := strings.TrimSpace(rawAPIKey)
-	apiKey = strings.TrimPrefix(apiKey, "Bearer ")
-	apiKey = strings.TrimPrefix(apiKey, "bearer ")
-	apiKey = strings.Trim(apiKey, `"'`)
-	apiKey = strings.TrimSpace(apiKey)
-	model = strings.TrimSpace(model)
-
-	if model == "" {
-		model = "openai/gpt-4o-mini"
-	}
+	apiKey, model := p.resolveCredentials(job)
 	if apiKey == "" {
-		p.logger.Warn("API key not set in job payload. Agent cannot summarize.", zap.Int64("article_id", job.ArticleID))
+		p.logger.Warn("API key not configured. Agent cannot summarize.", zap.Int64("article_id", job.ArticleID))
 		return
 	}
 
