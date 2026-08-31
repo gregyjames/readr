@@ -117,8 +117,26 @@ const fetchModels = async () => {
   }
 }
 
-onMounted(() => {
-  const existingKey = getOpenRouterApiKey()
+onMounted(async () => {
+  let existingKey = getOpenRouterApiKey()
+
+  try {
+    const res = await fetch('/api/settings')
+    if (res.ok) {
+      const data = await res.json()
+      if (!existingKey && data.api_key) {
+        existingKey = data.api_key
+        localStorage.setItem('OPENROUTER_API_KEY', existingKey)
+      }
+      if (!localStorage.getItem('OPENROUTER_MODEL') && data.model) {
+        selectedModel.value = data.model
+        localStorage.setItem('OPENROUTER_MODEL', data.model)
+      }
+    }
+  } catch (err) {
+    console.debug('Failed to load server settings:', err)
+  }
+
   apiKey.value = existingKey
   isKeyConfigured.value = Boolean(existingKey.trim())
 
@@ -149,7 +167,7 @@ const selectModel = (modelId: string) => {
   showSavedMessage(`Model set to ${modelId}`)
 }
 
-const saveSettings = () => {
+const saveSettings = async () => {
   const trimmed = apiKey.value.trim()
   if (trimmed) {
     localStorage.setItem('OPENROUTER_API_KEY', trimmed)
@@ -175,10 +193,27 @@ const saveSettings = () => {
   localStorage.setItem('readr_agent_linker', enableAgentLinker.value ? 'true' : 'false')
   localStorage.setItem('AGENT_SUMMARIZER', enableAgentSummarizer.value ? 'true' : 'false')
   localStorage.setItem('readr_agent_summarizer', enableAgentSummarizer.value ? 'true' : 'false')
+
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: trimmed,
+        model: selectedModel.value,
+        agent_enricher: enableAgentEnricher.value,
+        agent_linker: enableAgentLinker.value,
+        agent_summarizer: enableAgentSummarizer.value,
+      }),
+    })
+  } catch (err) {
+    console.debug('Failed to sync server settings:', err)
+  }
+
   showSavedMessage('Settings saved successfully!')
 }
 
-const clearKey = () => {
+const clearKey = async () => {
   apiKey.value = ''
   localStorage.removeItem('OPENROUTER_API_KEY')
   localStorage.removeItem('openrouter_key')
@@ -188,6 +223,23 @@ const clearKey = () => {
   localStorage.removeItem('apiKey')
   localStorage.removeItem('api_key')
   isKeyConfigured.value = false
+
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: '',
+        model: selectedModel.value,
+        agent_enricher: enableAgentEnricher.value,
+        agent_linker: enableAgentLinker.value,
+        agent_summarizer: enableAgentSummarizer.value,
+      }),
+    })
+  } catch (err) {
+    console.debug('Failed to clear server settings:', err)
+  }
+
   showSavedMessage('API key cleared.')
 }
 </script>

@@ -51,6 +51,45 @@ func broadcastEvent(event string) {
 	}
 }
 
+type ServerSettings struct {
+	APIKey          string `json:"api_key"`
+	Model           string `json:"model"`
+	AgentEnricher   bool   `json:"agent_enricher"`
+	AgentLinker     bool   `json:"agent_linker"`
+	AgentSummarizer bool   `json:"agent_summarizer"`
+}
+
+func loadServerSettings(dataDir string) ServerSettings {
+	settingsPath := filepath.Join(dataDir, "settings.json")
+	defaults := ServerSettings{
+		Model:           "openai/gpt-4o-mini",
+		AgentEnricher:   true,
+		AgentLinker:     true,
+		AgentSummarizer: true,
+	}
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return defaults
+	}
+	var s ServerSettings
+	if err := json.Unmarshal(data, &s); err != nil {
+		return defaults
+	}
+	if s.Model == "" {
+		s.Model = "openai/gpt-4o-mini"
+	}
+	return s
+}
+
+func saveServerSettings(dataDir string, s ServerSettings) error {
+	settingsPath := filepath.Join(dataDir, "settings.json")
+	bytes, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(settingsPath, bytes, 0644)
+}
+
 type articleFileFetcher struct {
 	dataDir string
 	db      *gorm.DB
@@ -333,13 +372,17 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	ensureFTS(db)
 
+	dataDirectory := getDataDir()
+	serverSettings := loadServerSettings(dataDirectory)
+	var settingsMu sync.RWMutex
+
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
 
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
-		AllowHeaders: "Origin, Content-Type, Accept, Cache-Control, Pragma, Authorization",
+		AllowHeaders: "Origin, Content-Type, Accept, Cache-Control, Pragma, Authorization, X-Openrouter-Key, X-Openrouter-Model, X-OpenRouter-Key, X-OpenRouter-Model, X-Api-Key, X-Agent-Enricher, X-Agent-Linker, X-Agent-Summarizer",
 	}))
 
 	app.Use(func(c *fiber.Ctx) error {
@@ -357,7 +400,6 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return err
 	})
 
-	dataDirectory := getDataDir()
 	app.Get("/api/articles/:filename", func(c *fiber.Ctx) error {
 		filename := c.Params("filename")
 		clean := filepath.Clean(filename)
@@ -539,42 +581,79 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	})
 
 	extractOpenRouterCredentials := func(c *fiber.Ctx) (string, string) {
-	apiKey := strings.TrimSpace(c.Get("X-Openrouter-Key"))
-	if apiKey == "" {
-		apiKey = strings.TrimSpace(c.Get("X-OpenRouter-Key"))
-	}
-	if apiKey == "" {
-		apiKey = strings.TrimSpace(c.Get("X-Api-Key"))
-	}
-	if apiKey == "" {
-		authHeader := strings.TrimSpace(c.Get("Authorization"))
-		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-			apiKey = strings.TrimSpace(authHeader[7:])
+		apiKey := strings.TrimSpace(c.Get("X-Openrouter-Key"))
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(c.Get("X-OpenRouter-Key"))
 		}
-	}
-	if apiKey == "" {
-		apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
-	}
-	if apiKey == "" {
-		apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_KEY"))
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(c.Get("X-Api-Key"))
+		}
+		if apiKey == "" {
+			authHeader := strings.TrimSpace(c.Get("Authorization"))
+			if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+				apiKey = strings.TrimSpace(authHeader[7:])
+			}
+		}
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
+		}
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_KEY"))
+		}
+		if apiKey == "" {
+			settingsMu.RLock()
+			apiKey = strings.TrimSpace(serverSettings.APIKey)
+			settingsMu.RUnlock()
+		}
+
+		model := strings.TrimSpace(c.Get("X-Openrouter-Model"))
+		if model == "" {
+			model = strings.TrimSpace(c.Get("X-OpenRouter-Model"))
+		}
+		if model == "" {
+			model = strings.TrimSpace(os.Getenv("OPENROUTER_MODEL"))
+		}
+		if model == "" {
+			model = strings.TrimSpace(os.Getenv("OPENROUTER_DEFAULT_MODEL"))
+		}
+		if model == "" {
+			settingsMu.RLock()
+			model = strings.TrimSpace(serverSettings.Model)
+			settingsMu.RUnlock()
+		}
+		if model == "" {
+			model = "openai/gpt-4o-mini"
+		}
+
+		return apiKey, model
 	}
 
-	model := strings.TrimSpace(c.Get("X-Openrouter-Model"))
-	if model == "" {
-		model = strings.TrimSpace(c.Get("X-OpenRouter-Model"))
-	}
-	if model == "" {
-		model = strings.TrimSpace(os.Getenv("OPENROUTER_MODEL"))
-	}
-	if model == "" {
-		model = strings.TrimSpace(os.Getenv("OPENROUTER_DEFAULT_MODEL"))
-	}
-	if model == "" {
-		model = "openai/gpt-4o-mini"
-	}
+	api.Get("/settings", func(c *fiber.Ctx) error {
+		settingsMu.RLock()
+		defer settingsMu.RUnlock()
+		return c.JSON(fiber.Map{
+			"api_key":          serverSettings.APIKey,
+			"model":            serverSettings.Model,
+			"agent_enricher":   serverSettings.AgentEnricher,
+			"agent_linker":     serverSettings.AgentLinker,
+			"agent_summarizer": serverSettings.AgentSummarizer,
+		})
+	})
 
-	return apiKey, model
-}
+	api.Post("/settings", func(c *fiber.Ctx) error {
+		var req ServerSettings
+		if err := json.Unmarshal(c.Body(), &req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "Invalid JSON"})
+		}
+		settingsMu.Lock()
+		serverSettings = req
+		if serverSettings.Model == "" {
+			serverSettings.Model = "openai/gpt-4o-mini"
+		}
+		_ = saveServerSettings(dataDirectory, serverSettings)
+		settingsMu.Unlock()
+		return c.JSON(fiber.Map{"status": "success"})
+	})
 
 	api.Post("/articles/:id/reparse", func(c *fiber.Ctx) error {
 		idParam := c.Params("id")

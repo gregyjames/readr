@@ -73,6 +73,17 @@ onMounted(() => {
     }
   };
   connectSSE();
+
+  if (!getOpenRouterApiKey()) {
+    fetch('/api/settings')
+      .then(res => res.json())
+      .then(data => {
+        if (data?.api_key) {
+          localStorage.setItem('OPENROUTER_API_KEY', data.api_key)
+        }
+      })
+      .catch(() => {})
+  }
 })
 
 const submitForm = async () => {

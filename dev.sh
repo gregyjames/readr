@@ -29,8 +29,8 @@ cd ..
 
 echo "----------------------------------------"
 echo "🚀 Development servers are running!"
-echo "Backend API: http://localhost:3000"
-echo "Frontend UI: http://localhost:8080"
+echo "Backend API: http://localhost:8080"
+echo "Frontend UI: http://localhost:5173 (Dev) / http://localhost:8080 (Prod)"
 echo "Press Ctrl+C to stop both servers."
 echo "----------------------------------------"
 
