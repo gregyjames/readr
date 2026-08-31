@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { authState, checkAuthStatus, login, setupMasterPassword } from '../store/auth'
+import { initSettings } from '../store/settings'
 import { Lock, KeyRound, Eye, EyeOff, ArrowRight, ShieldCheck, AlertCircle } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -16,6 +17,7 @@ onMounted(async () => {
     await checkAuthStatus()
   }
   if (authState.isAuthenticated) {
+    await initSettings()
     router.replace('/')
   }
 })
@@ -45,6 +47,7 @@ const handleSubmit = async () => {
     isLoading.value = false
 
     if (result.success) {
+      await initSettings()
       router.replace('/')
     } else {
       errorMessage.value = result.error || 'Failed to setup master password'
@@ -55,6 +58,7 @@ const handleSubmit = async () => {
     isLoading.value = false
 
     if (result.success) {
+      await initSettings()
       router.replace('/')
     } else {
       errorMessage.value = result.error || 'Invalid password'
