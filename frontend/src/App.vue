@@ -83,7 +83,7 @@ const submitForm = async () => {
       ? (matchedTemplate.value?.name || '')
       : (selectedTemplate.value === 'none' ? 'none' : selectedTemplate.value)
 
-    await fetch('/api/add', {
+    const res = await fetch('/api/add', {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
@@ -94,6 +94,11 @@ const submitForm = async () => {
         template: chosenTemplate
       }),
     })
+    
+    if (!res.ok) {
+      throw new Error(`Failed to add article: ${res.statusText}`)
+    }
+
     emitter.emit('article-added')
     showModal.value = false
     url.value = ''
