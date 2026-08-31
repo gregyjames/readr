@@ -31,11 +31,11 @@ interface ArticleData {
 const allArticles = ref<ArticleData[]>([])
 
 const currentArticle = computed(() => {
-  const param = String(route.params.id || '').replace('.md', '').trim()
+  const param = String(route.params.id || '').replace(/\.md$/, '').trim()
   return allArticles.value.find(a => 
     String(a.ID) === param ||
     a.title.trim().toLowerCase() === param.toLowerCase() ||
-    a.article.replace('/articles/', '').replace('.md', '').trim().toLowerCase() === param.toLowerCase()
+    a.article.replace(/^\/?articles\//, '').replace(/\.md$/, '').trim().toLowerCase() === param.toLowerCase()
   ) || null
 })
 
@@ -43,7 +43,7 @@ const getArticleId = () => {
   if (currentArticle.value) {
     return String(currentArticle.value.ID)
   }
-  return String(route.params.id || '').replace('.md', '').trim()
+  return String(route.params.id || '').replace(/\.md$/, '').trim()
 }
 
 const router = useRouter()
@@ -470,7 +470,7 @@ const loadContent = async () => {
       const targetArticle = allArticles.value.find(a => 
         a.title.trim().toLowerCase() === targetTitle.toLowerCase() ||
         String(a.ID) === targetTitle ||
-        a.article.replace('/articles/', '').replace('.md', '').trim().toLowerCase() === targetTitle.toLowerCase()
+        a.article.replace(/^\/?articles\//, '').replace(/\.md$/, '').trim().toLowerCase() === targetTitle.toLowerCase()
       )
 
       if (targetArticle) {
