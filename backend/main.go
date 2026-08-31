@@ -78,18 +78,16 @@ func loadServerSettings(dataDir string) ServerSettings {
 	}
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
-		if defaults.SessionSecret == "" {
+		if os.IsNotExist(err) {
 			defaults.SessionSecret, _ = auth.GenerateRandomSecret()
+			_ = saveServerSettings(dataDir, defaults)
+			return defaults
 		}
-		_ = saveServerSettings(dataDir, defaults)
-		return defaults
+		logger.Fatal("Failed to read settings file", zap.String("path", settingsPath), zap.Error(err))
 	}
 	s := defaults
 	if err := json.Unmarshal(data, &s); err != nil {
-		if defaults.SessionSecret == "" {
-			defaults.SessionSecret, _ = auth.GenerateRandomSecret()
-		}
-		return defaults
+		logger.Fatal("Failed to parse settings file", zap.String("path", settingsPath), zap.Error(err))
 	}
 	if s.Model == "" {
 		s.Model = "openai/gpt-4o-mini"
@@ -172,7 +170,7 @@ type LinkRequest struct {
 	SelectedText string `json:"selectedText"`
 }
 
-var logger *zap.Logger
+var logger = zap.NewNop()
 
 func initLogger() {
 	config := zap.NewProductionEncoderConfig()
