@@ -65,7 +65,7 @@ func injectLinksIntoBody(body string, links []llmLink, candidates []repository.A
 
 		// Format wikilink (aliased if phrase is different from title)
 		var replacement string
-		if strings.EqualFold(phrase, targetTitle) {
+		if phrase == targetTitle {
 			replacement = fmt.Sprintf("[[%s]]", targetTitle)
 		} else {
 			replacement = fmt.Sprintf("[[%s|%s]]", targetTitle, phrase)
