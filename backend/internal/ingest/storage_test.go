@@ -49,6 +49,36 @@ func TestSanitizeTitleFilename(t *testing.T) {
 			title:      strings.Repeat("A Very Long Article Title ", 10),
 			fallbackID: 106,
 		},
+		{
+			name:       "handles Windows reserved name CON",
+			title:      "CON",
+			fallbackID: 107,
+			expected:   "Article 107.md",
+		},
+		{
+			name:       "handles Windows reserved name aux (case insensitive)",
+			title:      "aux",
+			fallbackID: 108,
+			expected:   "Article 108.md",
+		},
+		{
+			name:       "handles Windows reserved name NUL without fallback ID",
+			title:      "NUL",
+			fallbackID: 0,
+			expected:   "Article.md",
+		},
+		{
+			name:       "handles Windows reserved name COM1",
+			title:      "com1",
+			fallbackID: 109,
+			expected:   "Article 109.md",
+		},
+		{
+			name:       "handles Windows reserved name LPT9",
+			title:      "lpt9",
+			fallbackID: 110,
+			expected:   "Article 110.md",
+		},
 	}
 
 	for _, tt := range tests {
