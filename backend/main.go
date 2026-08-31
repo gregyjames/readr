@@ -629,14 +629,19 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	}
 
 	api.Get("/settings", func(c *fiber.Ctx) error {
-		settingsMu.RLock()
-		defer settingsMu.RUnlock()
+		// Reload from disk to catch manual edits
+		freshSettings := loadServerSettings(dataDirectory)
+		
+		settingsMu.Lock()
+		serverSettings = freshSettings
+		settingsMu.Unlock()
+
 		return c.JSON(fiber.Map{
-			"api_key":          serverSettings.APIKey,
-			"model":            serverSettings.Model,
-			"agent_enricher":   serverSettings.AgentEnricher,
-			"agent_linker":     serverSettings.AgentLinker,
-			"agent_summarizer": serverSettings.AgentSummarizer,
+			"api_key":          freshSettings.APIKey,
+			"model":            freshSettings.Model,
+			"agent_enricher":   freshSettings.AgentEnricher,
+			"agent_linker":     freshSettings.AgentLinker,
+			"agent_summarizer": freshSettings.AgentSummarizer,
 		})
 	})
 

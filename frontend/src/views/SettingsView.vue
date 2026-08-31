@@ -124,7 +124,7 @@ onMounted(async () => {
     const res = await fetch('/api/settings')
     if (res.ok) {
       const data = await res.json()
-      if (!existingKey && data.api_key) {
+      if (data.api_key && existingKey !== data.api_key) {
         existingKey = data.api_key
         localStorage.setItem('OPENROUTER_API_KEY', existingKey)
       }

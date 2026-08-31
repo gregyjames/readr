@@ -1,5 +1,5 @@
 export function getOpenRouterApiKey(): string {
-  return (
+  const key = (
     localStorage.getItem('OPENROUTER_API_KEY') ||
     localStorage.getItem('openrouter_key') ||
     localStorage.getItem('OPENROUTER_KEY') ||
@@ -9,6 +9,11 @@ export function getOpenRouterApiKey(): string {
     localStorage.getItem('api_key') ||
     ''
   ).trim()
+  
+  if (key === 'undefined' || key === 'null' || key === 'none' || key === 'false' || key === '[object Object]') {
+    return ''
+  }
+  return key
 }
 
 export function getOpenRouterModel(): string {
