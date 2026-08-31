@@ -54,9 +54,9 @@ func (p *AgentPool) processEnrichFrontmatter(job Job) {
 			body = parts[2]
 		}
 	}
-	
-	if len(body) > 8000 {
-		body = body[:8000] // truncate to save tokens
+	bodyRunes := []rune(body)
+	if len(bodyRunes) > 8000 {
+		body = string(bodyRunes[:8000]) // rune safe truncation
 	}
 
 	// 3. Ask LLM to generate OKF frontmatter

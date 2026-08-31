@@ -99,20 +99,29 @@ func (p *AgentPool) resolveCredentials(job Job) (string, string) {
 	apiKey := cleanAPIKey(rawAPIKey)
 	model = strings.TrimSpace(model)
 
-	// Fallback 1: Read settings.json in data directory
+	// Fallback 1: Read settings.json in data directory or relative paths
 	if apiKey == "" || model == "" {
-		settingsPath := filepath.Join(p.dataDirectory, "settings.json")
-		if data, err := os.ReadFile(settingsPath); err == nil {
-			var s struct {
-				APIKey string `json:"api_key"`
-				Model  string `json:"model"`
-			}
-			if json.Unmarshal(data, &s) == nil {
-				if apiKey == "" && s.APIKey != "" {
-					apiKey = cleanAPIKey(s.APIKey)
+		candidates := []string{
+			filepath.Join(p.dataDirectory, "settings.json"),
+			"data/settings.json",
+			"../data/settings.json",
+		}
+		for _, cp := range candidates {
+			if data, err := os.ReadFile(cp); err == nil {
+				var s struct {
+					APIKey string `json:"api_key"`
+					Model  string `json:"model"`
 				}
-				if model == "" && s.Model != "" {
-					model = strings.TrimSpace(s.Model)
+				if json.Unmarshal(data, &s) == nil {
+					if apiKey == "" && s.APIKey != "" {
+						apiKey = cleanAPIKey(s.APIKey)
+					}
+					if model == "" && s.Model != "" {
+						model = strings.TrimSpace(s.Model)
+					}
+					if apiKey != "" && model != "" {
+						break
+					}
 				}
 			}
 		}

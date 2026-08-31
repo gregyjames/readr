@@ -58,8 +58,9 @@ func (p *AgentPool) processSummarizer(job Job) {
 	}
 
 	promptBody := body
-	if len(promptBody) > 6000 {
-		promptBody = promptBody[:6000]
+	bodyRunes := []rune(promptBody)
+	if len(bodyRunes) > 6000 {
+		promptBody = string(bodyRunes[:6000]) // rune safe truncation
 	}
 
 	// 3. Ask LLM to generate summary

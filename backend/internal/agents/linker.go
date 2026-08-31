@@ -97,11 +97,11 @@ func (p *AgentPool) processAutoLinker(job Job) {
 			body = parts[2]
 		}
 	}
-	
-	truncatedBody := body
-	if len(truncatedBody) > 10000 {
-		truncatedBody = truncatedBody[:10000] // truncate for LLM input
+	bodyRunes := []rune(body)
+	if len(bodyRunes) > 10000 {
+		body = string(bodyRunes[:10000]) // rune safe truncation
 	}
+	truncatedBody := body
 
 	// 4. Ask LLM to generate Semantic Links
 	prompt := fmt.Sprintf(`You are an expert semantic knowledge graph builder.
