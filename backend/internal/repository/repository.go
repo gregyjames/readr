@@ -32,4 +32,6 @@ type Repository interface {
 	GetAllLinks(ctx context.Context) ([]LinkRecord, error)
 	CreateLink(ctx context.Context, sourceID, targetID int64) (*LinkRecord, error)
 	DeleteArticle(ctx context.Context, id int64) error
+	FindCandidates(ctx context.Context, excludeID int64, title string, body string, limit int) ([]ArticleRecord, error)
 }
+

@@ -3,9 +3,73 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"gorm.io/gorm"
 )
+
+var defaultStopwords = map[string]struct{}{
+	"about": {}, "above": {}, "after": {}, "again": {}, "against": {}, "all": {}, "and": {},
+	"any": {}, "are": {}, "aren't": {}, "because": {}, "been": {}, "before": {}, "being": {},
+	"below": {}, "between": {}, "both": {}, "but": {}, "cannot": {}, "could": {}, "couldn't": {},
+	"did": {}, "didn't": {}, "does": {}, "doesn't": {}, "doing": {}, "don't": {}, "down": {},
+	"during": {}, "each": {}, "few": {}, "for": {}, "from": {}, "further": {}, "had": {},
+	"hadn't": {}, "has": {}, "hasn't": {}, "have": {}, "haven't": {}, "having": {}, "here": {},
+	"how": {}, "into": {}, "more": {}, "most": {}, "mustn't": {}, "myself": {}, "nor": {},
+	"not": {}, "off": {}, "once": {}, "only": {}, "other": {}, "ought": {}, "our": {},
+	"ours": {}, "ourselves": {}, "out": {}, "over": {}, "own": {}, "same": {}, "shan't": {},
+	"she": {}, "should": {}, "shouldn't": {}, "some": {}, "such": {}, "than": {}, "that": {},
+	"the": {}, "their": {}, "theirs": {}, "them": {}, "themselves": {}, "then": {}, "there": {},
+	"these": {}, "they": {}, "this": {}, "those": {}, "through": {}, "too": {}, "under": {},
+	"until": {}, "very": {}, "was": {}, "wasn't": {}, "were": {}, "weren't": {}, "what": {},
+	"when": {}, "where": {}, "which": {}, "while": {}, "who": {}, "whom": {}, "why": {},
+	"with": {}, "won't": {}, "would": {}, "wouldn't": {}, "you": {}, "your": {}, "yours": {},
+	"yourself": {}, "yourselves": {}, "http": {}, "https": {}, "www": {}, "com": {}, "org": {},
+	"article": {}, "page": {}, "summary": {}, "read": {}, "using": {}, "across": {}, "explore": {},
+}
+
+func extractCandidateKeywords(title, body string, maxKeywords int) []string {
+	combined := title + " "
+	bodyRunes := []rune(body)
+	if len(bodyRunes) > 1000 {
+		combined += string(bodyRunes[:1000])
+	} else {
+		combined += body
+	}
+
+	// Replace non-alphanumeric with spaces
+	var cleaned strings.Builder
+	for _, r := range combined {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			cleaned.WriteRune(r)
+		} else {
+			cleaned.WriteRune(' ')
+		}
+	}
+
+	words := strings.Fields(strings.ToLower(cleaned.String()))
+	seen := make(map[string]struct{})
+	var result []string
+
+	for _, w := range words {
+		if len(w) < 3 || len(w) > 30 {
+			continue
+		}
+		if _, isStop := defaultStopwords[w]; isStop {
+			continue
+		}
+		if _, exists := seen[w]; exists {
+			continue
+		}
+		seen[w] = struct{}{}
+		result = append(result, w)
+		if len(result) >= maxKeywords {
+			break
+		}
+	}
+	return result
+}
+
 
 type GormArticle struct {
 	gorm.Model
@@ -147,3 +211,8 @@ func (r *GormRepository) DeleteArticle(ctx context.Context, id int64) error {
 	r.db.WithContext(ctx).Exec("DELETE FROM article_links WHERE source_id = ? OR target_id = ?", id, id)
 	return r.db.WithContext(ctx).Delete(&GormArticle{}, id).Error
 }
+
+func (r *GormRepository) FindCandidates(ctx context.Context, excludeID int64, title string, body string, limit int) ([]ArticleRecord, error) {
+	return nil, nil
+}
+
