@@ -154,9 +154,25 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		zap.String("model", model),
 	)
 
+	var metricID int64
+	if repo != nil {
+		initialMetric := repository.PipelineMetric{
+			ArticleID:    job.ArticleID,
+			ArticleTitle: articleTitle,
+			Model:        model,
+			Status:       "running",
+			DurationMs:   0,
+			RetryCount:   0,
+			CreatedAt:    startTime,
+		}
+		_ = repo.RecordPipelineMetric(context.Background(), &initialMetric)
+		metricID = initialMetric.ID
+	}
+
 	recordMetric := func(status string, promptTokens, completionTokens, totalTokens int, errMsg string) {
 		if repo != nil {
 			_ = repo.RecordPipelineMetric(context.Background(), &repository.PipelineMetric{
+				ID:               metricID,
 				ArticleID:        job.ArticleID,
 				ArticleTitle:     articleTitle,
 				Model:            model,
@@ -167,7 +183,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 				CompletionTokens: completionTokens,
 				TotalTokens:      totalTokens,
 				ErrorMessage:     errMsg,
-				CreatedAt:        time.Now(),
+				CreatedAt:        startTime,
 			})
 		}
 	}

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"example.com/backend/internal/repository"
 	"go.uber.org/zap"
@@ -30,6 +32,23 @@ type Job struct {
 	Settings  PipelineSettings
 }
 
+type ActiveJobInfo struct {
+	ArticleID int64     `json:"article_id"`
+	Type      JobType   `json:"type"`
+	WorkerID  int       `json:"worker_id"`
+	StartedAt time.Time `json:"started_at"`
+}
+
+type QueueStatus struct {
+	PendingJobs   int             `json:"pending_jobs"`
+	ActiveJobs    int             `json:"active_jobs"`
+	TotalInFlight int             `json:"total_in_flight"`
+	MaxCapacity   int             `json:"max_capacity"`
+	TotalWorkers  int             `json:"total_workers"`
+	BusyWorkers   int             `json:"busy_workers"`
+	CurrentJobs   []ActiveJobInfo `json:"current_jobs"`
+}
+
 type AgentPool struct {
 	Queue                chan Job
 	logger               *zap.Logger
@@ -37,6 +56,9 @@ type AgentPool struct {
 	repo                 repository.Repository
 	dataDirectory        string
 	InvalidateGraphCache func()
+	numWorkers           int
+	mu                   sync.RWMutex
+	activeJobs           map[int]ActiveJobInfo
 }
 
 var Pool *AgentPool
@@ -53,6 +75,8 @@ func InitPool(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataD
 		repo:                 repo,
 		dataDirectory:        dataDir,
 		InvalidateGraphCache: invalidateGraphCache,
+		numWorkers:           numWorkers,
+		activeJobs:           make(map[int]ActiveJobInfo),
 	}
 
 	for i := 0; i < numWorkers; i++ {
@@ -64,6 +88,18 @@ func InitPool(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataD
 
 func (p *AgentPool) worker(id int) {
 	for job := range p.Queue {
+		p.mu.Lock()
+		if p.activeJobs == nil {
+			p.activeJobs = make(map[int]ActiveJobInfo)
+		}
+		p.activeJobs[id] = ActiveJobInfo{
+			ArticleID: job.ArticleID,
+			Type:      job.Type,
+			WorkerID:  id,
+			StartedAt: time.Now(),
+		}
+		p.mu.Unlock()
+
 		p.logger.Info("Agent processing job", zap.Int("worker_id", id), zap.Int64("article_id", job.ArticleID), zap.String("type", string(job.Type)))
 		
 		switch job.Type {
@@ -76,6 +112,45 @@ func (p *AgentPool) worker(id int) {
 		if p.InvalidateGraphCache != nil {
 			p.InvalidateGraphCache()
 		}
+
+		p.mu.Lock()
+		delete(p.activeJobs, id)
+		p.mu.Unlock()
+	}
+}
+
+func (p *AgentPool) GetQueueStatus() QueueStatus {
+	if p == nil {
+		return QueueStatus{MaxCapacity: 100, TotalWorkers: 1}
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	pending := 0
+	maxCap := 100
+	if p.Queue != nil {
+		pending = len(p.Queue)
+		maxCap = cap(p.Queue)
+	}
+	active := len(p.activeJobs)
+	current := make([]ActiveJobInfo, 0, active)
+	for _, j := range p.activeJobs {
+		current = append(current, j)
+	}
+
+	workers := p.numWorkers
+	if workers <= 0 {
+		workers = 1
+	}
+
+	return QueueStatus{
+		PendingJobs:   pending,
+		ActiveJobs:    active,
+		TotalInFlight: pending + active,
+		MaxCapacity:   maxCap,
+		TotalWorkers:  workers,
+		BusyWorkers:   active,
+		CurrentJobs:   current,
 	}
 }
 

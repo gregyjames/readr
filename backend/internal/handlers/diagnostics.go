@@ -8,12 +8,18 @@ import (
 
 func GetPipelineDiagnostics(repo repository.Repository) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		queueDepth := 0
-		maxCap := 100
-		activeWorkers := 1
-		if agents.Pool != nil && agents.Pool.Queue != nil {
-			queueDepth = len(agents.Pool.Queue)
-			maxCap = cap(agents.Pool.Queue)
+		var qStatus agents.QueueStatus
+		if agents.Pool != nil {
+			qStatus = agents.Pool.GetQueueStatus()
+		} else {
+			qStatus = agents.QueueStatus{
+				PendingJobs:   0,
+				ActiveJobs:    0,
+				TotalInFlight: 0,
+				MaxCapacity:   100,
+				TotalWorkers:  1,
+				BusyWorkers:   0,
+			}
 		}
 
 		summary, recent, err := repo.GetPipelineDiagnostics(c.Context(), 50)
@@ -28,11 +34,7 @@ func GetPipelineDiagnostics(repo repository.Repository) fiber.Handler {
 		}
 
 		return c.JSON(fiber.Map{
-			"queue": fiber.Map{
-				"pending_jobs":   queueDepth,
-				"max_capacity":   maxCap,
-				"active_workers": activeWorkers,
-			},
+			"queue":       qStatus,
 			"summary":     summary,
 			"recent_runs": recent,
 		})

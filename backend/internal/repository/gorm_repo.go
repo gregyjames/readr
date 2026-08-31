@@ -338,6 +338,9 @@ func (r *GormRepository) RecordPipelineMetric(ctx context.Context, metric *Pipel
 	if metric.CreatedAt.IsZero() {
 		metric.CreatedAt = time.Now()
 	}
+	if metric.ID > 0 {
+		return r.db.WithContext(ctx).Save(metric).Error
+	}
 	return r.db.WithContext(ctx).Create(metric).Error
 }
 

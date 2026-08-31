@@ -24,8 +24,11 @@ interface PipelineRun {
 interface PipelineDiagnosticsData {
   queue: {
     pending_jobs: number
+    active_jobs?: number
+    total_in_flight?: number
     max_capacity: number
-    active_workers: number
+    total_workers?: number
+    busy_workers?: number
   }
   summary: {
     total_runs: number
@@ -373,10 +376,10 @@ const handleChangePassword = async () => {
           </svg>
           Pipeline Diagnostics
           <span
-            v-if="diagnosticsData && diagnosticsData.queue.pending_jobs > 0"
+            v-if="diagnosticsData && ((diagnosticsData.queue.total_in_flight ?? diagnosticsData.queue.pending_jobs) > 0)"
             class="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500 text-white animate-pulse"
           >
-            {{ diagnosticsData.queue.pending_jobs }}
+            {{ diagnosticsData.queue.total_in_flight ?? diagnosticsData.queue.pending_jobs }}
           </span>
         </button>
       </div>
@@ -908,14 +911,14 @@ const handleChangePassword = async () => {
       <div class="bg-white dark:bg-[#111] rounded-3xl border border-gray-200/70 dark:border-gray-800/70 p-5 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.2)] flex flex-wrap items-center justify-between gap-4">
         <div class="flex items-center gap-3">
           <div class="relative flex h-3 w-3">
-            <span v-if="(diagnosticsData?.queue.pending_jobs ?? 0) > 0" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span class="relative inline-flex rounded-full h-3 w-3" :class="(diagnosticsData?.queue.pending_jobs ?? 0) > 0 ? 'bg-emerald-500' : 'bg-gray-400 dark:bg-gray-600'"></span>
+            <span v-if="(diagnosticsData?.queue.total_in_flight ?? diagnosticsData?.queue.pending_jobs ?? 0) > 0" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-3 w-3" :class="(diagnosticsData?.queue.total_in_flight ?? diagnosticsData?.queue.pending_jobs ?? 0) > 0 ? 'bg-emerald-500' : 'bg-gray-400 dark:bg-gray-600'"></span>
           </div>
           <div>
             <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
               Agent Pipeline Status
               <span class="text-xs font-normal text-gray-500 dark:text-gray-400">
-                • {{ (diagnosticsData?.queue.pending_jobs ?? 0) > 0 ? 'Processing Active Jobs' : 'Worker Ready (Idle)' }}
+                • {{ (diagnosticsData?.queue.total_in_flight ?? diagnosticsData?.queue.pending_jobs ?? 0) > 0 ? ((diagnosticsData?.queue.active_jobs ?? 0) > 0 ? 'Processing (' + diagnosticsData?.queue.active_jobs + ' active, ' + diagnosticsData?.queue.pending_jobs + ' queued)' : diagnosticsData?.queue.pending_jobs + ' queued') : 'Worker Ready (Idle)' }}
               </span>
             </h2>
             <p class="text-xs text-gray-400 dark:text-gray-500">
@@ -956,16 +959,16 @@ const handleChangePassword = async () => {
         <!-- Card 1: Queue Depth -->
         <div class="bg-white dark:bg-[#111] rounded-2xl border border-gray-200/70 dark:border-gray-800/70 p-5 shadow-sm space-y-2">
           <div class="flex items-center justify-between text-xs font-medium text-gray-500 dark:text-gray-400">
-            <span>Pending Queue</span>
-            <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold" :class="(diagnosticsData?.queue.pending_jobs ?? 0) > 0 ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300' : 'bg-gray-100 text-gray-600 dark:bg-white/5 dark:text-gray-400'">
-              {{ (diagnosticsData?.queue.pending_jobs ?? 0) > 0 ? 'Queued' : 'Idle' }}
+            <span>Pipeline In-Flight</span>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold" :class="(diagnosticsData?.queue.total_in_flight ?? diagnosticsData?.queue.pending_jobs ?? 0) > 0 ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300' : 'bg-gray-100 text-gray-600 dark:bg-white/5 dark:text-gray-400'">
+              {{ (diagnosticsData?.queue.total_in_flight ?? diagnosticsData?.queue.pending_jobs ?? 0) > 0 ? 'Active' : 'Idle' }}
             </span>
           </div>
           <div class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 font-mono">
-            {{ diagnosticsData?.queue.pending_jobs ?? 0 }} <span class="text-xs text-gray-400 font-normal">/ {{ diagnosticsData?.queue.max_capacity ?? 100 }} max</span>
+            {{ diagnosticsData?.queue.total_in_flight ?? diagnosticsData?.queue.pending_jobs ?? 0 }} <span class="text-xs text-gray-400 font-normal">/ {{ diagnosticsData?.queue.max_capacity ?? 100 }} max</span>
           </div>
           <p class="text-[11px] text-gray-400 dark:text-gray-500">
-            {{ diagnosticsData?.queue.active_workers ?? 1 }} active background worker pool
+            {{ diagnosticsData?.queue.active_jobs ?? 0 }} active worker • {{ diagnosticsData?.queue.pending_jobs ?? 0 }} in buffer
           </p>
         </div>
 
