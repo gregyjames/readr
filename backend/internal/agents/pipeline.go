@@ -41,9 +41,10 @@ type pipelineOpenRouterRequest struct {
 
 var reProtected = regexp.MustCompile(`(\[\[[\s\S]*?\]\]|\[[\s\S]*?\]\([\s\S]*?\)|` + "`[\\s\\S]*?`" + `)`)
 
-func injectLinksIntoBody(body string, links []llmLink, candidates []repository.ArticleRecord, sourceID int64, db *gorm.DB) string {
+func injectLinksIntoBody(body string, links []llmLink, candidates []repository.ArticleRecord, sourceID int64, db *gorm.DB) (string, []string) {
+	var injectedLinks []string
 	if len(links) == 0 {
-		return body
+		return body, injectedLinks
 	}
 
 	for _, link := range links {
@@ -97,6 +98,7 @@ func injectLinksIntoBody(body string, links []llmLink, candidates []repository.A
 
 		if replaced {
 			body = newBody.String()
+			injectedLinks = append(injectedLinks, fmt.Sprintf("%s (target_id: %d)", replacement, link.ExistingArticleID))
 			if db != nil {
 				var count int64
 				db.Table("article_links").Where("source_id = ? AND target_id = ?", sourceID, link.ExistingArticleID).Count(&count)
@@ -106,7 +108,7 @@ func injectLinksIntoBody(body string, links []llmLink, candidates []repository.A
 			}
 		}
 	}
-	return body
+	return body, injectedLinks
 }
 
 func (p *AgentPool) processPipeline(job Job) {
@@ -163,6 +165,14 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		}
 	}
 
+	p.logger.Info("Starting unified agent pipeline",
+		zap.Int64("article_id", job.ArticleID),
+		zap.String("title", articleTitle),
+		zap.Bool("summarizer", job.Settings.Summarizer),
+		zap.Bool("enricher", job.Settings.Enricher),
+		zap.Bool("linker", job.Settings.Linker),
+	)
+
 	// 3. Candidates for Linker
 	var candidates []repository.ArticleRecord
 	var existingVaultText string
@@ -182,6 +192,10 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 			}
 			existingVaultText = sb.String()
 		}
+		p.logger.Info("Pipeline retrieved candidate articles for auto-linking",
+			zap.Int64("article_id", job.ArticleID),
+			zap.Int("candidate_count", len(candidates)),
+		)
 	}
 
 	// 4. Assemble dynamic json_schema and prompt tasks
@@ -251,21 +265,19 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		}
 		required = append(required, "links_to_inject")
 
-		vaultSection := existingVaultText
-		if vaultSection == "" {
-			vaultSection = "(No existing vault articles available to link)"
-		}
-
-		promptTasks = append(promptTasks, fmt.Sprintf(`3. SMART LINKING:
-Analyze the article content and identify relevant connections (aim for 2 to 5 connections where applicable) to existing articles in the user's vault.
-Look for mentions of shared companies, organizations, people, shared technologies/tools/languages, or overlapping concepts/themes.
-RULES for links_to_inject:
-- "exact_phrase_in_text" must be a verbatim, case-sensitive substring from the article body.
-- "existing_article_id" must match the ID from Existing Vault Articles list.
-- If no matches exist or vault articles list is empty, return an empty array [].
+		if existingVaultText != "" {
+			promptTasks = append(promptTasks, fmt.Sprintf(`3. SMART LINKING:
+Identify connections (2 to 5 where applicable) to existing vault articles.
+RULES:
+1. "exact_phrase_in_text" must be a verbatim, case-sensitive substring from the article body.
+2. Link to distinct relevant vault articles.
 
 Existing Vault Articles:
-%s`, vaultSection))
+%s`, existingVaultText))
+		} else {
+			promptTasks = append(promptTasks, `3. SMART LINKING:
+(No existing vault articles available to link. Return an empty list [] for "links_to_inject").`)
+		}
 	}
 
 	bodyRunes := []rune(body)
@@ -274,24 +286,23 @@ Existing Vault Articles:
 		truncatedBody = string(bodyRunes[:10000])
 	}
 
-	prompt := fmt.Sprintf(`You are an expert knowledge curator and knowledge graph builder.
-Perform the following tasks for the article content provided below:
+	prompt := fmt.Sprintf(`You are an intelligent knowledge curation pipeline. Analyze the article and perform ALL the following requested tasks.
 
 %s
 
-Article Title: %s
-
 Article Content:
-%s`, strings.Join(promptTasks, "\n\n"), articleTitle, truncatedBody)
+%s`, strings.Join(promptTasks, "\n\n"), truncatedBody)
+
+	apiMsgs := []interface{}{
+		map[string]interface{}{
+			"role":    "user",
+			"content": prompt,
+		},
+	}
 
 	reqPayload := pipelineOpenRouterRequest{
-		Model: model,
-		Messages: []interface{}{
-			map[string]interface{}{
-				"role":    "user",
-				"content": prompt,
-			},
-		},
+		Model:    model,
+		Messages: apiMsgs,
 		ResponseFormat: &responseFormat{
 			Type: "json_schema",
 			JSONSchema: &jsonSchemaDefinition{
@@ -307,11 +318,7 @@ Article Content:
 		},
 	}
 
-	bodyJSON, err := json.Marshal(reqPayload)
-	if err != nil {
-		p.logger.Error("Pipeline failed to marshal request payload", zap.Error(err))
-		return
-	}
+	bodyJSON, _ := json.Marshal(reqPayload)
 
 	client := &http.Client{
 		Timeout: 60 * time.Second,
@@ -325,6 +332,12 @@ Article Content:
 			return nil
 		},
 	}
+
+	startTime := time.Now()
+	p.logger.Info("Pipeline dispatching single unified LLM request",
+		zap.Int64("article_id", job.ArticleID),
+		zap.String("model", model),
+	)
 
 	var resp *http.Response
 	for attempt := 0; attempt < 2; attempt++ {
@@ -360,6 +373,11 @@ Article Content:
 		return
 	}
 
+	p.logger.Info("Pipeline received LLM response",
+		zap.Int64("article_id", job.ArticleID),
+		zap.Duration("duration", time.Since(startTime)),
+	)
+
 	var llmResp struct {
 		Choices []struct {
 			Message struct {
@@ -388,6 +406,10 @@ Article Content:
 	// 1. Summarizer
 	if job.Settings.Summarizer && strings.TrimSpace(pipelineResp.Summary) != "" {
 		summaryText := strings.TrimSpace(pipelineResp.Summary)
+		p.logger.Info("Pipeline step [1/3]: Generated executive summary",
+			zap.Int64("article_id", job.ArticleID),
+			zap.String("summary", summaryText),
+		)
 		newSummaryBlock := fmt.Sprintf("> 💡 **Summary:** %s", summaryText)
 		if summaryBlockRegex.MatchString(body) {
 			body = summaryBlockRegex.ReplaceAllString(body, newSummaryBlock)
@@ -397,8 +419,22 @@ Article Content:
 	}
 
 	// 2. Linker
-	if job.Settings.Linker && len(pipelineResp.LinksToInject) > 0 {
-		body = injectLinksIntoBody(body, pipelineResp.LinksToInject, candidates, job.ArticleID, p.db)
+	if job.Settings.Linker {
+		var injectedLinks []string
+		if len(pipelineResp.LinksToInject) > 0 {
+			body, injectedLinks = injectLinksIntoBody(body, pipelineResp.LinksToInject, candidates, job.ArticleID, p.db)
+		}
+		if len(injectedLinks) > 0 {
+			p.logger.Info("Pipeline step [2/3]: Injected semantic wikilinks",
+				zap.Int64("article_id", job.ArticleID),
+				zap.Int("links_count", len(injectedLinks)),
+				zap.Strings("links_added", injectedLinks),
+			)
+		} else {
+			p.logger.Info("Pipeline step [2/3]: No new semantic links injected",
+				zap.Int64("article_id", job.ArticleID),
+			)
+		}
 	}
 
 	// 3. Enricher Frontmatter
@@ -424,6 +460,14 @@ Article Content:
 			return
 		}
 		frontmatter = "---\n" + string(yamlBytes) + "---\n\n"
+
+		p.logger.Info("Pipeline step [3/3]: Enriched OKF frontmatter",
+			zap.Int64("article_id", job.ArticleID),
+			zap.String("type", metadata.Type),
+			zap.String("title", metadata.Title),
+			zap.Strings("tags", metadata.Tags),
+			zap.String("description", metadata.Description),
+		)
 	}
 
 	// Build consolidated content
@@ -449,5 +493,8 @@ Article Content:
 		}
 	}
 
-	p.logger.Info("Successfully completed unified pipeline execution!", zap.Int64("article_id", job.ArticleID))
+	p.logger.Info("Successfully completed unified pipeline execution and saved file!",
+		zap.Int64("article_id", job.ArticleID),
+		zap.String("file", filePath),
+	)
 }
