@@ -851,12 +851,8 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		if newSettings.Model == "" {
 			newSettings.Model = "openai/gpt-4o-mini"
 		}
-		if newSettings.PasswordHash == "" {
-			newSettings.PasswordHash = serverSettings.PasswordHash
-		}
-		if newSettings.SessionSecret == "" {
-			newSettings.SessionSecret = serverSettings.SessionSecret
-		}
+		newSettings.PasswordHash = serverSettings.PasswordHash
+		newSettings.SessionSecret = serverSettings.SessionSecret
 
 		if err := saveServerSettings(dataDirectory, newSettings); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to save settings"})
