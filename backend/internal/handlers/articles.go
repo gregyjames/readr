@@ -23,24 +23,20 @@ type RequestBody struct {
 }
 
 func dispatchArticleJobs(articleID int64, apiKey string, settings ServerSettings) {
-	if settings.AgentEnricher {
-		agents.SubmitJob(agents.Job{
-			ArticleID: articleID,
-			Type:      agents.JobTypeEnrichFrontmatter,
-		})
+	// If no agents are enabled, skip submission
+	if !settings.AgentEnricher && !settings.AgentLinker && !settings.AgentSummarizer {
+		return
 	}
-	if settings.AgentLinker {
-		agents.SubmitJob(agents.Job{
-			ArticleID: articleID,
-			Type:      agents.JobTypeAutoLinker,
-		})
-	}
-	if apiKey != "" && settings.AgentSummarizer {
-		agents.SubmitJob(agents.Job{
-			ArticleID: articleID,
-			Type:      agents.JobTypeSummarizer,
-		})
-	}
+
+	agents.SubmitJob(agents.Job{
+		ArticleID: articleID,
+		Type:      agents.JobTypePipeline,
+		Settings: agents.PipelineSettings{
+			Summarizer: settings.AgentSummarizer,
+			Enricher:   settings.AgentEnricher,
+			Linker:     settings.AgentLinker,
+		},
+	})
 }
 
 func RegisterArticles(router fiber.Router, h *HandlerContext) {

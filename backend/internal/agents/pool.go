@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"example.com/backend/internal/repository"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -13,32 +14,43 @@ import (
 type JobType string
 
 const (
-	JobTypeEnrichFrontmatter JobType = "enrich_frontmatter"
-	JobTypeAutoLinker        JobType = "auto_linker"
-	JobTypeSummarizer        JobType = "summarizer"
+	JobTypePipeline JobType = "pipeline"
 )
+
+type PipelineSettings struct {
+	Summarizer bool
+	Enricher   bool
+	Linker     bool
+}
 
 type Job struct {
 	ArticleID int64
 	Type      JobType
 	Payload   map[string]interface{}
+	Settings  PipelineSettings
 }
 
 type AgentPool struct {
 	Queue                chan Job
 	logger               *zap.Logger
 	db                   *gorm.DB
+	repo                 repository.Repository
 	dataDirectory        string
 	InvalidateGraphCache func()
 }
 
 var Pool *AgentPool
 
-func InitPool(logger *zap.Logger, db *gorm.DB, dataDir string, numWorkers int, invalidateGraphCache func()) {
+func InitPool(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataDir string, numWorkers int, invalidateGraphCache func()) {
+	if repo == nil && db != nil {
+		repo = repository.NewGormRepository(db)
+	}
+
 	Pool = &AgentPool{
 		Queue:                make(chan Job, 100),
 		logger:               logger,
 		db:                   db,
+		repo:                 repo,
 		dataDirectory:        dataDir,
 		InvalidateGraphCache: invalidateGraphCache,
 	}
@@ -55,12 +67,8 @@ func (p *AgentPool) worker(id int) {
 		p.logger.Info("Agent processing job", zap.Int("worker_id", id), zap.Int64("article_id", job.ArticleID), zap.String("type", string(job.Type)))
 		
 		switch job.Type {
-		case JobTypeEnrichFrontmatter:
-			p.processEnrichFrontmatter(job)
-		case JobTypeAutoLinker:
-			p.processAutoLinker(job)
-		case JobTypeSummarizer:
-			p.processSummarizer(job)
+		case JobTypePipeline:
+			p.processPipeline(job)
 		default:
 			p.logger.Warn("Unknown job type", zap.String("type", string(job.Type)))
 		}

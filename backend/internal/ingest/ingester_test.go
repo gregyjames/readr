@@ -134,6 +134,18 @@ func (m *mockArticleRepository) DeleteArticle(ctx context.Context, id int64) err
 	return nil
 }
 
+func (m *mockArticleRepository) FindCandidates(ctx context.Context, excludeID int64, title string, body string, limit int) ([]IngestedArticle, error) {
+	return nil, nil
+}
+
+func (m *mockArticleRepository) GetDistinctTags(ctx context.Context) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockArticleRepository) UpdateArticleTags(ctx context.Context, id int64, tags string) error {
+	return nil
+}
+
 func TestIngester_Success(t *testing.T) {
 	sampleHTML := `<!DOCTYPE html>
 <html>

@@ -3,9 +3,77 @@ package repository
 import (
 	"context"
 	"errors"
+	"sort"
+	"strings"
 
 	"gorm.io/gorm"
 )
+
+var defaultStopwords = map[string]struct{}{
+	"about": {}, "above": {}, "after": {}, "again": {}, "against": {}, "all": {}, "and": {},
+	"any": {}, "are": {}, "aren't": {}, "because": {}, "been": {}, "before": {}, "being": {},
+	"below": {}, "between": {}, "both": {}, "but": {}, "cannot": {}, "could": {}, "couldn't": {},
+	"did": {}, "didn't": {}, "does": {}, "doesn't": {}, "doing": {}, "don't": {}, "down": {},
+	"during": {}, "each": {}, "few": {}, "for": {}, "from": {}, "further": {}, "had": {},
+	"hadn't": {}, "has": {}, "hasn't": {}, "have": {}, "haven't": {}, "having": {}, "here": {},
+	"how": {}, "into": {}, "more": {}, "most": {}, "mustn't": {}, "myself": {}, "nor": {},
+	"not": {}, "off": {}, "once": {}, "only": {}, "other": {}, "ought": {}, "our": {},
+	"ours": {}, "ourselves": {}, "out": {}, "over": {}, "own": {}, "same": {}, "shan't": {},
+	"she": {}, "should": {}, "shouldn't": {}, "some": {}, "such": {}, "than": {}, "that": {},
+	"the": {}, "their": {}, "theirs": {}, "them": {}, "themselves": {}, "then": {}, "there": {},
+	"these": {}, "they": {}, "this": {}, "those": {}, "through": {}, "too": {}, "under": {},
+	"until": {}, "very": {}, "was": {}, "wasn't": {}, "were": {}, "weren't": {}, "what": {},
+	"when": {}, "where": {}, "which": {}, "while": {}, "who": {}, "whom": {}, "why": {},
+	"with": {}, "won't": {}, "would": {}, "wouldn't": {}, "you": {}, "your": {}, "yours": {},
+	"yourself": {}, "yourselves": {}, "http": {}, "https": {}, "www": {}, "com": {}, "org": {},
+	"article": {}, "page": {}, "summary": {}, "read": {}, "using": {}, "across": {}, "explore": {},
+}
+
+func extractCandidateKeywords(title, body string, maxKeywords int) []string {
+	if maxKeywords <= 0 {
+		return nil
+	}
+	combined := title + " "
+	bodyRunes := []rune(body)
+	if len(bodyRunes) > 1000 {
+		combined += string(bodyRunes[:1000])
+	} else {
+		combined += body
+	}
+
+	// Replace non-alphanumeric with spaces
+	var cleaned strings.Builder
+	for _, r := range combined {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			cleaned.WriteRune(r)
+		} else {
+			cleaned.WriteRune(' ')
+		}
+	}
+
+	words := strings.Fields(strings.ToLower(cleaned.String()))
+	seen := make(map[string]struct{})
+	var result []string
+
+	for _, w := range words {
+		if len(w) < 3 || len(w) > 30 {
+			continue
+		}
+		if _, isStop := defaultStopwords[w]; isStop {
+			continue
+		}
+		if _, exists := seen[w]; exists {
+			continue
+		}
+		seen[w] = struct{}{}
+		result = append(result, w)
+		if len(result) >= maxKeywords {
+			break
+		}
+	}
+	return result
+}
+
 
 type GormArticle struct {
 	gorm.Model
@@ -147,3 +215,121 @@ func (r *GormRepository) DeleteArticle(ctx context.Context, id int64) error {
 	r.db.WithContext(ctx).Exec("DELETE FROM article_links WHERE source_id = ? OR target_id = ?", id, id)
 	return r.db.WithContext(ctx).Delete(&GormArticle{}, id).Error
 }
+
+func (r *GormRepository) FindCandidates(ctx context.Context, excludeID int64, title string, body string, limit int) ([]ArticleRecord, error) {
+	if limit <= 0 {
+		limit = 15
+	}
+
+	keywords := extractCandidateKeywords(title, body, 10)
+	var candidates []ArticleRecord
+	seenIDs := make(map[int64]struct{})
+	if excludeID > 0 {
+		seenIDs[excludeID] = struct{}{}
+	}
+
+	// 1. If we have keywords, try FTS5 query
+	if len(keywords) > 0 {
+		var queryParts []string
+		for _, kw := range keywords {
+			queryParts = append(queryParts, kw+"*")
+		}
+		safeFTSQuery := strings.Join(queryParts, " OR ")
+
+		var matchedArticles []GormArticle
+		err := r.db.WithContext(ctx).Raw(`
+			SELECT a.id, a.title, a.image, a.article, a.tags
+			FROM articles_fts fts
+			JOIN articles a ON a.id = fts.rowid
+			WHERE articles_fts MATCH ?
+			  AND a.deleted_at IS NULL
+			  AND a.id != ?
+			ORDER BY bm25(articles_fts, 2.0, 1.0)
+			LIMIT ?
+		`, safeFTSQuery, excludeID, limit).Scan(&matchedArticles).Error
+
+		if err == nil {
+			for _, a := range matchedArticles {
+				if _, exists := seenIDs[a.ID]; !exists {
+					seenIDs[a.ID] = struct{}{}
+					candidates = append(candidates, ArticleRecord{
+						ID:        a.ID,
+						Title:     a.Title,
+						ImagePath: a.Image,
+						FilePath:  a.Article,
+						Tags:      a.Tags,
+					})
+				}
+			}
+		}
+	}
+
+	// 2. If under limit, backfill with recent active articles
+	if len(candidates) < limit {
+		needed := limit - len(candidates)
+		var excludedList []int64
+		for id := range seenIDs {
+			excludedList = append(excludedList, id)
+		}
+
+		var fallbackArticles []GormArticle
+		query := r.db.WithContext(ctx).Where("deleted_at IS NULL")
+		if len(excludedList) > 0 {
+			query = query.Where("id NOT IN (?)", excludedList)
+		}
+		err := query.Order("created_at DESC").Limit(needed).Find(&fallbackArticles).Error
+		if err == nil {
+			for _, a := range fallbackArticles {
+				if _, exists := seenIDs[a.ID]; !exists {
+					seenIDs[a.ID] = struct{}{}
+					candidates = append(candidates, ArticleRecord{
+						ID:        a.ID,
+						Title:     a.Title,
+						ImagePath: a.Image,
+						FilePath:  a.Article,
+						Tags:      a.Tags,
+					})
+				}
+			}
+		}
+	}
+
+	return candidates, nil
+}
+
+func (r *GormRepository) GetDistinctTags(ctx context.Context) ([]string, error) {
+	var rawTags []string
+	err := r.db.WithContext(ctx).
+		Model(&GormArticle{}).
+		Where("deleted_at IS NULL AND tags != '' AND tags IS NOT NULL").
+		Pluck("tags", &rawTags).Error
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]struct{})
+	var result []string
+	for _, raw := range rawTags {
+		parts := strings.Split(raw, ",")
+		for _, p := range parts {
+			tag := strings.ToLower(strings.TrimSpace(p))
+			if tag == "" || len(tag) > 40 {
+				continue
+			}
+			if _, exists := seen[tag]; !exists {
+				seen[tag] = struct{}{}
+				result = append(result, tag)
+			}
+		}
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func (r *GormRepository) UpdateArticleTags(ctx context.Context, id int64, tags string) error {
+	return r.db.WithContext(ctx).
+		Model(&GormArticle{}).
+		Where("id = ?", id).
+		Update("tags", tags).Error
+}
+
