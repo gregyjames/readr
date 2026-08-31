@@ -431,7 +431,12 @@ const loadContent = async () => {
     const articleID = getArticleId()
     if (!articleID) return
 
-    const articleURL = `/api/articles/${articleID}.md`
+    const currentArticle = allArticles.value.find(a => String(a.ID) === String(articleID))
+    let articleURL = `/api/articles/${articleID}.md`
+    if (currentArticle?.article) {
+      articleURL = currentArticle.article.startsWith('/api') ? currentArticle.article : `/api${currentArticle.article}`
+    }
+
     // Always append cache buster to prevent stale browser cache after navigation
     const fetchUrl = `${articleURL}?t=${Date.now()}`
 
