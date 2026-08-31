@@ -75,6 +75,7 @@ func loadServerSettings(dataDir string) ServerSettings {
 	}
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
+		_ = saveServerSettings(dataDir, defaults)
 		return defaults
 	}
 	var s ServerSettings
