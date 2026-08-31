@@ -418,20 +418,6 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return err
 	})
 
-	app.Get("/api/articles/:filename", func(c *fiber.Ctx) error {
-		filename := c.Params("filename")
-		clean := filepath.Clean(filename)
-		filePath := filepath.Join(dataDirectory, "articles", clean)
-
-		content, err := os.ReadFile(filePath)
-		if err != nil {
-			return c.Status(fiber.StatusNotFound).SendString("Article not found")
-		}
-		c.Set("Content-Type", "text/markdown; charset=utf-8")
-		// Prevent aggressive browser caching of raw files
-		c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
-		return c.Send(content)
-	})
 	app.Static("/images", filepath.Join(dataDirectory, "images"))
 
 	repo := repository.NewGormRepository(db)
@@ -676,6 +662,21 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to list templates"})
 		}
 		return c.JSON(templates)
+	})
+
+	api.Get("/articles/:filename", func(c *fiber.Ctx) error {
+		filename := c.Params("filename")
+		clean := filepath.Clean(filename)
+		filePath := filepath.Join(dataDirectory, "articles", clean)
+
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			return c.Status(fiber.StatusNotFound).SendString("Article not found")
+		}
+		c.Set("Content-Type", "text/markdown; charset=utf-8")
+		// Prevent aggressive browser caching of raw files
+		c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+		return c.Send(content)
 	})
 
 	api.Get("/chats", func(c *fiber.Ctx) error {

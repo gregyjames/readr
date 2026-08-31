@@ -1210,6 +1210,8 @@ func TestAuthEndpoints_Flow(t *testing.T) {
 func TestAuthMiddleware_Protection(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Setenv("DATA_DIR", tempDir)
+	os.MkdirAll(filepath.Join(tempDir, "articles"), 0755)
+	os.WriteFile(filepath.Join(tempDir, "articles", "1.md"), []byte("# Article 1"), 0644)
 	db := initTestDB()
 	app := setupApp(db)
 
@@ -1256,6 +1258,26 @@ func TestAuthMiddleware_Protection(t *testing.T) {
 	}
 	if resp.StatusCode != 200 {
 		t.Fatalf("expected 200 for Bearer authenticated request, got %d", resp.StatusCode)
+	}
+
+	// Verify /api/articles/:filename route is also protected
+	req = httptest.NewRequest("GET", "/api/articles/1.md", nil)
+	resp, err = app.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("GET /api/articles/1.md failed: %v", err)
+	}
+	if resp.StatusCode != 401 {
+		t.Fatalf("expected 401 for unauthenticated /api/articles/1.md, got %d", resp.StatusCode)
+	}
+
+	req = httptest.NewRequest("GET", "/api/articles/1.md", nil)
+	req.Header.Set("Cookie", cookie)
+	resp, err = app.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("GET /api/articles/1.md with cookie failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 for authenticated /api/articles/1.md, got %d", resp.StatusCode)
 	}
 }
 
