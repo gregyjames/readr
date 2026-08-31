@@ -44,6 +44,14 @@ func (m *mockGraphRepository) FindCandidates(ctx context.Context, excludeID int6
 	return nil, nil
 }
 
+func (m *mockGraphRepository) GetDistinctTags(ctx context.Context) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockGraphRepository) UpdateArticleTags(ctx context.Context, id int64, tags string) error {
+	return nil
+}
+
 func TestBuildTopology_NodesAndEdges(t *testing.T) {
 	articles := []repository.ArticleRecord{
 		{ID: 1, Title: "Article One", Tags: "Go, backend, GO"},

@@ -138,6 +138,14 @@ func (m *mockArticleRepository) FindCandidates(ctx context.Context, excludeID in
 	return nil, nil
 }
 
+func (m *mockArticleRepository) GetDistinctTags(ctx context.Context) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockArticleRepository) UpdateArticleTags(ctx context.Context, id int64, tags string) error {
+	return nil
+}
+
 func TestIngester_Success(t *testing.T) {
 	sampleHTML := `<!DOCTYPE html>
 <html>

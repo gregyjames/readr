@@ -103,3 +103,61 @@ func TestFindCandidates_FTS5AndFallback(t *testing.T) {
 		}
 	}
 }
+
+func TestGetDistinctTags_And_UpdateArticleTags(t *testing.T) {
+	tempDir := t.TempDir()
+	sqlDB, err := sql.Open("sqlite", filepath.Join(tempDir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db.AutoMigrate(&GormArticle{})
+	repo := NewGormRepository(db)
+	ctx := context.Background()
+
+	// Seed articles with various tags including overlaps and casing
+	articles := []GormArticle{
+		{ID: 1, Title: "A1", Tags: "Golang, Docker"},
+		{ID: 2, Title: "A2", Tags: "docker, KUBERNETES, ai"},
+		{ID: 3, Title: "A3", Tags: ""},
+		{ID: 4, Title: "A4", Tags: "ai, devops"},
+	}
+	for _, a := range articles {
+		db.Create(&a)
+	}
+
+	tags, err := repo.GetDistinctTags(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error getting distinct tags: %v", err)
+	}
+
+	expectedTags := []string{"ai", "docker", "devops", "golang", "kubernetes"}
+	for _, exp := range expectedTags {
+		found := false
+		for _, tag := range tags {
+			if tag == exp {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected tag %q in distinct tags: %v", exp, tags)
+		}
+	}
+
+	// Test UpdateArticleTags
+	err = repo.UpdateArticleTags(ctx, 3, "database, sqlite")
+	if err != nil {
+		t.Fatalf("unexpected error updating tags: %v", err)
+	}
+
+	var updated GormArticle
+	db.First(&updated, 3)
+	if updated.Tags != "database, sqlite" {
+		t.Errorf("expected updated tags 'database, sqlite', got %q", updated.Tags)
+	}
+}

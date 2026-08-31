@@ -177,6 +177,9 @@ func TestProcessPipeline_AllEnabled(t *testing.T) {
 	if !strings.Contains(promptReceived, "2. FRONTMATTER") {
 		t.Errorf("expected FRONTMATTER instruction in prompt")
 	}
+	if !strings.Contains(promptReceived, "Existing Vault Tags:") {
+		t.Errorf("expected Existing Vault Tags in prompt")
+	}
 	if !strings.Contains(promptReceived, "3. SMART LINKING") {
 		t.Errorf("expected SMART LINKING instruction in prompt")
 	}
@@ -249,6 +252,15 @@ func TestProcessPipeline_AllEnabled(t *testing.T) {
 	}
 	if linkCount != 1 {
 		t.Errorf("expected 1 record in article_links for source 401 -> target 402, got %d", linkCount)
+	}
+
+	// 5. Verify database article tags were updated and synchronized
+	var updatedArticle repository.GormArticle
+	if err := db.First(&updatedArticle, 401).Error; err != nil {
+		t.Fatalf("failed to query updated article: %v", err)
+	}
+	if updatedArticle.Tags != "cloud, kubernetes, devops" {
+		t.Errorf("expected article tags 'cloud, kubernetes, devops', got %q", updatedArticle.Tags)
 	}
 }
 

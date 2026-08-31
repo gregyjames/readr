@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 
 	"gorm.io/gorm"
@@ -294,5 +295,41 @@ func (r *GormRepository) FindCandidates(ctx context.Context, excludeID int64, ti
 	}
 
 	return candidates, nil
+}
+
+func (r *GormRepository) GetDistinctTags(ctx context.Context) ([]string, error) {
+	var rawTags []string
+	err := r.db.WithContext(ctx).
+		Model(&GormArticle{}).
+		Where("deleted_at IS NULL AND tags != '' AND tags IS NOT NULL").
+		Pluck("tags", &rawTags).Error
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]struct{})
+	var result []string
+	for _, raw := range rawTags {
+		parts := strings.Split(raw, ",")
+		for _, p := range parts {
+			tag := strings.ToLower(strings.TrimSpace(p))
+			if tag == "" || len(tag) > 40 {
+				continue
+			}
+			if _, exists := seen[tag]; !exists {
+				seen[tag] = struct{}{}
+				result = append(result, tag)
+			}
+		}
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func (r *GormRepository) UpdateArticleTags(ctx context.Context, id int64, tags string) error {
+	return r.db.WithContext(ctx).
+		Model(&GormArticle{}).
+		Where("id = ?", id).
+		Update("tags", tags).Error
 }
 

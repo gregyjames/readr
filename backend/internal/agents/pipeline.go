@@ -176,17 +176,25 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	}
 
 	// 1. Read article metadata from repo or db
-	var articleTitle string
+	var articleRecord *repository.ArticleRecord
 	if p.repo != nil {
 		if a, err := p.repo.FindByID(context.Background(), job.ArticleID); err == nil && a != nil {
-			articleTitle = a.Title
+			articleRecord = a
 		}
 	}
-	if articleTitle == "" && p.db != nil {
-		var a ArticleRecord
+	if articleRecord == nil && p.db != nil {
+		var a repository.GormArticle
 		if err := p.db.Table("articles").Where("id = ?", job.ArticleID).First(&a).Error; err == nil {
-			articleTitle = a.Title
+			articleRecord = &repository.ArticleRecord{
+				ID:    a.ID,
+				Title: a.Title,
+				Tags:  a.Tags,
+			}
 		}
+	}
+	articleTitle := ""
+	if articleRecord != nil {
+		articleTitle = articleRecord.Title
 	}
 
 	// 2. Read markdown file
@@ -217,7 +225,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		zap.Bool("linker", job.Settings.Linker),
 	)
 
-	// 3. Candidates for Linker
+	// 3. Candidates for Linker & Taxonomy for Enricher
 	var candidates []repository.ArticleRecord
 	var existingVaultText string
 	if job.Settings.Linker && p.repo != nil {
@@ -240,6 +248,13 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 			zap.Int64("article_id", job.ArticleID),
 			zap.Int("candidate_count", len(candidates)),
 		)
+	}
+
+	var existingVaultTags []string
+	if job.Settings.Enricher && p.repo != nil {
+		if tags, err := p.repo.GetDistinctTags(context.Background()); err == nil && len(tags) > 0 {
+			existingVaultTags = tags
+		}
 	}
 
 	// 4. Assemble dynamic json_schema and prompt tasks
@@ -282,12 +297,23 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 			AdditionalProperties: false,
 		}
 		required = append(required, "frontmatter")
-		promptTasks = append(promptTasks, `2. FRONTMATTER (OKF Metadata):
+
+		enricherPrompt := `2. FRONTMATTER (OKF Metadata):
 - "type": A descriptive content type like "Reference Article", "News", "Documentation", "Playbook", "Tutorial", or "Essay".
 - "title": Clean, readable, informative title.
 - "description": A concise single sentence summarizing the core insight.
 - "resource": Original source URL if known or found in text, otherwise empty string.
-- "tags": 3 to 5 lowercase keyword tags.`)
+- "tags": 3 to 5 lowercase keyword tags.`
+
+		if len(existingVaultTags) > 0 {
+			enricherPrompt += fmt.Sprintf(`
+- RULE FOR TAGS: PREFER reusing matching tags from the "Existing Vault Tags" list below to maintain taxonomy consistency (e.g. use "ai" instead of "artificial intelligence" if "ai" is in the list).
+
+Existing Vault Tags:
+%s`, strings.Join(existingVaultTags, ", "))
+		}
+
+		promptTasks = append(promptTasks, enricherPrompt)
 	}
 
 	if job.Settings.Linker {
@@ -481,18 +507,44 @@ Article Content:
 		}
 	}
 
-	// 3. Enricher Frontmatter
+	// 3. Enricher Frontmatter & Tag Synchronization
 	if job.Settings.Enricher && pipelineResp.Frontmatter != nil {
-		tags := make([]string, len(pipelineResp.Frontmatter.Tags))
-		for i, tag := range pipelineResp.Frontmatter.Tags {
-			tags[i] = strings.ToLower(strings.TrimSpace(tag))
+		// Fetch existing tags from the article record
+		var existingArticleTags []string
+		if articleRecord != nil && strings.TrimSpace(articleRecord.Tags) != "" {
+			for _, t := range strings.Split(articleRecord.Tags, ",") {
+				cleaned := strings.ToLower(strings.TrimSpace(t))
+				if cleaned != "" {
+					existingArticleTags = append(existingArticleTags, cleaned)
+				}
+			}
 		}
+
+		// Merge user tags with AI generated tags (user tags prioritized, no duplicates)
+		seenTags := make(map[string]struct{})
+		var mergedTags []string
+		for _, t := range existingArticleTags {
+			if _, exists := seenTags[t]; !exists {
+				seenTags[t] = struct{}{}
+				mergedTags = append(mergedTags, t)
+			}
+		}
+		for _, t := range pipelineResp.Frontmatter.Tags {
+			cleaned := strings.ToLower(strings.TrimSpace(t))
+			if cleaned != "" {
+				if _, exists := seenTags[cleaned]; !exists {
+					seenTags[cleaned] = struct{}{}
+					mergedTags = append(mergedTags, cleaned)
+				}
+			}
+		}
+
 		metadata := OKFMetadata{
 			Type:        pipelineResp.Frontmatter.Type,
 			Title:       pipelineResp.Frontmatter.Title,
 			Description: pipelineResp.Frontmatter.Description,
 			Resource:    pipelineResp.Frontmatter.Resource,
-			Tags:        tags,
+			Tags:        mergedTags,
 			Generated: OKFGeneratedInfo{
 				By: "agent/readr-pipeline",
 				At: time.Now().UTC().Format(time.RFC3339),
@@ -505,11 +557,22 @@ Article Content:
 		}
 		frontmatter = "---\n" + string(yamlBytes) + "---\n\n"
 
-		p.logger.Info("Pipeline step [3/3]: Enriched OKF frontmatter",
+		// Update database and FTS index with merged tags
+		mergedTagsStr := strings.Join(mergedTags, ", ")
+		if p.repo != nil {
+			_ = p.repo.UpdateArticleTags(context.Background(), job.ArticleID, mergedTagsStr)
+		}
+		if p.db != nil {
+			p.db.Exec("DELETE FROM articles_fts WHERE rowid = ?", job.ArticleID)
+			_ = p.db.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", job.ArticleID, metadata.Title, mergedTagsStr).Error
+		}
+
+		p.logger.Info("Pipeline step [3/3]: Enriched OKF frontmatter and synchronized database tags",
 			zap.Int64("article_id", job.ArticleID),
 			zap.String("type", metadata.Type),
 			zap.String("title", metadata.Title),
 			zap.Strings("tags", metadata.Tags),
+			zap.String("merged_tags", mergedTagsStr),
 			zap.String("description", metadata.Description),
 		)
 	}
