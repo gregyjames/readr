@@ -45,17 +45,14 @@ func RegisterEvents(router fiber.Router, h *HandlerContext) {
 		c.Set("Content-Type", "text/event-stream")
 		c.Set("Cache-Control", "no-cache")
 		c.Set("Connection", "keep-alive")
-		c.Set("Transfer-Encoding", "chunked")
 
 		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 			clientChan := make(chan string, 10)
 			h.EventHub.clients.Store(clientChan, true)
-			defer func() {
-				h.EventHub.clients.Delete(clientChan)
-				close(clientChan)
-			}()
+			defer h.EventHub.clients.Delete(clientChan)
 
-			fmt.Fprintf(w, "data: connected\n\n")
+			// Send initial comment to establish SSE stream
+			fmt.Fprintf(w, ": connected\n\n")
 			if err := w.Flush(); err != nil {
 				return
 			}
