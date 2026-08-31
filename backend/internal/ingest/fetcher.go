@@ -6,25 +6,31 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/hashicorp/go-retryablehttp"
 )
 
 type HTTPFetcher struct {
-	client *http.Client
+	client *retryablehttp.Client
 }
 
 func NewHTTPFetcher(timeout time.Duration) *HTTPFetcher {
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
+	client := retryablehttp.NewClient()
+	client.RetryMax = 2
+	client.RetryWaitMin = 500 * time.Millisecond
+	client.RetryWaitMax = 3 * time.Second
+	client.Logger = nil
+	client.HTTPClient.Timeout = timeout
 	return &HTTPFetcher{
-		client: &http.Client{
-			Timeout: timeout,
-		},
+		client: client,
 	}
 }
 
 func (f *HTTPFetcher) fetch(ctx context.Context, url string, userAgent string, errMsg string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create %s request failed: %w", errMsg, err)
 	}

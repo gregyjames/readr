@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"example.com/backend/internal/repository"
+	"github.com/hashicorp/go-retryablehttp"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -118,17 +119,29 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		return
 	}
 
-	client := &http.Client{
-		Timeout: 60 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return fmt.Errorf("stopped after 10 redirects")
-			}
-			if len(via) > 0 {
-				req.Header.Set("Authorization", via[0].Header.Get("Authorization"))
-			}
-			return nil
-		},
+	retryClient := retryablehttp.NewClient()
+	retryClient.RetryMax = 3
+	retryClient.RetryWaitMin = 1 * time.Second
+	retryClient.RetryWaitMax = 10 * time.Second
+	retryClient.Logger = nil // suppress stdout default logging; logged via zap
+	retryClient.HTTPClient.Timeout = 60 * time.Second
+	retryClient.HTTPClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		if len(via) > 0 {
+			req.Header.Set("Authorization", via[0].Header.Get("Authorization"))
+		}
+		return nil
+	}
+	retryClient.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {
+		if err != nil {
+			return retryablehttp.DefaultRetryPolicy(ctx, resp, err)
+		}
+		if resp != nil && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusPaymentRequired || resp.StatusCode >= 500) {
+			return true, nil
+		}
+		return false, nil
 	}
 
 	startTime := time.Now()
@@ -137,37 +150,31 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		zap.String("model", model),
 	)
 
-	var resp *http.Response
-	for attempt := 0; attempt < 2; attempt++ {
-		req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(bodyJSON))
-		if err != nil {
-			p.logger.Error("Pipeline failed to create HTTP request", zap.Error(err))
-			return
-		}
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("HTTP-Referer", "https://github.com/gregyjames/readr")
-		req.Header.Set("X-Title", "Readr Pipeline Agent")
-
-		resp, err = client.Do(req)
-		if err != nil {
-			p.logger.Error("Pipeline LLM request failed", zap.Error(err))
-			return
-		}
-
-		if resp.StatusCode == http.StatusPaymentRequired || resp.StatusCode == http.StatusTooManyRequests {
-			resp.Body.Close()
-			time.Sleep(3 * time.Second)
-			continue
-		}
-		break
+	req, err := retryablehttp.NewRequestWithContext(context.Background(), http.MethodPost, apiURL, bytes.NewReader(bodyJSON))
+	if err != nil {
+		p.logger.Error("Pipeline failed to create HTTP request", zap.Error(err))
+		return
 	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("HTTP-Referer", "https://github.com/gregyjames/readr")
+	req.Header.Set("X-Title", "Readr Pipeline Agent")
 
+	resp, err := retryClient.Do(req)
+	if err != nil {
+		p.logger.Error("Pipeline LLM request failed", zap.Error(err), zap.Int64("article_id", job.ArticleID))
+		return
+	}
 	defer resp.Body.Close()
 
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		p.logger.Error("Pipeline failed to read LLM response body", zap.Error(err), zap.Int64("article_id", job.ArticleID))
+		return
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		p.logger.Error("Pipeline LLM request returned non-200 status", zap.Int("status", resp.StatusCode), zap.String("body", string(bodyBytes)))
+		p.logger.Error("Pipeline LLM request returned non-200 status", zap.Int("status", resp.StatusCode), zap.String("body", string(respBytes)), zap.Int64("article_id", job.ArticleID))
 		return
 	}
 
@@ -179,24 +186,42 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	var llmResp struct {
 		Choices []struct {
 			Message struct {
-				Content string `json:"content"`
+				Content interface{} `json:"content"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
+		Error *struct {
+			Message string      `json:"message"`
+			Code    interface{} `json:"code"`
+		} `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&llmResp); err != nil || len(llmResp.Choices) == 0 {
-		p.logger.Error("Pipeline failed to parse LLM response")
+
+	if err := json.Unmarshal(respBytes, &llmResp); err != nil {
+		p.logger.Error("Pipeline failed to parse LLM response JSON", zap.Error(err), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
 		return
 	}
 
-	rawJSON := strings.TrimSpace(llmResp.Choices[0].Message.Content)
-	if strings.HasPrefix(rawJSON, "```json") {
-		rawJSON = strings.TrimPrefix(rawJSON, "```json")
-		rawJSON = strings.TrimSuffix(rawJSON, "```")
+	if llmResp.Error != nil {
+		p.logger.Error("Pipeline received API error from LLM provider", zap.String("error_message", llmResp.Error.Message), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
+		return
+	}
+
+	if len(llmResp.Choices) == 0 {
+		p.logger.Error("Pipeline LLM response contained no choices", zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
+		return
+	}
+
+	rawJSON := extractMessageContent(llmResp.Choices[0].Message.Content)
+	rawJSON = cleanJSONBlock(rawJSON)
+
+	if rawJSON == "" {
+		p.logger.Error("Pipeline LLM response message content was empty", zap.String("finish_reason", llmResp.Choices[0].FinishReason), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
+		return
 	}
 
 	var pipelineResp UnifiedPipelineResponse
 	if err := json.Unmarshal([]byte(rawJSON), &pipelineResp); err != nil {
-		p.logger.Error("Pipeline failed to unmarshal JSON into UnifiedPipelineResponse", zap.Error(err), zap.String("raw", rawJSON))
+		p.logger.Error("Pipeline failed to unmarshal JSON into UnifiedPipelineResponse", zap.Error(err), zap.String("raw", rawJSON), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
 		return
 	}
 

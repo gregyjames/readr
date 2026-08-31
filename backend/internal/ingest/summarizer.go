@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/go-retryablehttp"
 )
 
 type Summarizer interface {
@@ -15,13 +17,28 @@ type Summarizer interface {
 }
 
 type OpenRouterSummarizer struct {
-	client  *http.Client
+	client  *retryablehttp.Client
 	baseURL string
 }
 
 func NewOpenRouterSummarizer() *OpenRouterSummarizer {
+	client := retryablehttp.NewClient()
+	client.RetryMax = 2
+	client.RetryWaitMin = 500 * time.Millisecond
+	client.RetryWaitMax = 3 * time.Second
+	client.Logger = nil
+	client.HTTPClient.Timeout = 15 * time.Second
+	client.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {
+		if err != nil {
+			return retryablehttp.DefaultRetryPolicy(ctx, resp, err)
+		}
+		if resp != nil && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500) {
+			return true, nil
+		}
+		return false, nil
+	}
 	return &OpenRouterSummarizer{
-		client:  &http.Client{Timeout: 10 * time.Second},
+		client:  client,
 		baseURL: "https://openrouter.ai/api/v1/chat/completions",
 	}
 }
@@ -59,7 +76,7 @@ func (s *OpenRouterSummarizer) Summarize(ctx context.Context, title, body, apiKe
 		return "", err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL, bytes.NewReader(bodyBytes))
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, s.baseURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", err
 	}
