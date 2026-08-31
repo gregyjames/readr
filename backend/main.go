@@ -619,12 +619,18 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid JSON"})
 		}
 		settingsMu.Lock()
-		serverSettings = req
-		if serverSettings.Model == "" {
-			serverSettings.Model = "openai/gpt-4o-mini"
+		defer settingsMu.Unlock()
+
+		newSettings := req
+		if newSettings.Model == "" {
+			newSettings.Model = "openai/gpt-4o-mini"
 		}
-		_ = saveServerSettings(dataDirectory, serverSettings)
-		settingsMu.Unlock()
+
+		if err := saveServerSettings(dataDirectory, newSettings); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to save settings"})
+		}
+
+		serverSettings = newSettings
 		return c.JSON(fiber.Map{"status": "success"})
 	})
 

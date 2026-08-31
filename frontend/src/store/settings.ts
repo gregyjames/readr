@@ -29,14 +29,13 @@ export async function initSettings() {
 }
 
 export async function saveSettingsToServer() {
-  try {
-    await fetch('/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings)
-    })
-    document.documentElement.className = settings.theme
-  } catch (e) {
-    console.error('Failed to save settings:', e)
+  const res = await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings)
+  })
+  if (!res.ok) {
+    throw new Error('Network response was not ok')
   }
+  document.documentElement.className = settings.theme
 }

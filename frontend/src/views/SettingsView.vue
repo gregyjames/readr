@@ -120,14 +120,24 @@ const selectModel = (modelId: string) => {
 }
 
 const saveSettings = async () => {
-  await saveSettingsToServer()
-  showSavedMessage('Settings saved successfully!')
+  try {
+    await saveSettingsToServer()
+    showSavedMessage('Settings saved successfully!')
+  } catch (e) {
+    console.error(e)
+    alert('Failed to save settings')
+  }
 }
 
 const clearKey = async () => {
   settings.api_key = ''
-  await saveSettingsToServer()
-  showSavedMessage('API key cleared.')
+  try {
+    await saveSettingsToServer()
+    showSavedMessage('API key cleared.')
+  } catch (e) {
+    console.error(e)
+    alert('Failed to clear API key')
+  }
 }
 </script>
 
