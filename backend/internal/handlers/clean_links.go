@@ -64,16 +64,19 @@ func CleanBrokenLinks(db *gorm.DB, dataDir string, logger *zap.Logger) (*CleanLi
 	// 3. Scan each article's file and clean broken links
 	for _, a := range articles {
 		filePath := ""
+		var fileInfo os.FileInfo
 		if a.Article != "" {
 			candidate := filepath.Join(dataDir, strings.TrimPrefix(a.Article, "/"))
-			if _, err := os.Stat(candidate); err == nil {
+			if info, err := os.Stat(candidate); err == nil {
 				filePath = candidate
+				fileInfo = info
 			}
 		}
 		if filePath == "" {
 			candidate := filepath.Join(dataDir, "articles", fmt.Sprintf("%d.md", a.ID))
-			if _, err := os.Stat(candidate); err == nil {
+			if info, err := os.Stat(candidate); err == nil {
 				filePath = candidate
+				fileInfo = info
 			}
 		}
 
@@ -118,9 +121,16 @@ func CleanBrokenLinks(db *gorm.DB, dataDir string, logger *zap.Logger) (*CleanLi
 		})
 
 		if articleModified {
+			fileMode := os.FileMode(0644)
+			if fileInfo != nil {
+				fileMode = fileInfo.Mode().Perm()
+			} else if info, err := os.Stat(filePath); err == nil {
+				fileMode = info.Mode().Perm()
+			}
+
 			dir := filepath.Dir(filePath)
 			tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(filePath)))
-			if err := os.WriteFile(tmpFile, []byte(newContent), 0644); err == nil {
+			if err := os.WriteFile(tmpFile, []byte(newContent), fileMode); err == nil {
 				if err := os.Rename(tmpFile, filePath); err == nil {
 					result.UpdatedArticles++
 					result.CleanedLinks += linksCleanedInFile

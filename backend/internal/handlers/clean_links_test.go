@@ -158,3 +158,41 @@ func TestCleanLinksEndpoint(t *testing.T) {
 		t.Errorf("expected 1 cleaned link, got %d", res.CleanedLinks)
 	}
 }
+
+func TestCleanBrokenLinks_PreservesFilePermissions(t *testing.T) {
+	tempDir := t.TempDir()
+	articlesDir := filepath.Join(tempDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0755)
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{})
+
+	notePath := filepath.Join(articlesDir, "Custom Perms Note.md")
+	_ = os.WriteFile(notePath, []byte("Content with [[Missing Article|broken]]"), 0600)
+	_ = os.Chmod(notePath, 0600)
+
+	db.Create(&repository.GormArticle{
+		ID:      401,
+		Title:   "Custom Perms Note",
+		Article: "/articles/Custom Perms Note.md",
+	})
+
+	res, err := CleanBrokenLinks(db, tempDir, zap.NewNop())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.CleanedLinks != 1 {
+		t.Errorf("expected 1 cleaned link, got %d", res.CleanedLinks)
+	}
+
+	info, err := os.Stat(notePath)
+	if err != nil {
+		t.Fatalf("failed to stat file: %v", err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Errorf("expected file mode 0600 to be preserved, got %04o", info.Mode().Perm())
+	}
+}
