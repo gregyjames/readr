@@ -160,6 +160,9 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			h.Logger.Info("Attempting to delete article", zap.String("id", id))
 		}
 
+		var article repository.GormArticle
+		_ = h.DB.First(&article, id).Error
+
 		if err := h.DB.Delete(&repository.GormArticle{}, id).Error; err != nil {
 			if h.Logger != nil {
 				h.Logger.Error("Failed to delete article from DB", zap.String("id", id), zap.Error(err))
@@ -169,15 +172,10 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			})
 		}
 
-		deleteFileError := os.Remove(filepath.Join(h.DataDir, "articles", fmt.Sprintf("%s.md", id)))
-		if deleteFileError != nil {
-			if h.Logger != nil {
-				h.Logger.Error("Failed to delete article file", zap.String("id", id), zap.Error(deleteFileError))
-			}
-			return c.Status(500).JSON(fiber.Map{
-				"error": "Failed to delete article file",
-			})
+		if article.Article != "" {
+			_ = os.Remove(filepath.Join(h.DataDir, strings.TrimPrefix(article.Article, "/")))
 		}
+		_ = os.Remove(filepath.Join(h.DataDir, "articles", fmt.Sprintf("%s.md", id)))
 
 		deleteImagesError := os.RemoveAll(filepath.Join(h.DataDir, "images", id))
 		if deleteImagesError != nil {
@@ -232,7 +230,17 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Article not found"})
 		}
 
-		sourcePath := filepath.Join(h.DataDir, "articles", fmt.Sprintf("%s.md", id))
+		sourcePath := ""
+		if article.Article != "" {
+			candidate := filepath.Join(h.DataDir, strings.TrimPrefix(article.Article, "/"))
+			if _, err := os.Stat(candidate); err == nil {
+				sourcePath = candidate
+			}
+		}
+		if sourcePath == "" {
+			sourcePath = filepath.Join(h.DataDir, "articles", fmt.Sprintf("%s.md", id))
+		}
+
 		if err := os.WriteFile(sourcePath, []byte(req.Content), 0644); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save article"})
 		}

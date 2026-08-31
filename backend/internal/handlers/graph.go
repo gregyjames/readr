@@ -51,7 +51,17 @@ func LinkArticles(db *gorm.DB, dataDir string, req LinkRequest) (*repository.Gor
 	}
 
 	// 3. Read and update markdown file
-	sourcePath := filepath.Join(dataDir, "articles", fmt.Sprintf("%d.md", req.SourceID))
+	sourcePath := ""
+	if source.Article != "" {
+		candidate := filepath.Join(dataDir, strings.TrimPrefix(source.Article, "/"))
+		if _, err := os.Stat(candidate); err == nil {
+			sourcePath = candidate
+		}
+	}
+	if sourcePath == "" {
+		sourcePath = filepath.Join(dataDir, "articles", fmt.Sprintf("%d.md", req.SourceID))
+	}
+
 	content, err := os.ReadFile(sourcePath)
 	if err != nil {
 		return nil, &LinkError{StatusCode: fiber.StatusInternalServerError, Message: "Could not read source article"}
