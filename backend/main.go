@@ -52,20 +52,26 @@ func broadcastEvent(event string) {
 }
 
 type ServerSettings struct {
-	APIKey          string `json:"api_key"`
-	Model           string `json:"model"`
-	AgentEnricher   bool   `json:"agent_enricher"`
-	AgentLinker     bool   `json:"agent_linker"`
-	AgentSummarizer bool   `json:"agent_summarizer"`
+	APIKey                string `json:"api_key"`
+	Model                 string `json:"model"`
+	AgentEnricher         bool   `json:"agent_enricher"`
+	AgentLinker           bool   `json:"agent_linker"`
+	AgentSummarizer       bool   `json:"agent_summarizer"`
+	Theme                 string `json:"theme"`
+	ViewMode              string `json:"view_mode"`
+	GraphContextExpansion bool   `json:"graph_context_expansion"`
 }
 
 func loadServerSettings(dataDir string) ServerSettings {
 	settingsPath := filepath.Join(dataDir, "settings.json")
 	defaults := ServerSettings{
-		Model:           "openai/gpt-4o-mini",
-		AgentEnricher:   true,
-		AgentLinker:     true,
-		AgentSummarizer: true,
+		Model:                 "openai/gpt-4o-mini",
+		AgentEnricher:         true,
+		AgentLinker:           true,
+		AgentSummarizer:       true,
+		Theme:                 "light",
+		ViewMode:              "card",
+		GraphContextExpansion: true,
 	}
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
@@ -637,11 +643,14 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		settingsMu.Unlock()
 
 		return c.JSON(fiber.Map{
-			"api_key":          freshSettings.APIKey,
-			"model":            freshSettings.Model,
-			"agent_enricher":   freshSettings.AgentEnricher,
-			"agent_linker":     freshSettings.AgentLinker,
-			"agent_summarizer": freshSettings.AgentSummarizer,
+			"api_key":                 freshSettings.APIKey,
+			"model":                   freshSettings.Model,
+			"agent_enricher":          freshSettings.AgentEnricher,
+			"agent_linker":            freshSettings.AgentLinker,
+			"agent_summarizer":        freshSettings.AgentSummarizer,
+			"theme":                   freshSettings.Theme,
+			"view_mode":               freshSettings.ViewMode,
+			"graph_context_expansion": freshSettings.GraphContextExpansion,
 		})
 	})
 
