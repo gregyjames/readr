@@ -472,12 +472,27 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	}
 
 	setSessionCookie := func(c *fiber.Ctx, token string) {
+		isSecure := c.Protocol() == "https" || c.Get("X-Forwarded-Proto") == "https"
 		c.Cookie(&fiber.Cookie{
 			Name:     "readr_session",
 			Value:    token,
 			Path:     "/",
 			MaxAge:   int(auth.SessionMaxAge.Seconds()),
 			HTTPOnly: true,
+			Secure:   isSecure,
+			SameSite: "Lax",
+		})
+	}
+
+	clearSessionCookie := func(c *fiber.Ctx) {
+		isSecure := c.Protocol() == "https" || c.Get("X-Forwarded-Proto") == "https"
+		c.Cookie(&fiber.Cookie{
+			Name:     "readr_session",
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HTTPOnly: true,
+			Secure:   isSecure,
 			SameSite: "Lax",
 		})
 	}
@@ -608,14 +623,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	})
 
 	api.Post("/auth/logout", func(c *fiber.Ctx) error {
-		c.Cookie(&fiber.Cookie{
-			Name:     "readr_session",
-			Value:    "",
-			Path:     "/",
-			MaxAge:   -1,
-			HTTPOnly: true,
-			SameSite: "Lax",
-		})
+		clearSessionCookie(c)
 		return c.JSON(fiber.Map{"status": "success"})
 	})
 
