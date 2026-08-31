@@ -517,6 +517,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		settingsMu.RLock()
 		pwdHash := serverSettings.PasswordHash
 		secret := serverSettings.SessionSecret
+		theme := serverSettings.Theme
 		settingsMu.RUnlock()
 
 		authConfigured := pwdHash != ""
@@ -532,9 +533,14 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			}
 		}
 
+		if theme == "" {
+			theme = "light"
+		}
+
 		return c.JSON(fiber.Map{
 			"auth_configured": authConfigured,
-			"authenticated":  authenticated,
+			"authenticated":   authenticated,
+			"theme":           theme,
 		})
 	})
 

@@ -1,4 +1,5 @@
 import { reactive } from 'vue'
+import { settings } from './settings'
 
 export const authState = reactive({
   isLoaded: false,
@@ -13,6 +14,13 @@ export async function checkAuthStatus(): Promise<boolean> {
       const data = await res.json()
       authState.isAuthConfigured = Boolean(data.auth_configured)
       authState.isAuthenticated = Boolean(data.authenticated)
+      if (data.theme) {
+        settings.theme = data.theme
+        if (typeof document !== 'undefined') {
+          document.documentElement.className = data.theme
+        }
+        try { localStorage.setItem('readr_theme', data.theme) } catch {}
+      }
       return authState.isAuthenticated
     }
   } catch (err) {
