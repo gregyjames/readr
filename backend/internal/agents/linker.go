@@ -2,6 +2,7 @@ package agents
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,51 +35,26 @@ type linkerOpenRouterRequest struct {
 }
 
 func (p *AgentPool) processAutoLinker(job Job) {
+	p.processAutoLinkerWithURL(job, "https://openrouter.ai/api/v1/chat/completions")
+}
+
+func (p *AgentPool) processAutoLinkerWithURL(job Job, apiURL string) {
 	apiKey, model := p.resolveCredentials(job)
 	if apiKey == "" {
 		p.logger.Warn("API key not configured. Agent cannot run auto linker.", zap.Int64("article_id", job.ArticleID))
 		return
 	}
 
-	// 1. Fetch all non-deleted articles in a single query
-	var allArticles []repository.ArticleRecord
-	if err := p.db.Table("articles").Where("deleted_at IS NULL").Find(&allArticles).Error; err != nil {
-		p.logger.Error("AutoLinker could not load articles", zap.Error(err))
-		return
-	}
-
-	// 2. Build a deduplicated prompt using a HashSet
-	seenTitles := make(map[string]struct{})
-	var currentTitle string
-
-	// Find the current article's title to exclude it
-	for _, a := range allArticles {
-		if a.ID == job.ArticleID {
-			currentTitle = strings.TrimSpace(a.Title)
-			seenTitles[currentTitle] = struct{}{} // Add to hashset to ignore it
-			break
+	if p.repo == nil {
+		if p.db != nil {
+			p.repo = repository.NewGormRepository(p.db)
+		} else {
+			p.logger.Error("AutoLinker repository is nil", zap.Int64("article_id", job.ArticleID))
+			return
 		}
 	}
 
-	var sb strings.Builder
-	for _, a := range allArticles {
-		title := strings.TrimSpace(a.Title)
-		if len(title) < 4 { // skip very short titles
-			continue
-		}
-		if _, exists := seenTitles[title]; !exists {
-			sb.WriteString(fmt.Sprintf("- ID: %d, Title: %s\n", a.ID, title))
-			seenTitles[title] = struct{}{} // Mark as seen
-		}
-	}
-	
-	existingVaultText := sb.String()
-	if existingVaultText == "" {
-		p.logger.Info("No other articles in vault to link to", zap.Int64("article_id", job.ArticleID))
-		return
-	}
-
-	// 3. Read the markdown file
+	// 1. Read the markdown file
 	filePath := filepath.Join(p.dataDirectory, "articles", fmt.Sprintf("%d.md", job.ArticleID))
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
@@ -97,13 +73,45 @@ func (p *AgentPool) processAutoLinker(job Job) {
 			body = parts[2]
 		}
 	}
+
+	// 2. Retrieve candidates using repository
+	var currentTitle string
+	if a, err := p.repo.FindByID(context.Background(), job.ArticleID); err == nil && a != nil {
+		currentTitle = a.Title
+	}
+
+	candidates, err := p.repo.FindCandidates(context.Background(), job.ArticleID, currentTitle, body, 15)
+	if err != nil {
+		p.logger.Error("AutoLinker could not find candidates", zap.Error(err))
+		return
+	}
+	if len(candidates) == 0 {
+		p.logger.Info("No other articles in vault to link to", zap.Int64("article_id", job.ArticleID))
+		return
+	}
+
+	var sb strings.Builder
+	for _, a := range candidates {
+		title := strings.TrimSpace(a.Title)
+		if len(title) < 4 { // skip very short titles
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("- ID: %d, Title: %s\n", a.ID, title))
+	}
+
+	existingVaultText := sb.String()
+	if existingVaultText == "" {
+		p.logger.Info("No other articles in vault to link to", zap.Int64("article_id", job.ArticleID))
+		return
+	}
+
 	bodyRunes := []rune(body)
 	truncatedBody := body
 	if len(bodyRunes) > 10000 {
 		truncatedBody = string(bodyRunes[:10000]) // rune safe truncation
 	}
 
-	// 4. Ask LLM to generate Semantic Links
+	// 3. Ask LLM to generate Semantic Links
 	prompt := fmt.Sprintf(`You are an expert semantic knowledge graph builder.
 Analyze the article content and identify ALL relevant connections (aim for 2 to 5 connections where applicable) to existing articles in the user's vault.
 
@@ -140,7 +148,7 @@ Article Content:
 			"content": prompt,
 		},
 	}
-	
+
 	reqPayload := linkerOpenRouterRequest{
 		Model:    model,
 		Messages: apiMsgs,
@@ -168,7 +176,7 @@ Article Content:
 
 	// Try up to 2 times with backoff on in-flight budget limits
 	for attempt := 0; attempt < 2; attempt++ {
-		req, _ := http.NewRequest(http.MethodPost, "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(bodyJSON))
+		req, _ := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(bodyJSON))
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("HTTP-Referer", "https://github.com/gregyjames/readr")
@@ -208,7 +216,7 @@ Article Content:
 		p.logger.Error("AutoLinker failed to parse LLM response")
 		return
 	}
-	
+
 	rawJSON := strings.TrimSpace(llmResp.Choices[0].Message.Content)
 	if strings.HasPrefix(rawJSON, "```json") {
 		rawJSON = strings.TrimPrefix(rawJSON, "```json")
@@ -221,7 +229,7 @@ Article Content:
 		return
 	}
 
-	// 5. Inject Semantic Links using Go with Protected Boundary Replacement
+	// 4. Inject Semantic Links using Go with Protected Boundary Replacement
 	linksAdded := 0
 	if len(parsed.LinksToInject) > 0 {
 		// Regex matching markdown links, existing wikilinks, and code blocks
@@ -232,9 +240,9 @@ Article Content:
 			if phrase == "" {
 				continue
 			}
-			
+
 			var targetTitle string
-			for _, a := range allArticles {
+			for _, a := range candidates {
 				if a.ID == link.ExistingArticleID {
 					targetTitle = a.Title
 					break
@@ -243,7 +251,7 @@ Article Content:
 			if targetTitle == "" {
 				continue
 			}
-			
+
 			// Format wikilink (aliased if phrase is different from title)
 			var replacement string
 			if strings.EqualFold(phrase, targetTitle) {
@@ -288,7 +296,7 @@ Article Content:
 		}
 	}
 
-	// 6. Overwrite the file safely
+	// 5. Overwrite the file safely
 	if linksAdded > 0 {
 		newContent := frontmatter + body
 		if err := os.WriteFile(filePath, []byte(newContent), 0644); err != nil {

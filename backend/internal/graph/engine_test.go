@@ -40,6 +40,10 @@ func (m *mockGraphRepository) DeleteArticle(ctx context.Context, id int64) error
 	return nil
 }
 
+func (m *mockGraphRepository) FindCandidates(ctx context.Context, excludeID int64, title string, body string, limit int) ([]repository.ArticleRecord, error) {
+	return nil, nil
+}
+
 func TestBuildTopology_NodesAndEdges(t *testing.T) {
 	articles := []repository.ArticleRecord{
 		{ID: 1, Title: "Article One", Tags: "Go, backend, GO"},

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"example.com/backend/internal/repository"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -28,17 +29,23 @@ type AgentPool struct {
 	Queue                chan Job
 	logger               *zap.Logger
 	db                   *gorm.DB
+	repo                 repository.Repository
 	dataDirectory        string
 	InvalidateGraphCache func()
 }
 
 var Pool *AgentPool
 
-func InitPool(logger *zap.Logger, db *gorm.DB, dataDir string, numWorkers int, invalidateGraphCache func()) {
+func InitPool(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataDir string, numWorkers int, invalidateGraphCache func()) {
+	if repo == nil && db != nil {
+		repo = repository.NewGormRepository(db)
+	}
+
 	Pool = &AgentPool{
 		Queue:                make(chan Job, 100),
 		logger:               logger,
 		db:                   db,
+		repo:                 repo,
 		dataDirectory:        dataDir,
 		InvalidateGraphCache: invalidateGraphCache,
 	}

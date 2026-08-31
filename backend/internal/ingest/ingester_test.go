@@ -134,6 +134,10 @@ func (m *mockArticleRepository) DeleteArticle(ctx context.Context, id int64) err
 	return nil
 }
 
+func (m *mockArticleRepository) FindCandidates(ctx context.Context, excludeID int64, title string, body string, limit int) ([]IngestedArticle, error) {
+	return nil, nil
+}
+
 func TestIngester_Success(t *testing.T) {
 	sampleHTML := `<!DOCTYPE html>
 <html>
