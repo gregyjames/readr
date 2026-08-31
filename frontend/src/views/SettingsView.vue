@@ -373,7 +373,7 @@ const cleanBrokenLinks = async () => {
 </script>
 
 <template>
-  <div class="mx-auto py-8 space-y-6 transition-all duration-300" :class="activeTab === 'diagnostics' ? 'max-w-5xl' : 'max-w-2xl'">
+  <div class="mx-auto py-8 space-y-6 transition-all duration-300" :class="activeTab === 'diagnostics' ? 'max-w-6xl' : 'max-w-2xl'">
     <!-- Header & Tab Navigation -->
     <div class="space-y-4">
       <div>
@@ -1168,14 +1168,13 @@ const cleanBrokenLinks = async () => {
                 <th class="px-5 py-3">Article</th>
                 <th class="px-5 py-3">Model</th>
                 <th class="px-5 py-3">Duration</th>
-                <th class="px-5 py-3">Retries</th>
                 <th class="px-5 py-3">Tokens (Prompt / Comp)</th>
                 <th class="px-5 py-3 text-right">Status</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100 dark:divide-gray-800/60">
               <tr v-if="filteredRuns.length === 0">
-                <td colspan="7" class="px-5 py-12 text-center text-gray-400 dark:text-gray-500">
+                <td colspan="6" class="px-5 py-12 text-center text-gray-400 dark:text-gray-500">
                   <svg class="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
@@ -1194,7 +1193,7 @@ const cleanBrokenLinks = async () => {
                   </td>
 
                   <!-- Article Title -->
-                  <td class="px-5 py-3.5 font-medium text-gray-900 dark:text-gray-100 max-w-xs truncate">
+                  <td class="px-5 py-3.5 font-medium text-gray-900 dark:text-gray-100 max-w-sm truncate">
                     <span>{{ run.article_title || ('Article #' + run.article_id) }}</span>
                     <span v-if="run.error_message" class="ml-2 text-[10px] font-normal text-rose-500 dark:text-rose-400 underline">
                       (click to view error)
@@ -1206,20 +1205,16 @@ const cleanBrokenLinks = async () => {
                     {{ run.model ? run.model.split('/').pop() : 'default' }}
                   </td>
 
-                  <!-- Duration -->
+                  <!-- Duration & Retries -->
                   <td class="px-5 py-3.5 whitespace-nowrap font-mono text-gray-900 dark:text-gray-100">
-                    {{ formatMs(run.duration_ms) }}
-                  </td>
-
-                  <!-- Retries -->
-                  <td class="px-5 py-3.5 whitespace-nowrap">
+                    <span>{{ formatMs(run.duration_ms) }}</span>
                     <span 
                       v-if="run.retry_count > 0"
-                      class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                      class="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                      :title="`${run.retry_count} ${run.retry_count === 1 ? 'retry' : 'retries'}`"
                     >
-                      {{ run.retry_count }} {{ run.retry_count === 1 ? 'retry' : 'retries' }}
+                      {{ run.retry_count }}r
                     </span>
-                    <span v-else class="text-gray-400 dark:text-gray-600 font-mono">0</span>
                   </td>
 
                   <!-- Tokens (Prompt / Comp) -->
@@ -1258,7 +1253,7 @@ const cleanBrokenLinks = async () => {
 
                 <!-- Expanded Error Row -->
                 <tr v-if="expandedRunId === run.id && run.error_message" class="bg-rose-50/50 dark:bg-rose-950/20">
-                  <td colspan="7" class="px-5 py-3">
+                  <td colspan="6" class="px-5 py-3">
                     <div class="space-y-1">
                       <div class="text-[11px] font-semibold text-rose-700 dark:text-rose-400 flex items-center gap-1">
                         <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
