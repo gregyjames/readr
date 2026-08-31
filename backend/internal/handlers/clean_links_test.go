@@ -196,3 +196,39 @@ func TestCleanBrokenLinks_PreservesFilePermissions(t *testing.T) {
 		t.Errorf("expected file mode 0600 to be preserved, got %04o", info.Mode().Perm())
 	}
 }
+
+func TestCleanBrokenLinks_SurfacesWriteErrors(t *testing.T) {
+	tempDir := t.TempDir()
+	articlesDir := filepath.Join(tempDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0555) // Read-only directory to trigger write error
+	defer os.Chmod(articlesDir, 0755)
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{})
+
+	notePath := filepath.Join(articlesDir, "ReadOnly.md")
+	// Temporarily allow write to create file
+	_ = os.Chmod(articlesDir, 0755)
+	_ = os.WriteFile(notePath, []byte("Note with [[Missing Article|broken]]"), 0644)
+	_ = os.Chmod(articlesDir, 0555) // Make directory read-only so .tmp creation fails
+
+	db.Create(&repository.GormArticle{
+		ID:      501,
+		Title:   "ReadOnly Note",
+		Article: "/articles/ReadOnly.md",
+	})
+
+	res, err := CleanBrokenLinks(db, tempDir, zap.NewNop())
+	if err == nil {
+		t.Errorf("expected error when directory is read-only, got nil")
+	}
+	if res == nil || len(res.Errors) == 0 {
+		t.Errorf("expected res.Errors to be populated, got %+v", res)
+	}
+	if res != nil && res.Status != "failed" && res.Status != "partial_failure" {
+		t.Errorf("expected status 'failed' or 'partial_failure', got %q", res.Status)
+	}
+}
