@@ -8,7 +8,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import axios from 'axios'
 import emitter from './event-bus.ts'
-import { getOpenRouterApiKey, getOpenRouterModel, isAgentEnricherEnabled, isAgentLinkerEnabled, isAgentSummarizerEnabled } from './utils/settings'
+import { settings, isSettingsLoaded, initSettings } from './store/settings'
 
 interface TemplateInfo {
   name: string
@@ -51,7 +51,8 @@ const matchedTemplate = computed(() => {
   return null
 })
 
-onMounted(() => {
+onMounted(async () => {
+  await initSettings();
   fetchTemplates();
   let evtSource: EventSource | null = null;
   const connectSSE = () => {
@@ -73,26 +74,11 @@ onMounted(() => {
     }
   };
   connectSSE();
-
-  fetch('/api/settings')
-    .then(res => res.json())
-    .then(data => {
-      if (data?.api_key && getOpenRouterApiKey() !== data.api_key) {
-        localStorage.setItem('OPENROUTER_API_KEY', data.api_key)
-      }
-    })
-    .catch(() => {})
 })
 
 const submitForm = async () => {
   isSubmitting.value = true
   try{
-    const apiKey = getOpenRouterApiKey()
-    const defaultModel = getOpenRouterModel()
-    const agentEnricher = isAgentEnricherEnabled()
-    const agentLinker = isAgentLinkerEnabled()
-    const agentSummarizer = isAgentSummarizerEnabled()
-    
     const chosenTemplate = selectedTemplate.value === 'auto'
       ? (matchedTemplate.value?.name || '')
       : (selectedTemplate.value === 'none' ? 'none' : selectedTemplate.value)
@@ -101,11 +87,9 @@ const submitForm = async () => {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        'X-Openrouter-Key': apiKey,
-        'X-Openrouter-Model': defaultModel,
-        'X-Agent-Enricher': agentEnricher ? 'true' : 'false',
-        'X-Agent-Linker': agentLinker ? 'true' : 'false',
-        'X-Agent-Summarizer': agentSummarizer ? 'true' : 'false'
+        'X-Agent-Enricher': settings.agent_enricher.toString(),
+        'X-Agent-Linker': settings.agent_linker.toString(),
+        'X-Agent-Summarizer': settings.agent_summarizer.toString(),
       },
       body: JSON.stringify({ 
         url: url.value,
@@ -280,7 +264,10 @@ function removeTag(tag: string) {
     </div>
   </transition>
   <main :class="route.name === 'graph' ? 'w-full flex-grow' : ((route.name === 'chat' || route.name === 'chat-session') ? 'w-full max-w-6xl mx-auto px-6 pt-24 pb-6 flex-grow flex flex-col' : 'w-full max-w-6xl mx-auto px-6 pt-32 pb-16 flex-grow')">
-    <router-view />
+    <div v-if="!isSettingsLoaded" class="flex-grow flex items-center justify-center text-gray-500">
+      Loading settings...
+    </div>
+    <router-view v-else />
   </main>
 </template>
 
