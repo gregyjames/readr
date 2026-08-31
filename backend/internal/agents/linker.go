@@ -34,17 +34,9 @@ type linkerOpenRouterRequest struct {
 }
 
 func (p *AgentPool) processAutoLinker(job Job) {
-	apiKey, _ := job.Payload["api_key"].(string)
-	model, _ := job.Payload["model"].(string)
-
-	apiKey = strings.TrimSpace(apiKey)
-	model = strings.TrimSpace(model)
-
-	if model == "" {
-		model = "openai/gpt-4o-mini"
-	}
+	apiKey, model := p.resolveCredentials(job)
 	if apiKey == "" {
-		p.logger.Warn("API key not set in job payload. Agent cannot run auto linker.", zap.Int64("article_id", job.ArticleID))
+		p.logger.Warn("API key not configured. Agent cannot run auto linker.", zap.Int64("article_id", job.ArticleID))
 		return
 	}
 
@@ -105,10 +97,10 @@ func (p *AgentPool) processAutoLinker(job Job) {
 			body = parts[2]
 		}
 	}
-	
+	bodyRunes := []rune(body)
 	truncatedBody := body
-	if len(truncatedBody) > 10000 {
-		truncatedBody = truncatedBody[:10000] // truncate for LLM input
+	if len(bodyRunes) > 10000 {
+		truncatedBody = string(bodyRunes[:10000]) // rune safe truncation
 	}
 
 	// 4. Ask LLM to generate Semantic Links
@@ -159,7 +151,18 @@ Article Content:
 
 	bodyJSON, _ := json.Marshal(reqPayload)
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			if len(via) > 0 {
+				req.Header.Set("Authorization", via[0].Header.Get("Authorization"))
+			}
+			return nil
+		},
+	}
 	var resp *http.Response
 	var bodyBytes []byte
 

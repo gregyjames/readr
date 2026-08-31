@@ -162,11 +162,10 @@ const handleReparseComplete = async () => {
   }
 }
 
-import { getOpenRouterApiKey, getOpenRouterModel, isAgentEnricherEnabled, isAgentLinkerEnabled } from '../utils/settings'
 
 const reparseArticle = async () => {
   const articleID = getArticleId()
-  if (!articleID) return
+  if (!articleID || isReparsing.value) return
   isReparsing.value = true
   notificationState.value = 'running'
   notificationMessage.value = 'Agents running in background: analyzing, enriching frontmatter, and linking...'
@@ -180,19 +179,7 @@ const reparseArticle = async () => {
   }, 12000)
 
   try {
-    const apiKey = getOpenRouterApiKey()
-    const model = getOpenRouterModel()
-    const enricherEnabled = isAgentEnricherEnabled()
-    const linkerEnabled = isAgentLinkerEnabled()
-
-    await axios.post(`/api/articles/${articleID}/reparse`, null, {
-      headers: {
-        'X-Agent-Enricher': enricherEnabled ? 'true' : 'false',
-        'X-Agent-Linker': linkerEnabled ? 'true' : 'false',
-        'X-Openrouter-Key': apiKey,
-        'X-Openrouter-Model': model
-      }
-    })
+    await axios.post(`/api/articles/${articleID}/reparse`)
   } catch (err: any) {
     console.error('Failed to trigger agents', err)
     isReparsing.value = false

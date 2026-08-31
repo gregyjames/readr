@@ -11,11 +11,13 @@ import (
 )
 
 type Ingester struct {
-	fetcher   PageFetcher
-	extractor *ContentExtractor
-	storage   FileStorage
-	repo      ArticleRepository
-	idGen     func() int64
+	fetcher    PageFetcher
+	extractor  *ContentExtractor
+	storage    FileStorage
+	repo       ArticleRepository
+	renderer   TemplateRenderer
+	summarizer Summarizer
+	idGen      func() int64
 }
 
 func NewIngester(
@@ -41,6 +43,14 @@ func NewIngester(
 
 func (ing *Ingester) SetIDGenerator(fn func() int64) {
 	ing.idGen = fn
+}
+
+func (ing *Ingester) SetTemplateRenderer(r TemplateRenderer) {
+	ing.renderer = r
+}
+
+func (ing *Ingester) SetSummarizer(s Summarizer) {
+	ing.summarizer = s
 }
 
 func (ing *Ingester) Ingest(ctx context.Context, req IngestRequest) (*IngestedArticle, error) {
@@ -88,18 +98,52 @@ func (ing *Ingester) Ingest(ctx context.Context, req IngestRequest) (*IngestedAr
 		coverImagePath = ing.localizeSingleImage(ctx, filenameID, extracted.CoverImageURL, "cover")
 	}
 
-	// 6. Format YAML Frontmatter
+	// 6. Format Markdown Document (via TemplateRenderer or built-in default fallback)
 	tagsString := strings.Join(req.Tags, ",")
 	savedDate := time.UnixMilli(filenameID).UTC().Format("2006-01-02")
-	frontmatter := fmt.Sprintf("---\ntitle: %q\nsource: %q\ntags: [%s]\ncover: %q\nsaved: %s\n---\n",
-		extracted.Title,
-		trimmedURL,
-		tagsString,
-		coverImagePath,
-		savedDate,
-	)
 
-	markdownDoc := frontmatter + "\n" + markdownContent
+	var markdownDoc string
+	renderedWithTemplate := false
+
+	if ing.renderer != nil {
+		tplPath := ing.renderer.ResolveTemplate(parsedURL.Hostname(), req.Template)
+		if tplPath != "" {
+			ctxData := TemplateContext{
+				Title:       extracted.Title,
+				Summary:     extracted.Description,
+				Source:      trimmedURL,
+				URL:         trimmedURL,
+				Domain:      parsedURL.Hostname(),
+				Content:     markdownContent,
+				Tags:        req.Tags,
+				TagsStr:     tagsString,
+				CoverImage:  coverImagePath,
+				SavedDate:   savedDate,
+				Timestamp:   filenameID,
+				Author:      extracted.Author,
+				Description: extracted.Description,
+				SiteName:    extracted.SiteName,
+				OG:          extracted.OG,
+			}
+			rendered, err := ing.renderer.Render(ctx, tplPath, ctxData)
+			if err == nil && strings.TrimSpace(rendered) != "" {
+				markdownDoc = rendered
+				renderedWithTemplate = true
+			}
+		}
+	}
+
+	if !renderedWithTemplate {
+		// Built-in default formatting fallback
+		frontmatter := fmt.Sprintf("---\ntitle: %q\nsource: %q\ntags: [%s]\ncover: %q\nsaved: %s\n---\n",
+			extracted.Title,
+			trimmedURL,
+			tagsString,
+			coverImagePath,
+			savedDate,
+		)
+		markdownDoc = frontmatter + "\n" + markdownContent
+	}
 
 	// 7. Atomic write to markdown storage
 	relFilePath, err := ing.storage.SaveMarkdown(filenameID, []byte(markdownDoc))

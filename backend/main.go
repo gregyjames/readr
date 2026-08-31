@@ -51,6 +51,52 @@ func broadcastEvent(event string) {
 	}
 }
 
+type ServerSettings struct {
+	APIKey                string `json:"api_key"`
+	Model                 string `json:"model"`
+	AgentEnricher         bool   `json:"agent_enricher"`
+	AgentLinker           bool   `json:"agent_linker"`
+	AgentSummarizer       bool   `json:"agent_summarizer"`
+	Theme                 string `json:"theme"`
+	ViewMode              string `json:"view_mode"`
+	GraphContextExpansion bool   `json:"graph_context_expansion"`
+}
+
+func loadServerSettings(dataDir string) ServerSettings {
+	settingsPath := filepath.Join(dataDir, "settings.json")
+	defaults := ServerSettings{
+		Model:                 "openai/gpt-4o-mini",
+		AgentEnricher:         true,
+		AgentLinker:           true,
+		AgentSummarizer:       true,
+		Theme:                 "light",
+		ViewMode:              "card",
+		GraphContextExpansion: true,
+	}
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		_ = saveServerSettings(dataDir, defaults)
+		return defaults
+	}
+	s := defaults
+	if err := json.Unmarshal(data, &s); err != nil {
+		return defaults
+	}
+	if s.Model == "" {
+		s.Model = "openai/gpt-4o-mini"
+	}
+	return s
+}
+
+func saveServerSettings(dataDir string, s ServerSettings) error {
+	settingsPath := filepath.Join(dataDir, "settings.json")
+	bytes, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(settingsPath, bytes, 0600)
+}
+
 type articleFileFetcher struct {
 	dataDir string
 	db      *gorm.DB
@@ -97,8 +143,9 @@ func (f *articleFileFetcher) GetLinkedArticles(ctx context.Context, id int64) ([
 }
 
 type RequestBody struct {
-	URL  string   `json:"url"`
-	Tags []string `json:"tags"`
+	URL      string   `json:"url"`
+	Tags     []string `json:"tags"`
+	Template string   `json:"template,omitempty"`
 }
 
 type Article = repository.GormArticle
@@ -332,13 +379,17 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	ensureFTS(db)
 
+	dataDirectory := getDataDir()
+	serverSettings := loadServerSettings(dataDirectory)
+	var settingsMu sync.RWMutex
+
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
 
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
-		AllowHeaders: "Origin, Content-Type, Accept, Cache-Control, Pragma, Authorization",
+		AllowHeaders: "Origin, Content-Type, Accept, Cache-Control, Pragma, Authorization, X-Openrouter-Key, X-Openrouter-Model, X-OpenRouter-Key, X-OpenRouter-Model, X-Api-Key, X-Agent-Enricher, X-Agent-Linker, X-Agent-Summarizer",
 	}))
 
 	app.Use(func(c *fiber.Ctx) error {
@@ -356,7 +407,6 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return err
 	})
 
-	dataDirectory := getDataDir()
 	app.Get("/api/articles/:filename", func(c *fiber.Ctx) error {
 		filename := c.Params("filename")
 		clean := filepath.Clean(filename)
@@ -388,12 +438,25 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		ingest.NewDiskStorage(dataDirectory),
 		repo,
 	)
+	templatesDir := filepath.Join(dataDirectory, "templates")
+	templateRenderer := ingest.NewGonjaTemplateRenderer(templatesDir)
+	ingester.SetTemplateRenderer(templateRenderer)
+	ingester.SetSummarizer(ingest.NewOpenRouterSummarizer())
 
 	chatRepo := chat.NewFileRepository(filepath.Join(dataDirectory, "chats"))
 	articleFetcher := &articleFileFetcher{dataDir: dataDirectory, db: db}
 	chatService := chat.NewService(chatRepo, articleFetcher)
 
 	api := app.Group("/api")
+
+	api.Get("/templates", func(c *fiber.Ctx) error {
+		templates, err := templateRenderer.ListTemplates()
+		if err != nil {
+			logger.Error("Failed to list templates", zap.Error(err))
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to list templates"})
+		}
+		return c.JSON(templates)
+	})
 
 	api.Get("/chats", func(c *fiber.Ctx) error {
 		sessions, err := chatRepo.List(c.Context())
@@ -524,6 +587,53 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return c.JSON(fiber.Map{"message": "Hello from Go!"})
 	})
 
+	extractOpenRouterCredentials := func(c *fiber.Ctx) (string, string) {
+		settingsMu.RLock()
+		defer settingsMu.RUnlock()
+		return serverSettings.APIKey, serverSettings.Model
+	}
+
+	api.Get("/settings", func(c *fiber.Ctx) error {
+		// Reload from disk to catch manual edits
+		freshSettings := loadServerSettings(dataDirectory)
+		
+		settingsMu.Lock()
+		serverSettings = freshSettings
+		settingsMu.Unlock()
+
+		return c.JSON(fiber.Map{
+			"api_key":                 freshSettings.APIKey,
+			"model":                   freshSettings.Model,
+			"agent_enricher":          freshSettings.AgentEnricher,
+			"agent_linker":            freshSettings.AgentLinker,
+			"agent_summarizer":        freshSettings.AgentSummarizer,
+			"theme":                   freshSettings.Theme,
+			"view_mode":               freshSettings.ViewMode,
+			"graph_context_expansion": freshSettings.GraphContextExpansion,
+		})
+	})
+
+	api.Post("/settings", func(c *fiber.Ctx) error {
+		var req ServerSettings
+		if err := json.Unmarshal(c.Body(), &req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "Invalid JSON"})
+		}
+		settingsMu.Lock()
+		defer settingsMu.Unlock()
+
+		newSettings := req
+		if newSettings.Model == "" {
+			newSettings.Model = "openai/gpt-4o-mini"
+		}
+
+		if err := saveServerSettings(dataDirectory, newSettings); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to save settings"})
+		}
+
+		serverSettings = newSettings
+		return c.JSON(fiber.Map{"status": "success"})
+	})
+
 	api.Post("/articles/:id/reparse", func(c *fiber.Ctx) error {
 		idParam := c.Params("id")
 
@@ -532,33 +642,30 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(404).JSON(fiber.Map{"error": "Article not found"})
 		}
 
-		apiKey := strings.TrimSpace(c.Get("X-Openrouter-Key"))
-		if apiKey == "" {
-			apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
-		}
-		model := strings.TrimSpace(c.Get("X-Openrouter-Model"))
-		if model == "" {
-			model = strings.TrimSpace(os.Getenv("OPENROUTER_MODEL"))
-		}
+		apiKey, _ := extractOpenRouterCredentials(c)
 
-		if c.Get("X-Agent-Enricher") == "true" {
+		settingsMu.RLock()
+		agentEnricher := serverSettings.AgentEnricher
+		agentLinker := serverSettings.AgentLinker
+		agentSummarizer := serverSettings.AgentSummarizer
+		settingsMu.RUnlock()
+
+		if agentEnricher {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeEnrichFrontmatter,
-				Payload: map[string]interface{}{
-					"api_key": apiKey,
-					"model":   model,
-				},
 			})
 		}
-		if c.Get("X-Agent-Linker") == "true" {
+		if agentLinker {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeAutoLinker,
-				Payload: map[string]interface{}{
-					"api_key": apiKey,
-					"model":   model,
-				},
+			})
+		}
+		if apiKey != "" && agentSummarizer {
+			agents.SubmitJob(agents.Job{
+				ArticleID: article.ID,
+				Type:      agents.JobTypeSummarizer,
 			})
 		}
 
@@ -766,9 +873,14 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 		logger.Info("Adding new article", zap.String("url", body.URL))
 
+		apiKey, model := extractOpenRouterCredentials(c)
+
 		article, err := ingester.Ingest(c.Context(), ingest.IngestRequest{
-			URL:  body.URL,
-			Tags: body.Tags,
+			URL:      body.URL,
+			Tags:     body.Tags,
+			Template: body.Template,
+			APIKey:   apiKey,
+			Model:    model,
 		})
 		if err != nil {
 			logger.Error("Failed to ingest article", zap.String("url", body.URL), zap.Error(err))
@@ -790,33 +902,28 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		graphEngine.InvalidateCache()
 		logger.Info("Article added successfully", zap.Int64("id", article.ID), zap.String("url", body.URL))
 
-		apiKey := strings.TrimSpace(c.Get("X-Openrouter-Key"))
-		if apiKey == "" {
-			apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
-		}
-		model := strings.TrimSpace(c.Get("X-Openrouter-Model"))
-		if model == "" {
-			model = strings.TrimSpace(os.Getenv("OPENROUTER_MODEL"))
-		}
+		settingsMu.RLock()
+		agentEnricher := serverSettings.AgentEnricher
+		agentLinker := serverSettings.AgentLinker
+		agentSummarizer := serverSettings.AgentSummarizer
+		settingsMu.RUnlock()
 
-		if c.Get("X-Agent-Enricher") == "true" {
+		if agentEnricher {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeEnrichFrontmatter,
-				Payload: map[string]interface{}{
-					"api_key": apiKey,
-					"model":   model,
-				},
 			})
 		}
-		if c.Get("X-Agent-Linker") == "true" {
+		if agentLinker {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeAutoLinker,
-				Payload: map[string]interface{}{
-					"api_key": apiKey,
-					"model":   model,
-				},
+			})
+		}
+		if apiKey != "" && agentSummarizer {
+			agents.SubmitJob(agents.Job{
+				ArticleID: article.ID,
+				Type:      agents.JobTypeSummarizer,
 			})
 		}
 		return c.JSON(fiber.Map{

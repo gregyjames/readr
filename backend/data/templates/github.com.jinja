@@ -1,0 +1,18 @@
+---
+title: {{ title | tojson }}
+source: {{ source | tojson }}
+tags: {{ tags | tojson }}
+cover: {{ cover_image | tojson }}
+saved: {{ saved_date | tojson }}
+type: github-repo
+---
+
+{% if summary %}
+> 💡 **Summary:** {{ summary }}
+{% elif description %}
+> {{ description }}
+{% endif %}
+
+---
+
+{{ content }}

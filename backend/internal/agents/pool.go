@@ -1,6 +1,11 @@
 package agents
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -10,6 +15,7 @@ type JobType string
 const (
 	JobTypeEnrichFrontmatter JobType = "enrich_frontmatter"
 	JobTypeAutoLinker        JobType = "auto_linker"
+	JobTypeSummarizer        JobType = "summarizer"
 )
 
 type Job struct {
@@ -53,6 +59,8 @@ func (p *AgentPool) worker(id int) {
 			p.processEnrichFrontmatter(job)
 		case JobTypeAutoLinker:
 			p.processAutoLinker(job)
+		case JobTypeSummarizer:
+			p.processSummarizer(job)
 		default:
 			p.logger.Warn("Unknown job type", zap.String("type", string(job.Type)))
 		}
@@ -67,4 +75,57 @@ func SubmitJob(job Job) {
 	if Pool != nil {
 		Pool.Queue <- job
 	}
+}
+
+func cleanAPIKey(raw string) string {
+	k := strings.TrimSpace(raw)
+	k = strings.TrimPrefix(k, "Bearer ")
+	k = strings.TrimPrefix(k, "bearer ")
+	k = strings.TrimPrefix(k, "BEARER ")
+	k = strings.Trim(k, `"'`+"`")
+	k = strings.ReplaceAll(k, "\r", "")
+	k = strings.ReplaceAll(k, "\n", "")
+	k = strings.TrimSpace(k)
+	if k == "undefined" || k == "null" || k == "none" || k == "false" {
+		return ""
+	}
+	return k
+}
+
+func (p *AgentPool) resolveCredentials(job Job) (string, string) {
+	// Strictly read from settings.json
+	var apiKey, model string
+	candidates := []string{
+		filepath.Join(p.dataDirectory, "settings.json"),
+		"data/settings.json",
+		"../data/settings.json",
+	}
+	for _, cp := range candidates {
+		if data, err := os.ReadFile(cp); err == nil {
+			var s struct {
+				APIKey string `json:"api_key"`
+				Model  string `json:"model"`
+			}
+			if json.Unmarshal(data, &s) == nil {
+				if s.APIKey != "" {
+					apiKey = cleanAPIKey(s.APIKey)
+				}
+				if s.Model != "" {
+					model = strings.TrimSpace(s.Model)
+				}
+				if apiKey != "" && model != "" {
+					break
+				}
+			}
+		}
+	}
+	
+	if apiKey == "" {
+		apiKey = cleanAPIKey(os.Getenv("OPENROUTER_API_KEY"))
+	}
+	if model == "" {
+		model = "openai/gpt-4o-mini"
+	}
+
+	return apiKey, model
 }

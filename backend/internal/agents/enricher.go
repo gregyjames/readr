@@ -25,17 +25,9 @@ type ArticleRecord struct {
 }
 
 func (p *AgentPool) processEnrichFrontmatter(job Job) {
-	apiKey, _ := job.Payload["api_key"].(string)
-	model, _ := job.Payload["model"].(string)
-
-	apiKey = strings.TrimSpace(apiKey)
-	model = strings.TrimSpace(model)
-
-	if model == "" {
-		model = "openai/gpt-4o-mini"
-	}
+	apiKey, model := p.resolveCredentials(job)
 	if apiKey == "" {
-		p.logger.Warn("API key not set in job payload. Agent cannot enrich frontmatter.", zap.Int64("article_id", job.ArticleID))
+		p.logger.Warn("API key not configured. Agent cannot enrich frontmatter.", zap.Int64("article_id", job.ArticleID))
 		return
 	}
 	// 1. Get the article metadata from DB
@@ -62,11 +54,10 @@ func (p *AgentPool) processEnrichFrontmatter(job Job) {
 			body = parts[2]
 		}
 	}
-	
-	if len(body) > 8000 {
-		body = body[:8000] // truncate to save tokens
+	bodyRunes := []rune(body)
+	if len(bodyRunes) > 8000 {
+		body = string(bodyRunes[:8000]) // rune safe truncation
 	}
-
 	// 3. Ask LLM to generate OKF frontmatter
 	prompt := fmt.Sprintf(`You are an expert knowledge curator. Generate ONLY a valid YAML frontmatter block (enclosed in ---) following the Open Knowledge Format (OKF) specification for the following article.
 Requirements:
@@ -95,7 +86,18 @@ Output ONLY the YAML block starting and ending with ---. No other text.`, time.N
 	}
 	bodyJSON, _ := json.Marshal(reqPayload)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			if len(via) > 0 {
+				req.Header.Set("Authorization", via[0].Header.Get("Authorization"))
+			}
+			return nil
+		},
+	}
 	var resp *http.Response
 	var bodyBytes []byte
 

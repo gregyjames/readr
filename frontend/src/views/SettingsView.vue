@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { settings, saveSettingsToServer } from '../store/settings'
 
 interface ModelItem {
   id: string
@@ -12,40 +13,25 @@ interface ModelItem {
   }
 }
 
-const apiKey = ref('')
 const showKey = ref(false)
 const savedMessage = ref('')
-const isKeyConfigured = ref(false)
 
-const selectedModel = ref('openai/gpt-4o-mini')
-const models = ref<ModelItem[]>([])
-
-const isDark = ref(document.documentElement.classList.contains('dark'))
-const viewMode = ref(localStorage.getItem('viewMode') || 'card')
+const isKeyConfigured = computed(() => Boolean(settings.api_key?.trim()))
 
 const toggleTheme = () => {
-  const root = document.documentElement
-  if (root.classList.contains('dark')) {
-    root.classList.remove('dark')
-    localStorage.setItem('theme', 'light')
-    isDark.value = false
-  } else {
-    root.classList.add('dark')
-    localStorage.setItem('theme', 'dark')
-    isDark.value = true
-  }
+  settings.theme = settings.theme === 'dark' ? 'light' : 'dark'
+  saveSettingsToServer()
 }
 
 const setViewMode = (mode: string) => {
-  viewMode.value = mode
-  localStorage.setItem('viewMode', mode)
+  settings.view_mode = mode
+  saveSettingsToServer()
 }
+
 const isLoadingModels = ref(false)
 const modelSearch = ref('')
 const isModelDropdownOpen = ref(false)
-const expandGraphContext = ref(true)
-const enableAgentEnricher = ref(localStorage.getItem('AGENT_ENRICHER') !== 'false') // Default true
-const enableAgentLinker = ref(localStorage.getItem('AGENT_LINKER') !== 'false') // Default true
+const models = ref<ModelItem[]>([])
 
 let timer: ReturnType<typeof setTimeout> | null = null
 
@@ -83,9 +69,9 @@ const filteredModels = computed(() => {
 })
 
 const selectedModelObj = computed(() => {
-  return models.value.find(m => m.id === selectedModel.value) || {
-    id: selectedModel.value,
-    name: selectedModel.value,
+  return models.value.find(m => m.id === settings.model) || {
+    id: settings.model,
+    name: settings.model,
   }
 })
 
@@ -93,8 +79,8 @@ const fetchModels = async () => {
   isLoadingModels.value = true
   try {
     const headers: Record<string, string> = {}
-    if (apiKey.value.trim()) {
-      headers['Authorization'] = `Bearer ${apiKey.value.trim()}`
+    if (settings.api_key?.trim()) {
+      headers['Authorization'] = `Bearer ${settings.api_key.trim()}`
     }
     const res = await fetch('/api/models', { headers })
     if (res.ok) {
@@ -116,20 +102,6 @@ const fetchModels = async () => {
 }
 
 onMounted(() => {
-  const existingKey = localStorage.getItem('OPENROUTER_API_KEY') || ''
-  apiKey.value = existingKey
-  isKeyConfigured.value = Boolean(existingKey.trim())
-
-  const savedModel = localStorage.getItem('OPENROUTER_MODEL')
-  if (savedModel) {
-    selectedModel.value = savedModel
-  }
-
-  const savedExpansion = localStorage.getItem('GRAPH_CONTEXT_EXPANSION')
-  if (savedExpansion !== null) {
-    expandGraphContext.value = savedExpansion === 'true'
-  }
-
   fetchModels()
 })
 
@@ -141,34 +113,31 @@ onUnmounted(() => {
 })
 
 const selectModel = (modelId: string) => {
-  selectedModel.value = modelId
-  localStorage.setItem('OPENROUTER_MODEL', modelId)
+  settings.model = modelId
   isModelDropdownOpen.value = false
+  saveSettingsToServer()
   showSavedMessage(`Model set to ${modelId}`)
 }
 
-const saveSettings = () => {
-  const trimmed = apiKey.value.trim()
-  if (trimmed) {
-    localStorage.setItem('OPENROUTER_API_KEY', trimmed)
-    isKeyConfigured.value = true
-  } else {
-    localStorage.removeItem('OPENROUTER_API_KEY')
-    isKeyConfigured.value = false
+const saveSettings = async () => {
+  try {
+    await saveSettingsToServer()
+    showSavedMessage('Settings saved successfully!')
+  } catch (e) {
+    console.error(e)
+    alert('Failed to save settings')
   }
-
-  localStorage.setItem('OPENROUTER_MODEL', selectedModel.value)
-  localStorage.setItem('GRAPH_CONTEXT_EXPANSION', String(expandGraphContext.value))
-  localStorage.setItem('AGENT_ENRICHER', enableAgentEnricher.value ? 'true' : 'false')
-  localStorage.setItem('AGENT_LINKER', enableAgentLinker.value ? 'true' : 'false')
-  showSavedMessage('Settings saved successfully!')
 }
 
-const clearKey = () => {
-  apiKey.value = ''
-  localStorage.removeItem('OPENROUTER_API_KEY')
-  isKeyConfigured.value = false
-  showSavedMessage('API key cleared.')
+const clearKey = async () => {
+  settings.api_key = ''
+  try {
+    await saveSettingsToServer()
+    showSavedMessage('API key cleared.')
+  } catch (e) {
+    console.error(e)
+    alert('Failed to clear API key')
+  }
 }
 </script>
 
@@ -210,7 +179,7 @@ const clearKey = () => {
         <div class="relative">
           <input
             id="api-key"
-            v-model="apiKey"
+            v-model="settings.api_key"
             :type="showKey ? 'text' : 'password'"
             placeholder="sk-or-v1-..."
             class="w-full pl-4 pr-12 py-3 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-xl focus:bg-white dark:focus:bg-[#1a1a1a] focus:border-gray-300 dark:focus:border-gray-600 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-800 focus:outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-600 text-gray-900 dark:text-gray-100 text-sm font-mono"
@@ -308,7 +277,7 @@ const clearKey = () => {
                 type="button"
                 @click="selectModel(m.id)"
                 class="w-full px-4 py-2.5 text-left text-xs hover:bg-gray-100 dark:hover:bg-white/5 transition-colors flex items-center justify-between cursor-pointer"
-                :class="{ 'bg-emerald-50/60 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 font-medium': m.id === selectedModel }"
+                :class="{ 'bg-emerald-50/60 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 font-medium': m.id === settings.model }"
               >
                 <div class="truncate pr-2">
                   <div class="font-medium text-gray-900 dark:text-gray-100 truncate">
@@ -318,7 +287,7 @@ const clearKey = () => {
                     {{ m.id }}
                   </div>
                 </div>
-                <span v-if="m.id === selectedModel" class="text-emerald-600 dark:text-emerald-400 shrink-0 text-xs">
+                <span v-if="m.id === settings.model" class="text-emerald-600 dark:text-emerald-400 shrink-0 text-xs">
                   ✓
                 </span>
               </button>
@@ -339,11 +308,11 @@ const clearKey = () => {
             type="button"
             @click="toggleTheme"
             class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
-            :class="isDark ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
+            :class="settings.theme === 'dark' ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
           >
             <span
               class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
-              :class="isDark ? 'translate-x-5' : 'translate-x-0'"
+              :class="settings.theme === 'dark' ? 'translate-x-5' : 'translate-x-0'"
             />
           </button>
         </div>
@@ -359,7 +328,7 @@ const clearKey = () => {
               type="button"
               @click="setViewMode('card')"
               class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all cursor-pointer"
-              :class="viewMode === 'card' ? 'bg-white dark:bg-[#2a2a2a] text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
+              :class="settings.view_mode === 'card' ? 'bg-white dark:bg-[#2a2a2a] text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
             >
               Card
             </button>
@@ -367,7 +336,7 @@ const clearKey = () => {
               type="button"
               @click="setViewMode('list')"
               class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all cursor-pointer"
-              :class="viewMode === 'list' ? 'bg-white dark:bg-[#2a2a2a] text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
+              :class="settings.view_mode === 'list' ? 'bg-white dark:bg-[#2a2a2a] text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
             >
               List
             </button>
@@ -388,13 +357,13 @@ const clearKey = () => {
         </div>
         <button
           type="button"
-          @click="expandGraphContext = !expandGraphContext"
+          @click="settings.graph_context_expansion = !settings.graph_context_expansion"
           class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
-          :class="expandGraphContext ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
+          :class="settings.graph_context_expansion ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
         >
           <span
             class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
-            :class="expandGraphContext ? 'translate-x-5' : 'translate-x-0'"
+            :class="settings.graph_context_expansion ? 'translate-x-5' : 'translate-x-0'"
           />
         </button>
       </div>
@@ -422,13 +391,15 @@ const clearKey = () => {
           </div>
           <button
             type="button"
-            @click="enableAgentEnricher = !enableAgentEnricher"
+            @click="settings.agent_enricher = !settings.agent_enricher"
+            aria-label="Toggle OKF Frontmatter Enricher"
+            :aria-pressed="settings.agent_enricher"
             class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
-            :class="enableAgentEnricher ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
+            :class="settings.agent_enricher ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
           >
             <span
               class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
-              :class="enableAgentEnricher ? 'translate-x-5' : 'translate-x-0'"
+              :class="settings.agent_enricher ? 'translate-x-5' : 'translate-x-0'"
             />
           </button>
         </div>
@@ -445,13 +416,40 @@ const clearKey = () => {
           </div>
           <button
             type="button"
-            @click="enableAgentLinker = !enableAgentLinker"
+            @click="settings.agent_linker = !settings.agent_linker"
+            aria-label="Toggle Autonomous Graph Linker"
+            :aria-pressed="settings.agent_linker"
             class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
-            :class="enableAgentLinker ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
+            :class="settings.agent_linker ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
           >
             <span
               class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
-              :class="enableAgentLinker ? 'translate-x-5' : 'translate-x-0'"
+              :class="settings.agent_linker ? 'translate-x-5' : 'translate-x-0'"
+            />
+          </button>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-2">
+              <span>Executive Summarizer</span>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">LLM</span>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 max-w-md">
+              Automatically generate concise 2–3 sentence executive summaries when templates include a summary block.
+            </p>
+          </div>
+          <button
+            type="button"
+            @click="settings.agent_summarizer = !settings.agent_summarizer"
+            aria-label="Toggle Executive Summarizer"
+            :aria-pressed="settings.agent_summarizer"
+            class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+            :class="settings.agent_summarizer ? 'bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700'"
+          >
+            <span
+              class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+              :class="settings.agent_summarizer ? 'translate-x-5' : 'translate-x-0'"
             />
           </button>
         </div>

@@ -15,12 +15,28 @@ var (
 )
 
 type IngestRequest struct {
-	URL  string
-	Tags []string
+	URL      string   `json:"url"`
+	Tags     []string `json:"tags"`
+	Template string   `json:"template,omitempty"`
+	APIKey   string   `json:"api_key,omitempty"`
+	Model    string   `json:"model,omitempty"`
 }
 
 type IngestedArticle = repository.ArticleRecord
 type ArticleRepository = repository.Repository
+
+type ExtractedContent struct {
+	Title           string
+	MarkdownContent string
+	CoverImageURL   string
+	BodyImages      []string
+	Author          string
+	Description     string
+	SiteName        string
+	OG              map[string]string
+}
+
+type ExtractedArticle = ExtractedContent
 
 type ArticleIngester interface {
 	Ingest(ctx context.Context, req IngestRequest) (*IngestedArticle, error)
