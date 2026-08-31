@@ -485,7 +485,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	api.Use(func(c *fiber.Ctx) error {
 		path := c.Path()
-		if path == "/api/auth/status" || path == "/api/auth/login" || path == "/api/auth/setup" {
+		if path == "/api/auth/status" || path == "/api/auth/login" || path == "/api/auth/setup" || path == "/api/auth/logout" {
 			return c.Next()
 		}
 
@@ -609,6 +609,16 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	})
 
 	api.Post("/auth/logout", func(c *fiber.Ctx) error {
+		settingsMu.Lock()
+		if newSecret, err := auth.GenerateRandomSecret(); err == nil {
+			newSettings := serverSettings
+			newSettings.SessionSecret = newSecret
+			if err := saveServerSettings(dataDirectory, newSettings); err == nil {
+				serverSettings = newSettings
+			}
+		}
+		settingsMu.Unlock()
+
 		clearSessionCookie(c)
 		return c.JSON(fiber.Map{"status": "success"})
 	})
@@ -636,8 +646,12 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to hash password"})
 		}
 
+		newSecret, _ := auth.GenerateRandomSecret()
 		newSettings := serverSettings
 		newSettings.PasswordHash = hash
+		if newSecret != "" {
+			newSettings.SessionSecret = newSecret
+		}
 		if err := saveServerSettings(dataDirectory, newSettings); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to save settings"})
 		}

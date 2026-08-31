@@ -1205,6 +1205,39 @@ func TestAuthEndpoints_Flow(t *testing.T) {
 	if !strings.Contains(cookieHeader, "readr_session=") {
 		t.Fatalf("expected Set-Cookie readr_session, got: %s", cookieHeader)
 	}
+
+	// 4. Change password -> issues new token and rotates secret
+	changePayload, _ := json.Marshal(map[string]string{
+		"current_password": "testPassword123",
+		"new_password":     "newSecretPassword456",
+	})
+	req = httptest.NewRequest("POST", "/api/auth/change-password", bytes.NewReader(changePayload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", cookieHeader)
+	resp, err = app.Test(req, 10000)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("POST /api/auth/change-password failed: %v, status: %d", err, resp.StatusCode)
+	}
+
+	// 5. Old session cookie is now invalid (due to rotated SessionSecret)
+	req = httptest.NewRequest("GET", "/api/auth/status", nil)
+	req.Header.Set("Cookie", cookieHeader)
+	resp, err = app.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("GET /api/auth/status failed: %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	json.Unmarshal(body, &status)
+	if status.Authenticated {
+		t.Fatalf("expected old session token to be invalid after password change")
+	}
+
+	// 6. Logout rotates secret and invalidates any sessions
+	req = httptest.NewRequest("POST", "/api/auth/logout", nil)
+	resp, err = app.Test(req, 10000)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("POST /api/auth/logout failed: %v, status: %d", err, resp.StatusCode)
+	}
 }
 
 func TestAuthMiddleware_Protection(t *testing.T) {
