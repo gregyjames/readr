@@ -162,7 +162,6 @@ const handleReparseComplete = async () => {
   }
 }
 
-import { settings } from '../store/settings'
 
 const reparseArticle = async () => {
   const articleID = getArticleId()

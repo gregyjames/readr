@@ -8,7 +8,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import axios from 'axios'
 import emitter from './event-bus.ts'
-import { settings, isSettingsLoaded, initSettings } from './store/settings'
+import { isSettingsLoaded, initSettings } from './store/settings'
 
 interface TemplateInfo {
   name: string
@@ -83,7 +83,7 @@ const submitForm = async () => {
       ? (matchedTemplate.value?.name || '')
       : (selectedTemplate.value === 'none' ? 'none' : selectedTemplate.value)
 
-    const res = await fetch('/api/add', {
+    await fetch('/api/add', {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
