@@ -52,6 +52,14 @@ func (m *mockGraphRepository) UpdateArticleTags(ctx context.Context, id int64, t
 	return nil
 }
 
+func (m *mockGraphRepository) RecordPipelineMetric(ctx context.Context, metric *repository.PipelineMetric) error {
+	return nil
+}
+
+func (m *mockGraphRepository) GetPipelineDiagnostics(ctx context.Context, limit int) (*repository.PipelineDiagnosticsSummary, []repository.PipelineMetric, error) {
+	return &repository.PipelineDiagnosticsSummary{}, nil, nil
+}
+
 func TestBuildTopology_NodesAndEdges(t *testing.T) {
 	articles := []repository.ArticleRecord{
 		{ID: 1, Title: "Article One", Tags: "Go, backend, GO"},

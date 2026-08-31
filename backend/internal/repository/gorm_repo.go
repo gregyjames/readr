@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -331,5 +332,87 @@ func (r *GormRepository) UpdateArticleTags(ctx context.Context, id int64, tags s
 		Model(&GormArticle{}).
 		Where("id = ?", id).
 		Update("tags", tags).Error
+}
+
+func (r *GormRepository) RecordPipelineMetric(ctx context.Context, metric *PipelineMetric) error {
+	if metric.CreatedAt.IsZero() {
+		metric.CreatedAt = time.Now()
+	}
+	if metric.ID > 0 {
+		return r.db.WithContext(ctx).Save(metric).Error
+	}
+	return r.db.WithContext(ctx).Create(metric).Error
+}
+
+func (r *GormRepository) GetPipelineDiagnostics(ctx context.Context, limit int) (*PipelineDiagnosticsSummary, []PipelineMetric, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var metrics []PipelineMetric
+	err := r.db.WithContext(ctx).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&metrics).Error
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var summary PipelineDiagnosticsSummary
+	type aggResult struct {
+		TotalRuns             int64 `gorm:"column:total_runs"`
+		SuccessfulRuns        int64 `gorm:"column:successful_runs"`
+		FailedRuns            int64 `gorm:"column:failed_runs"`
+		TotalRetries          int64 `gorm:"column:total_retries"`
+		TotalDuration         int64 `gorm:"column:total_duration"`
+		TotalTokensUsed       int64 `gorm:"column:total_tokens_used"`
+		TotalPromptTokens     int64 `gorm:"column:total_prompt_tokens"`
+		TotalCompletionTokens int64 `gorm:"column:total_completion_tokens"`
+	}
+
+	var agg aggResult
+	r.db.WithContext(ctx).Model(&PipelineMetric{}).Select(`
+		COUNT(*) as total_runs,
+		SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as successful_runs,
+		SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_runs,
+		COALESCE(SUM(retry_count), 0) as total_retries,
+		COALESCE(SUM(duration_ms), 0) as total_duration,
+		COALESCE(SUM(prompt_tokens + completion_tokens), 0) as total_tokens_used,
+		COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
+		COALESCE(SUM(completion_tokens), 0) as total_completion_tokens
+	`).Scan(&agg)
+
+	totalRuns := agg.TotalRuns
+	avgDuration := int64(0)
+	if totalRuns > 0 {
+		avgDuration = agg.TotalDuration / totalRuns
+	}
+
+	var p95Duration int64
+	if totalRuns > 0 {
+		var durations []int64
+		r.db.WithContext(ctx).Model(&PipelineMetric{}).Order("duration_ms ASC").Pluck("duration_ms", &durations)
+		if len(durations) > 0 {
+			p95Index := int(float64(len(durations)) * 0.95)
+			if p95Index >= len(durations) {
+				p95Index = len(durations) - 1
+			}
+			p95Duration = durations[p95Index]
+		}
+	}
+
+	summary = PipelineDiagnosticsSummary{
+		TotalRuns:             totalRuns,
+		SuccessfulRuns:        agg.SuccessfulRuns,
+		FailedRuns:            agg.FailedRuns,
+		TotalRetries:          agg.TotalRetries,
+		AvgDurationMs:         avgDuration,
+		P95DurationMs:         p95Duration,
+		TotalTokensUsed:       agg.TotalTokensUsed,
+		TotalPromptTokens:     agg.TotalPromptTokens,
+		TotalCompletionTokens: agg.TotalCompletionTokens,
+	}
+
+	return &summary, metrics, nil
 }
 

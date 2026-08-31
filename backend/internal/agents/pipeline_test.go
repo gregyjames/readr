@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -36,7 +37,7 @@ func setupTestPipelineEnv(t *testing.T) (string, *gorm.DB, repository.Repository
 		t.Fatal(err)
 	}
 
-	if err := db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}); err != nil {
+	if err := db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.PipelineMetric{}); err != nil {
 		t.Fatal(err)
 	}
 	db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(title, content, tokenize='porter')`)
@@ -588,5 +589,78 @@ func TestProcessPipeline_AllDisabled_ZeroCalls(t *testing.T) {
 	}
 	if string(currentBytes) != initialContent {
 		t.Errorf("expected file content to remain untouched, got:\n%s", string(currentBytes))
+	}
+}
+
+func TestProcessPipeline_RecordsMetrics(t *testing.T) {
+	tempDir, db, repo := setupTestPipelineEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	sourcePath := filepath.Join(articlesDir, "407.md")
+	os.WriteFile(sourcePath, []byte("Content about Golang concurrency and channels."), 0644)
+	db.Create(&repository.GormArticle{ID: 407, Title: "Golang Concurrency"})
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{"summary": "A deep dive into Go concurrency channels."}`,
+					},
+				},
+			},
+			"usage": map[string]interface{}{
+				"prompt_tokens":     150,
+				"completion_tokens": 40,
+				"total_tokens":      190,
+			},
+		}
+		json.NewEncoder(w).Encode(res)
+	}))
+	defer ts.Close()
+
+	pool := &AgentPool{
+		Queue:         make(chan Job, 10),
+		logger:        zap.NewNop(),
+		db:            db,
+		repo:          repo,
+		dataDirectory: tempDir,
+	}
+
+	job := Job{
+		ArticleID: 407,
+		Type:      JobTypePipeline,
+		Settings: PipelineSettings{
+			Summarizer: true,
+		},
+	}
+
+	pool.processPipelineWithURL(job, ts.URL)
+
+	// Assert metrics were recorded in DB
+	summary, recent, err := repo.GetPipelineDiagnostics(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("failed to get diagnostics: %v", err)
+	}
+	if summary.TotalRuns != 1 {
+		t.Fatalf("expected 1 recorded run, got %d", summary.TotalRuns)
+	}
+	if summary.SuccessfulRuns != 1 {
+		t.Errorf("expected 1 successful run, got %d", summary.SuccessfulRuns)
+	}
+	if len(recent) != 1 {
+		t.Fatalf("expected 1 recent run, got %d", len(recent))
+	}
+	if recent[0].ArticleID != 407 {
+		t.Errorf("expected metric article_id 407, got %d", recent[0].ArticleID)
+	}
+	if recent[0].Status != "success" {
+		t.Errorf("expected metric status 'success', got %q", recent[0].Status)
+	}
+	if recent[0].PromptTokens != 150 || recent[0].CompletionTokens != 40 {
+		t.Errorf("expected prompt 150 and completion 40, got %d / %d", recent[0].PromptTokens, recent[0].CompletionTokens)
+	}
+	if recent[0].TotalTokens != 190 {
+		t.Errorf("expected total tokens 190, got %d", recent[0].TotalTokens)
 	}
 }
