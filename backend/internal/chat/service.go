@@ -82,19 +82,27 @@ func (s *Service) StreamMessage(ctx context.Context, sessionID string, apiKey st
 
 	session, err := s.repo.Get(ctx, sessionID)
 	if err != nil || session == nil {
-		title := "New Chat"
-		runes := []rune(userMsg.Content)
-		if len(runes) > 30 {
-			title = string(runes[:30]) + "..."
-		} else if len(runes) > 0 {
-			title = string(runes)
-		}
 		session = &ChatSession{
 			ID:        sessionID,
-			Title:     title,
+			Title:     "New Chat",
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 			Messages:  make([]Message, 0),
+		}
+	}
+
+	if session.Title == "" || session.Title == "New Chat" {
+		titleSource := strings.TrimSpace(userMsg.Content)
+		if titleSource == "" && len(userMsg.Attachments) > 0 {
+			titleSource = userMsg.Attachments[0].Title
+		}
+		if titleSource != "" {
+			runes := []rune(titleSource)
+			if len(runes) > 30 {
+				session.Title = string(runes[:30]) + "..."
+			} else {
+				session.Title = string(runes)
+			}
 		}
 	}
 

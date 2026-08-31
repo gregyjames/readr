@@ -309,6 +309,103 @@ func TestService_StreamMessage_TitleTruncationNewSession(t *testing.T) {
 	}
 }
 
+func TestService_StreamMessage_PreCreatedNewChatTitleUpdate(t *testing.T) {
+	tmpDir := t.TempDir()
+	repo := NewFileRepository(tmpDir)
+	ctx := context.Background()
+	sessionID := "pre-created-session"
+
+	// Pre-created via POST /api/chats with title "New Chat"
+	initialSession := &ChatSession{
+		ID:        sessionID,
+		Title:     "New Chat",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Messages:  []Message{},
+	}
+	if err := repo.Save(ctx, initialSession); err != nil {
+		t.Fatalf("failed to save initial session: %v", err)
+	}
+
+	mockClient := newMockHTTPClient(func(req *http.Request) (*http.Response, error) {
+		sseData := "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\ndata: [DONE]\n\n"
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(sseData)),
+		}, nil
+	})
+
+	svc := NewService(repo, nil)
+	svc.SetHTTPClient(mockClient)
+
+	err := svc.StreamMessage(ctx, sessionID, "key", "", false, Message{
+		Role:    RoleUser,
+		Content: "how do i do this?",
+	}, nil)
+	if err != nil {
+		t.Fatalf("StreamMessage failed: %v", err)
+	}
+
+	updatedSession, err := repo.Get(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("failed to get session: %v", err)
+	}
+	if updatedSession.Title != "how do i do this?" {
+		t.Errorf("expected updated title 'how do i do this?', got %q", updatedSession.Title)
+	}
+}
+
+func TestService_StreamMessage_AttachmentOnlyTitle(t *testing.T) {
+	tmpDir := t.TempDir()
+	repo := NewFileRepository(tmpDir)
+	ctx := context.Background()
+	sessionID := "attachment-title-session"
+
+	initialSession := &ChatSession{
+		ID:        sessionID,
+		Title:     "New Chat",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Messages:  []Message{},
+	}
+	if err := repo.Save(ctx, initialSession); err != nil {
+		t.Fatalf("failed to save initial session: %v", err)
+	}
+
+	mockClient := newMockHTTPClient(func(req *http.Request) (*http.Response, error) {
+		sseData := "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\ndata: [DONE]\n\n"
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(sseData)),
+		}, nil
+	})
+
+	svc := NewService(repo, nil)
+	svc.SetHTTPClient(mockClient)
+
+	err := svc.StreamMessage(ctx, sessionID, "key", "", false, Message{
+		Role:    RoleUser,
+		Content: "",
+		Attachments: []Attachment{
+			{ID: 1, Title: "How to Get the M5 MacBook Air for Less Than at the Apple Store"},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("StreamMessage failed: %v", err)
+	}
+
+	updatedSession, err := repo.Get(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("failed to get session: %v", err)
+	}
+	expectedTitle := "How to Get the M5 MacBook Air ..."
+	if updatedSession.Title != expectedTitle {
+		t.Errorf("expected updated title %q, got %q", expectedTitle, updatedSession.Title)
+	}
+}
+
 func TestService_StreamMessage_ServerError(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewFileRepository(tmpDir)
