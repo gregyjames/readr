@@ -56,6 +56,9 @@ function getGraphColors() {
     articleBorder: isDark ? '#059669' : '#34d399',
     articleHighlight: isDark ? '#34d399' : '#10b981',
     articleText: isDark ? '#ffffff' : '#000000',
+    mocBg: '#f59e0b',
+    mocBorder: isDark ? '#d97706' : '#fbbf24',
+    mocHighlight: '#fbbf24',
     tagBg: isDark ? '#1f2937' : '#f3f4f6',
     tagBorder: isDark ? '#374151' : '#e5e7eb',
     tagHighlight: isDark ? '#78716c' : '#a8a29e',
@@ -103,22 +106,41 @@ async function initLocalGraph() {
     const colors = getGraphColors();
 
     const formattedNodes = graphNodes.map((node) => {
+      const isMOC = node.group === 'moc';
       const isArticle = node.group === 'article';
       const isCurrent = node.id === `article-${numericId}`;
 
+      let bg = colors.tagBg;
+      let border = colors.tagBorder;
+      let highlight = colors.tagHighlight;
+
+      if (isCurrent) {
+        bg = '#059669';
+        border = '#34d399';
+        highlight = '#34d399';
+      } else if (isMOC) {
+        bg = colors.mocBg;
+        border = colors.mocBorder;
+        highlight = colors.mocHighlight;
+      } else if (isArticle) {
+        bg = colors.articleBg;
+        border = colors.articleBorder;
+        highlight = colors.articleHighlight;
+      }
+
       return {
         id: node.id,
-        label: isArticle ? undefined : node.label,
+        label: isArticle || isMOC ? undefined : node.label,
         title: node.label,
-        shape: isArticle ? 'dot' : 'box',
-        size: isCurrent ? 14 : 10,
-        margin: isArticle ? 10 : 8,
+        shape: isMOC ? 'hexagon' : (isArticle ? 'dot' : 'box'),
+        size: isCurrent ? 14 : (isMOC ? 14 : 10),
+        margin: isArticle || isMOC ? 10 : 8,
         color: {
-          background: isCurrent ? '#059669' : (isArticle ? colors.articleBg : colors.tagBg),
-          border: isCurrent ? '#34d399' : (isArticle ? colors.articleBorder : colors.tagBorder),
+          background: bg,
+          border: border,
           hover: {
-            background: isArticle ? colors.articleHighlight : colors.tagHighlight,
-            border: isArticle ? colors.articleBorder : colors.tagBorder,
+            background: highlight,
+            border: border,
           },
         },
         font: {

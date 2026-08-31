@@ -32,6 +32,11 @@ const getOptions = (isDark: boolean) => ({
     article: { 
       color: { background: '#10b981', border: isDark ? '#059669' : '#34d399' }
     },
+    moc: {
+      shape: 'hexagon',
+      color: { background: '#f59e0b', border: isDark ? '#d97706' : '#fbbf24' },
+      font: { color: isDark ? '#fef3c7' : '#92400e', size: 14 }
+    },
     tag: { 
       shape: 'box', 
       color: { background: isDark ? '#1f2937' : '#f3f4f6', border: isDark ? '#374151' : '#e5e7eb' },
@@ -60,7 +65,7 @@ const { zoomIn, zoomOut, fitGraph: fitView } = useGraphZoom(() => network)
 const getFilteredData = () => {
   const filteredNodes = showTags.value 
     ? graphData.nodes 
-    : graphData.nodes.filter((n: any) => n.group === 'article')
+    : graphData.nodes.filter((n: any) => n.group === 'article' || n.group === 'moc')
 
   const filteredEdges = showTags.value
     ? graphData.edges
@@ -68,9 +73,10 @@ const getFilteredData = () => {
 
   const processedNodes = filteredNodes.map((n: any) => {
     const connections = filteredEdges.filter((e: any) => e.from === n.id || e.to === n.id).length
-    const nodeSize = Math.min(12 + (connections * 3), 40)
+    const baseSize = n.group === 'moc' ? 22 : 12
+    const nodeSize = Math.min(baseSize + (connections * 3), 48)
     
-    if (n.group === 'article') {
+    if (n.group === 'article' || n.group === 'moc') {
       return { ...n, title: n.label, label: undefined, size: nodeSize }
     }
     return { ...n, size: nodeSize }
@@ -95,7 +101,7 @@ const renderGraph = () => {
       const nodeId = params.nodes[0] as string
       const node = graphData.nodes.find((n: any) => n.id === nodeId)
       
-      if (node && node.group === 'article') {
+      if (node && (node.group === 'article' || node.group === 'moc')) {
         const articleId = node.id.replace('article-', '')
         router.push(`/articles/${articleId}`)
       }

@@ -162,6 +162,16 @@ const articleTitle = computed(() => {
   return knownProperties.value.title || currentArticle.value?.title || ''
 })
 
+const isMOC = computed(() => {
+  if (properties.value.some(p => p.key.toLowerCase() === 'type' && String(p.value).toLowerCase() === 'moc')) return true
+  if (currentArticle.value) {
+    const title = currentArticle.value.title.toLowerCase()
+    if (title.startsWith('moc - ') || title.startsWith('moc:') || title.startsWith('moc ') || title === 'moc') return true
+    if (currentArticle.value.tags && currentArticle.value.tags.toLowerCase().split(',').map(t => t.trim()).includes('moc')) return true
+  }
+  return false
+})
+
 function formatDisplayDate(dateStr: string): string {
   if (!dateStr) return ''
   try {
@@ -665,6 +675,15 @@ onBeforeUnmount(() => {
           <!-- Top Row: Source Publisher, Date, and Edit Button -->
           <div class="flex items-center justify-between gap-4">
             <div class="flex flex-wrap items-center gap-3">
+              <!-- MOC Hub Badge -->
+              <span
+                v-if="isMOC"
+                class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 text-xs font-semibold tracking-tight shadow-sm"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-amber-500"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/><path d="M6 10h10"/></svg>
+                Map of Content (Hub)
+              </span>
+
               <!-- Source Badge -->
               <a
                 v-if="knownProperties.source"

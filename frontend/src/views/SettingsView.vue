@@ -370,6 +370,42 @@ const cleanBrokenLinks = async () => {
     isCleaningLinks.value = false
   }
 }
+
+// Librarian Agent: Manual MOC Synthesis
+const isExecutingLibrarian = ref(false)
+const librarianResult = ref<{
+  status: string
+  scanned_articles: number
+  clusters_detected: number
+  created_mocs: number
+  updated_mocs: number
+  execution_time_ms: number
+  errors?: string[]
+} | null>(null)
+const librarianError = ref<string | null>(null)
+
+const executeLibrarian = async () => {
+  isExecutingLibrarian.value = true
+  librarianResult.value = null
+  librarianError.value = null
+  try {
+    const res = await fetch('/api/librarian/run', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.error || 'Failed to execute Librarian agent')
+    }
+    librarianResult.value = await res.json()
+  } catch (err: any) {
+    librarianError.value = err.message || 'An unexpected error occurred during Librarian execution'
+  } finally {
+    isExecutingLibrarian.value = false
+  }
+}
 </script>
 
 <template>
@@ -934,6 +970,110 @@ const cleanBrokenLinks = async () => {
           </button>
         </div>
       </form>
+    </div>
+
+    <!-- Librarian & Map of Content (MOC) Agent Card -->
+    <div class="bg-white dark:bg-[#111] rounded-3xl border border-gray-200/70 dark:border-gray-800/70 p-6 sm:p-8 space-y-6 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.2)]">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-500"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/><path d="M6 10h10"/></svg>
+            Librarian & Map of Content (MOC) Agent
+          </h2>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            Autonomous background curator that synthesizes, groups, and incrementally updates hub notes for dense topic clusters.
+          </p>
+        </div>
+
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input
+            type="checkbox"
+            v-model="settings.librarian_enabled"
+            @change="saveSettings"
+            class="sr-only peer"
+          />
+          <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-800 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-amber-500"></div>
+        </label>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <!-- Cron Schedule -->
+        <div class="space-y-1.5">
+          <label class="text-xs font-medium text-gray-700 dark:text-gray-300 flex items-center justify-between">
+            <span>Cron Schedule</span>
+            <span class="text-[11px] text-gray-400 font-mono">0 0 * * * = Daily 12am</span>
+          </label>
+          <input
+            v-model="settings.librarian_cron"
+            @blur="saveSettings"
+            type="text"
+            placeholder="0 0 * * *"
+            class="w-full px-3.5 py-2 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-xl text-xs font-mono focus:bg-white dark:focus:bg-[#1a1a1a] focus:border-amber-500 focus:outline-none transition-all text-gray-900 dark:text-gray-100"
+          />
+        </div>
+
+        <!-- Min Cluster Size -->
+        <div class="space-y-1.5">
+          <label class="text-xs font-medium text-gray-700 dark:text-gray-300 flex items-center justify-between">
+            <span>Minimum Cluster Size</span>
+            <span class="text-[11px] text-gray-400">Related articles required</span>
+          </label>
+          <input
+            v-model.number="settings.librarian_min_cluster_size"
+            @blur="saveSettings"
+            type="number"
+            min="2"
+            max="50"
+            placeholder="5"
+            class="w-full px-3.5 py-2 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-xl text-xs font-mono focus:bg-white dark:focus:bg-[#1a1a1a] focus:border-amber-500 focus:outline-none transition-all text-gray-900 dark:text-gray-100"
+          />
+        </div>
+      </div>
+
+      <!-- Result Banner -->
+      <div v-if="librarianResult" class="p-4 rounded-2xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/60 dark:border-amber-800/40 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-3">
+        <svg class="w-5 h-5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <div class="space-y-1">
+          <p class="font-semibold">Librarian Execution Complete</p>
+          <p>
+            Scanned <strong>{{ librarianResult.scanned_articles }}</strong> articles across <strong>{{ librarianResult.clusters_detected }}</strong> clusters • Created <strong>{{ librarianResult.created_mocs }}</strong> new MOCs • Updated <strong>{{ librarianResult.updated_mocs }}</strong> existing MOCs in <strong>{{ librarianResult.execution_time_ms }}ms</strong>.
+          </p>
+        </div>
+      </div>
+
+      <!-- Error Banner -->
+      <div v-if="librarianError" class="p-4 rounded-2xl bg-red-50 dark:bg-red-950/30 border border-red-200/60 dark:border-red-800/40 text-xs text-red-800 dark:text-red-300 flex items-start gap-3">
+        <svg class="w-5 h-5 shrink-0 text-red-600 dark:text-red-400 mt-0.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <div>
+          <p class="font-semibold">Librarian Execution Failed</p>
+          <p>{{ librarianError }}</p>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between pt-2">
+        <div class="text-xs text-gray-500 dark:text-gray-400">
+          Preserves user notes under <code>## Notes & Synthesis</code> while generating structured hub wikilinks.
+        </div>
+        <button
+          type="button"
+          @click="executeLibrarian"
+          :disabled="isExecutingLibrarian"
+          class="bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 px-5 py-2.5 rounded-xl active:scale-[0.98] text-sm font-medium transition-all duration-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
+        >
+          <svg v-if="isExecutingLibrarian" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+          <svg v-else xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>
+          </svg>
+          {{ isExecutingLibrarian ? 'Synthesizing MOCs...' : 'Run Librarian Now' }}
+        </button>
+      </div>
     </div>
 
     <!-- Vault Maintenance Card -->
