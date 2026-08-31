@@ -94,7 +94,7 @@ func saveServerSettings(dataDir string, s ServerSettings) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(settingsPath, bytes, 0644)
+	return os.WriteFile(settingsPath, bytes, 0600)
 }
 
 type articleFileFetcher struct {
