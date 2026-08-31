@@ -162,7 +162,7 @@ function removeTag(tag: string) {
         </div>
 
         <!-- Menu -->
-        <div class="flex items-center space-x-4">
+        <div v-if="authState.isAuthenticated && route.path !== '/login'" class="flex items-center space-x-4">
 
           
           <button @click="emitter.emit('open-search')" class="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800/60 transition-colors cursor-pointer" title="Search (Cmd+K)">
@@ -195,7 +195,6 @@ function removeTag(tag: string) {
           </router-link>
 
           <button
-            v-if="authState.isAuthenticated"
             @click="handleLogout"
             class="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800/60 transition-colors cursor-pointer"
             title="Log out"
@@ -218,7 +217,7 @@ function removeTag(tag: string) {
     </div>
   </nav>
 
-  <CommandPalette />
+  <CommandPalette v-if="authState.isAuthenticated && route.path !== '/login'" />
 
   <transition name="fade-blur">
     <div v-if="showModal" @click.self="closeModal" class="fixed inset-0 bg-[#0a0a0a]/60 backdrop-blur-md flex justify-center items-center z-50 transition-all duration-300 ease-out p-4">
