@@ -14,6 +14,7 @@ import (
 
 	"example.com/backend/internal/repository"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 func (p *AgentPool) processPipeline(job Job) {
@@ -32,14 +33,17 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		return
 	}
 
-	if p.repo == nil && p.db != nil {
-		p.repo = repository.NewGormRepository(p.db)
+	var repo repository.Repository
+	if p.repo != nil {
+		repo = p.repo
+	} else if p.db != nil {
+		repo = repository.NewGormRepository(p.db)
 	}
 
 	// 1. Read article metadata from repo or db
 	var articleRecord *repository.ArticleRecord
-	if p.repo != nil {
-		if a, err := p.repo.FindByID(context.Background(), job.ArticleID); err == nil && a != nil {
+	if repo != nil {
+		if a, err := repo.FindByID(context.Background(), job.ArticleID); err == nil && a != nil {
 			articleRecord = a
 		}
 	}
@@ -88,8 +92,8 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 
 	// 3. Retrieve candidates for Linker & Taxonomy for Enricher
 	var candidates []repository.ArticleRecord
-	if job.Settings.Linker && p.repo != nil {
-		if candList, err := p.repo.FindCandidates(context.Background(), job.ArticleID, articleTitle, body, 15); err == nil {
+	if job.Settings.Linker && repo != nil {
+		if candList, err := repo.FindCandidates(context.Background(), job.ArticleID, articleTitle, body, 15); err == nil {
 			candidates = candList
 		}
 		p.logger.Info("Pipeline retrieved candidate articles for auto-linking",
@@ -99,8 +103,8 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	}
 
 	var existingVaultTags []string
-	if job.Settings.Enricher && p.repo != nil {
-		if tags, err := p.repo.GetDistinctTags(context.Background()); err == nil && len(tags) > 0 {
+	if job.Settings.Enricher && repo != nil {
+		if tags, err := repo.GetDistinctTags(context.Background()); err == nil && len(tags) > 0 {
 			existingVaultTags = tags
 		}
 	}
@@ -241,12 +245,19 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		frontmatter = yamlHeader
 
 		mergedTagsStr := strings.Join(mergedTags, ", ")
-		if p.repo != nil {
-			_ = p.repo.UpdateArticleTags(context.Background(), job.ArticleID, mergedTagsStr)
+		if repo != nil {
+			_ = repo.UpdateArticleTags(context.Background(), job.ArticleID, mergedTagsStr)
 		}
 		if p.db != nil {
-			p.db.Exec("DELETE FROM articles_fts WHERE rowid = ?", job.ArticleID)
-			_ = p.db.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", job.ArticleID, metadata.Title, mergedTagsStr).Error
+			txErr := p.db.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Exec("DELETE FROM articles_fts WHERE rowid = ?", job.ArticleID).Error; err != nil {
+					return err
+				}
+				return tx.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", job.ArticleID, metadata.Title, mergedTagsStr).Error
+			})
+			if txErr != nil {
+				p.logger.Error("Pipeline failed to sync articles_fts index", zap.Error(txErr), zap.Int64("article_id", job.ArticleID))
+			}
 		}
 
 		p.logger.Info("Pipeline step [3/3]: Enriched OKF frontmatter and synchronized database tags",
