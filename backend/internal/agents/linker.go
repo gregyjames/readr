@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -276,9 +275,6 @@ Article Content:
 	// 4. Inject Semantic Links using Go with Protected Boundary Replacement
 	linksAdded := 0
 	if len(parsed.LinksToInject) > 0 {
-		// Regex matching markdown links, existing wikilinks, and code blocks
-		reProtected := regexp.MustCompile(`(\[\[[\s\S]*?\]\]|\[[\s\S]*?\]\([\s\S]*?\)|` + "`[\\s\\S]*?`" + `)`)
-
 		for _, link := range parsed.LinksToInject {
 			phrase := strings.TrimSpace(link.ExactPhraseInText)
 			if phrase == "" {

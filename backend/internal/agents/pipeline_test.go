@@ -30,6 +30,7 @@ func setupTestPipelineEnv(t *testing.T) (string, *gorm.DB, repository.Repository
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
