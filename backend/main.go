@@ -635,36 +635,30 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(404).JSON(fiber.Map{"error": "Article not found"})
 		}
 
-		apiKey, model := extractOpenRouterCredentials(c)
+		apiKey, _ := extractOpenRouterCredentials(c)
 
-		if c.Get("X-Agent-Enricher") == "true" {
+		settingsMu.RLock()
+		agentEnricher := serverSettings.AgentEnricher
+		agentLinker := serverSettings.AgentLinker
+		agentSummarizer := serverSettings.AgentSummarizer
+		settingsMu.RUnlock()
+
+		if agentEnricher {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeEnrichFrontmatter,
-				Payload: map[string]interface{}{
-					"api_key": apiKey,
-					"model":   model,
-				},
 			})
 		}
-		if c.Get("X-Agent-Linker") == "true" {
+		if agentLinker {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeAutoLinker,
-				Payload: map[string]interface{}{
-					"api_key": apiKey,
-					"model":   model,
-				},
 			})
 		}
-		if apiKey != "" && c.Get("X-Agent-Summarizer") != "false" {
+		if apiKey != "" && agentSummarizer {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeSummarizer,
-				Payload: map[string]interface{}{
-					"api_key": apiKey,
-					"model":   model,
-				},
 			})
 		}
 
@@ -901,34 +895,28 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		graphEngine.InvalidateCache()
 		logger.Info("Article added successfully", zap.Int64("id", article.ID), zap.String("url", body.URL))
 
-		if c.Get("X-Agent-Enricher") == "true" {
+		settingsMu.RLock()
+		agentEnricher := serverSettings.AgentEnricher
+		agentLinker := serverSettings.AgentLinker
+		agentSummarizer := serverSettings.AgentSummarizer
+		settingsMu.RUnlock()
+
+		if agentEnricher {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeEnrichFrontmatter,
-				Payload: map[string]interface{}{
-					"api_key": apiKey,
-					"model":   model,
-				},
 			})
 		}
-		if c.Get("X-Agent-Linker") == "true" {
+		if agentLinker {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeAutoLinker,
-				Payload: map[string]interface{}{
-					"api_key": apiKey,
-					"model":   model,
-				},
 			})
 		}
-		if apiKey != "" && c.Get("X-Agent-Summarizer") != "false" {
+		if apiKey != "" && agentSummarizer {
 			agents.SubmitJob(agents.Job{
 				ArticleID: article.ID,
 				Type:      agents.JobTypeSummarizer,
-				Payload: map[string]interface{}{
-					"api_key": apiKey,
-					"model":   model,
-				},
 			})
 		}
 		return c.JSON(fiber.Map{

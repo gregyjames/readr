@@ -83,13 +83,10 @@ const submitForm = async () => {
       ? (matchedTemplate.value?.name || '')
       : (selectedTemplate.value === 'none' ? 'none' : selectedTemplate.value)
 
-    await fetch('/api/add', {
+    const res = await fetch('/api/add', {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        'X-Agent-Enricher': settings.agent_enricher.toString(),
-        'X-Agent-Linker': settings.agent_linker.toString(),
-        'X-Agent-Summarizer': settings.agent_summarizer.toString(),
       },
       body: JSON.stringify({ 
         url: url.value,
