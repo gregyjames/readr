@@ -32,7 +32,7 @@ func dispatchArticleJobs(articleID int64, apiKey string, settings ServerSettings
 		ArticleID: articleID,
 		Type:      agents.JobTypePipeline,
 		Settings: agents.PipelineSettings{
-			Summarizer: apiKey != "" && settings.AgentSummarizer,
+			Summarizer: settings.AgentSummarizer,
 			Enricher:   settings.AgentEnricher,
 			Linker:     settings.AgentLinker,
 		},
