@@ -146,7 +146,7 @@ func (ing *Ingester) Ingest(ctx context.Context, req IngestRequest) (*IngestedAr
 	}
 
 	// 7. Atomic write to markdown storage
-	relFilePath, err := ing.storage.SaveMarkdown(filenameID, []byte(markdownDoc))
+	relFilePath, err := ing.storage.SaveMarkdownByTitle(extracted.Title, filenameID, []byte(markdownDoc))
 	if err != nil {
 		return nil, fmt.Errorf("save markdown failed: %w", err)
 	}

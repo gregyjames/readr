@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"example.com/backend/internal/agents"
@@ -32,7 +34,7 @@ func dispatchArticleJobs(articleID int64, apiKey string, settings ServerSettings
 		ArticleID: articleID,
 		Type:      agents.JobTypePipeline,
 		Settings: agents.PipelineSettings{
-			Summarizer: settings.AgentSummarizer,
+			Summarizer: apiKey != "" && settings.AgentSummarizer,
 			Enricher:   settings.AgentEnricher,
 			Linker:     settings.AgentLinker,
 		},
@@ -53,18 +55,75 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		return c.JSON(articles)
 	})
 
+	router.Get("/articles", func(c *fiber.Ctx) error {
+		articles, err := h.Repo.GetAllArticles(c.Context())
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{
+				"error": "Failed to retrieve articles",
+			})
+		}
+		return c.JSON(articles)
+	})
+
 	router.Get("/articles/:filename", func(c *fiber.Ctx) error {
 		filename := c.Params("filename")
-		clean := filepath.Clean(filename)
-		filePath := filepath.Join(h.DataDir, "articles", clean)
-
-		content, err := os.ReadFile(filePath)
-		if err != nil {
-			return c.Status(fiber.StatusNotFound).SendString("Article not found")
+		if unescaped, err := url.PathUnescape(filename); err == nil && unescaped != "" {
+			filename = unescaped
+		} else if unescaped, err := url.QueryUnescape(filename); err == nil && unescaped != "" {
+			filename = unescaped
 		}
-		c.Set("Content-Type", "text/markdown; charset=utf-8")
-		c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
-		return c.Send(content)
+		clean := filepath.Clean(filename)
+
+		// 1. Direct file lookup in data/articles/<clean>
+		filePath := filepath.Join(h.DataDir, "articles", clean)
+		if content, err := os.ReadFile(filePath); err == nil {
+			c.Set("Content-Type", "text/markdown; charset=utf-8")
+			c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+			return c.Send(content)
+		}
+
+		// 2. Direct file lookup with .md appended
+		if !strings.HasSuffix(clean, ".md") {
+			if content, err := os.ReadFile(filePath + ".md"); err == nil {
+				c.Set("Content-Type", "text/markdown; charset=utf-8")
+				c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+				return c.Send(content)
+			}
+		}
+
+		// 3. Lookup by numeric ID (e.g. "123" or "123.md")
+		numStr := strings.TrimSuffix(clean, ".md")
+		if id, err := strconv.ParseInt(numStr, 10, 64); err == nil && id > 0 {
+			var a repository.GormArticle
+			if err := h.DB.WithContext(c.Context()).Where("id = ? AND deleted_at IS NULL", id).First(&a).Error; err == nil {
+				if a.Article != "" {
+					relPath := strings.TrimPrefix(a.Article, "/")
+					candidate := filepath.Join(h.DataDir, relPath)
+					if content, err := os.ReadFile(candidate); err == nil {
+						c.Set("Content-Type", "text/markdown; charset=utf-8")
+						c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+						return c.Send(content)
+					}
+				}
+			}
+		}
+
+		// 4. Lookup by Title in DB
+		titleToLookup := strings.TrimSuffix(clean, ".md")
+		var a repository.GormArticle
+		if err := h.DB.WithContext(c.Context()).Where("LOWER(title) = LOWER(?) AND deleted_at IS NULL", titleToLookup).First(&a).Error; err == nil {
+			if a.Article != "" {
+				relPath := strings.TrimPrefix(a.Article, "/")
+				candidate := filepath.Join(h.DataDir, relPath)
+				if content, err := os.ReadFile(candidate); err == nil {
+					c.Set("Content-Type", "text/markdown; charset=utf-8")
+					c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+					return c.Send(content)
+				}
+			}
+		}
+
+		return c.Status(fiber.StatusNotFound).SendString("Article not found")
 	})
 
 	router.Post("/add", func(c *fiber.Ctx) error {
@@ -131,6 +190,9 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			h.Logger.Info("Attempting to delete article", zap.String("id", id))
 		}
 
+		var article repository.GormArticle
+		_ = h.DB.First(&article, id).Error
+
 		if err := h.DB.Delete(&repository.GormArticle{}, id).Error; err != nil {
 			if h.Logger != nil {
 				h.Logger.Error("Failed to delete article from DB", zap.String("id", id), zap.Error(err))
@@ -140,15 +202,10 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			})
 		}
 
-		deleteFileError := os.Remove(filepath.Join(h.DataDir, "articles", fmt.Sprintf("%s.md", id)))
-		if deleteFileError != nil {
-			if h.Logger != nil {
-				h.Logger.Error("Failed to delete article file", zap.String("id", id), zap.Error(deleteFileError))
-			}
-			return c.Status(500).JSON(fiber.Map{
-				"error": "Failed to delete article file",
-			})
+		if article.Article != "" {
+			_ = os.Remove(filepath.Join(h.DataDir, strings.TrimPrefix(article.Article, "/")))
 		}
+		_ = os.Remove(filepath.Join(h.DataDir, "articles", fmt.Sprintf("%s.md", id)))
 
 		deleteImagesError := os.RemoveAll(filepath.Join(h.DataDir, "images", id))
 		if deleteImagesError != nil {
@@ -203,7 +260,17 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Article not found"})
 		}
 
-		sourcePath := filepath.Join(h.DataDir, "articles", fmt.Sprintf("%s.md", id))
+		sourcePath := ""
+		if article.Article != "" {
+			candidate := filepath.Join(h.DataDir, strings.TrimPrefix(article.Article, "/"))
+			if _, err := os.Stat(candidate); err == nil {
+				sourcePath = candidate
+			}
+		}
+		if sourcePath == "" {
+			sourcePath = filepath.Join(h.DataDir, "articles", fmt.Sprintf("%s.md", id))
+		}
+
 		if err := os.WriteFile(sourcePath, []byte(req.Content), 0644); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save article"})
 		}
@@ -233,5 +300,26 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			h.GraphEngine.InvalidateCache()
 		}
 		return c.JSON(fiber.Map{"status": "success"})
+	})
+
+	router.Post("/vault/clean-links", func(c *fiber.Ctx) error {
+		res, err := CleanBrokenLinks(h.DB, h.DataDir, h.Logger)
+		if err != nil {
+			if h.Logger != nil {
+				h.Logger.Error("Failed to clean broken links in vault", zap.Error(err))
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to clean broken links in vault",
+			})
+		}
+
+		if h.GraphEngine != nil {
+			h.GraphEngine.InvalidateCache()
+		}
+		if h.EventHub != nil {
+			h.EventHub.Broadcast("graph-updated")
+		}
+
+		return c.JSON(res)
 	})
 }

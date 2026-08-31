@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
 	"github.com/hashicorp/go-retryablehttp"
 	"go.uber.org/zap"
@@ -52,9 +53,11 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		var a repository.GormArticle
 		if err := p.db.Table("articles").Where("id = ?", job.ArticleID).First(&a).Error; err == nil {
 			articleRecord = &repository.ArticleRecord{
-				ID:    a.ID,
-				Title: a.Title,
-				Tags:  a.Tags,
+				ID:        a.ID,
+				Title:     a.Title,
+				FilePath:  a.Article,
+				ImagePath: a.Image,
+				Tags:      a.Tags,
 			}
 		}
 	}
@@ -63,11 +66,31 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		articleTitle = articleRecord.Title
 	}
 
-	// 2. Read markdown file
-	filePath := filepath.Join(p.dataDirectory, "articles", fmt.Sprintf("%d.md", job.ArticleID))
+	// 2. Resolve and read markdown file
+	filePath := ""
+	if articleRecord != nil && articleRecord.FilePath != "" {
+		rel := strings.TrimPrefix(articleRecord.FilePath, "/")
+		candidate := filepath.Join(p.dataDirectory, rel)
+		if _, err := os.Stat(candidate); err == nil {
+			filePath = candidate
+		}
+	}
+	if filePath == "" {
+		if articleRecord != nil && articleRecord.Title != "" {
+			sanitized := ingest.SanitizeTitleFilename(articleRecord.Title, job.ArticleID)
+			candidate := filepath.Join(p.dataDirectory, "articles", sanitized)
+			if _, err := os.Stat(candidate); err == nil {
+				filePath = candidate
+			}
+		}
+	}
+	if filePath == "" {
+		filePath = filepath.Join(p.dataDirectory, "articles", fmt.Sprintf("%d.md", job.ArticleID))
+	}
+
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
-		p.logger.Error("Pipeline could not read file", zap.Error(err), zap.Int64("article_id", job.ArticleID))
+		p.logger.Error("Pipeline could not read file", zap.Error(err), zap.Int64("article_id", job.ArticleID), zap.String("path", filePath))
 		return
 	}
 	content := string(contentBytes)
@@ -380,7 +403,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 
 	// 7. Atomic file write
 	dir := filepath.Dir(filePath)
-	tmpFile := filepath.Join(dir, fmt.Sprintf("%d.md.tmp", job.ArticleID))
+	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(filePath)))
 	if err := os.WriteFile(tmpFile, []byte(newContent), 0644); err != nil {
 		p.logger.Error("Pipeline failed to write tmp markdown file", zap.Error(err))
 		recordMetric("failed", promptTokens, completionTokens, 0, "file write error: "+err.Error())

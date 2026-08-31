@@ -2,6 +2,7 @@ package agents
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -42,6 +43,19 @@ func injectLinksIntoBody(body string, links []llmLink, candidates []repository.A
 		for _, a := range candidates {
 			if a.ID == link.ExistingArticleID {
 				targetTitle = a.Title
+				if a.FilePath != "" {
+					base := strings.TrimSuffix(filepath.Base(a.FilePath), ".md")
+					isNum := len(base) > 0
+					for _, r := range base {
+						if r < '0' || r > '9' {
+							isNum = false
+							break
+						}
+					}
+					if !isNum && base != "" {
+						targetTitle = base
+					}
+				}
 				break
 			}
 		}
@@ -51,7 +65,7 @@ func injectLinksIntoBody(body string, links []llmLink, candidates []repository.A
 
 		// Format wikilink (aliased if phrase is different from title)
 		var replacement string
-		if strings.EqualFold(phrase, targetTitle) {
+		if phrase == targetTitle {
 			replacement = fmt.Sprintf("[[%s]]", targetTitle)
 		} else {
 			replacement = fmt.Sprintf("[[%s|%s]]", targetTitle, phrase)

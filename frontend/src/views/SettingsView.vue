@@ -337,10 +337,43 @@ const handleChangePassword = async () => {
     passwordError.value = res.error || 'Failed to update master password'
   }
 }
+
+// Vault Maintenance: Clean Broken Links
+const isCleaningLinks = ref(false)
+const cleanLinksResult = ref<{
+  scanned_articles: number
+  updated_articles: number
+  cleaned_links: number
+  purged_db_links: number
+} | null>(null)
+const cleanLinksError = ref<string | null>(null)
+
+const cleanBrokenLinks = async () => {
+  isCleaningLinks.value = true
+  cleanLinksResult.value = null
+  cleanLinksError.value = null
+  try {
+    const res = await fetch('/api/vault/clean-links', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.error || 'Failed to clean broken links')
+    }
+    cleanLinksResult.value = await res.json()
+  } catch (err: any) {
+    cleanLinksError.value = err.message || 'An unexpected error occurred during vault cleanup'
+  } finally {
+    isCleaningLinks.value = false
+  }
+}
 </script>
 
 <template>
-  <div class="mx-auto py-8 space-y-6 transition-all duration-300" :class="activeTab === 'diagnostics' ? 'max-w-5xl' : 'max-w-2xl'">
+  <div class="mx-auto py-8 space-y-6 transition-all duration-300" :class="activeTab === 'diagnostics' ? 'max-w-6xl' : 'max-w-2xl'">
     <!-- Header & Tab Navigation -->
     <div class="space-y-4">
       <div>
@@ -902,6 +935,66 @@ const handleChangePassword = async () => {
         </div>
       </form>
     </div>
+
+    <!-- Vault Maintenance Card -->
+    <div class="bg-white dark:bg-[#111] rounded-3xl border border-gray-200/70 dark:border-gray-800/70 p-6 sm:p-8 space-y-6 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.2)]">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-emerald-500"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            Vault Maintenance
+          </h2>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            Scan all markdown notes in your vault to convert broken wikilinks to clean text and purge orphaned database relations.
+          </p>
+        </div>
+      </div>
+
+      <!-- Result Banner -->
+      <div v-if="cleanLinksResult" class="p-4 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-800/40 text-xs text-emerald-800 dark:text-emerald-300 flex items-start gap-3">
+        <svg class="w-5 h-5 shrink-0 text-emerald-600 dark:text-emerald-400 mt-0.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <div class="space-y-1">
+          <p class="font-semibold">Vault Clean Up Complete</p>
+          <p>
+            Scanned <strong>{{ cleanLinksResult.scanned_articles }}</strong> notes • Cleaned <strong>{{ cleanLinksResult.cleaned_links }}</strong> broken links across <strong>{{ cleanLinksResult.updated_articles }}</strong> notes • Purged <strong>{{ cleanLinksResult.purged_db_links }}</strong> orphaned graph links.
+          </p>
+        </div>
+      </div>
+
+      <!-- Error Banner -->
+      <div v-if="cleanLinksError" class="p-4 rounded-2xl bg-red-50 dark:bg-red-950/30 border border-red-200/60 dark:border-red-800/40 text-xs text-red-800 dark:text-red-300 flex items-start gap-3">
+        <svg class="w-5 h-5 shrink-0 text-red-600 dark:text-red-400 mt-0.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <div>
+          <p class="font-semibold">Cleanup Failed</p>
+          <p>{{ cleanLinksError }}</p>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between pt-2">
+        <div class="text-xs text-gray-500 dark:text-gray-400">
+          Preserves original note wording and sentence flow while removing unresolved brackets.
+        </div>
+        <button
+          type="button"
+          @click="cleanBrokenLinks"
+          :disabled="isCleaningLinks"
+          class="bg-gray-100 hover:bg-gray-200 dark:bg-white/10 dark:hover:bg-white/15 text-gray-900 dark:text-gray-100 px-5 py-2.5 rounded-xl active:scale-[0.98] text-sm font-medium transition-all duration-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
+        >
+          <svg v-if="isCleaningLinks" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+          <svg v-else xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+          </svg>
+          {{ isCleaningLinks ? 'Scanning Vault...' : 'Clean Broken Links' }}
+        </button>
+      </div>
+    </div>
     </div> <!-- closes activeTab === 'general' -->
 
     <!-- Diagnostics Tab Content -->
@@ -1075,14 +1168,13 @@ const handleChangePassword = async () => {
                 <th class="px-5 py-3">Article</th>
                 <th class="px-5 py-3">Model</th>
                 <th class="px-5 py-3">Duration</th>
-                <th class="px-5 py-3">Retries</th>
                 <th class="px-5 py-3">Tokens (Prompt / Comp)</th>
                 <th class="px-5 py-3 text-right">Status</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100 dark:divide-gray-800/60">
               <tr v-if="filteredRuns.length === 0">
-                <td colspan="7" class="px-5 py-12 text-center text-gray-400 dark:text-gray-500">
+                <td colspan="6" class="px-5 py-12 text-center text-gray-400 dark:text-gray-500">
                   <svg class="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
@@ -1101,7 +1193,7 @@ const handleChangePassword = async () => {
                   </td>
 
                   <!-- Article Title -->
-                  <td class="px-5 py-3.5 font-medium text-gray-900 dark:text-gray-100 max-w-xs truncate">
+                  <td class="px-5 py-3.5 font-medium text-gray-900 dark:text-gray-100 max-w-sm truncate">
                     <span>{{ run.article_title || ('Article #' + run.article_id) }}</span>
                     <span v-if="run.error_message" class="ml-2 text-[10px] font-normal text-rose-500 dark:text-rose-400 underline">
                       (click to view error)
@@ -1113,20 +1205,16 @@ const handleChangePassword = async () => {
                     {{ run.model ? run.model.split('/').pop() : 'default' }}
                   </td>
 
-                  <!-- Duration -->
+                  <!-- Duration & Retries -->
                   <td class="px-5 py-3.5 whitespace-nowrap font-mono text-gray-900 dark:text-gray-100">
-                    {{ formatMs(run.duration_ms) }}
-                  </td>
-
-                  <!-- Retries -->
-                  <td class="px-5 py-3.5 whitespace-nowrap">
+                    <span>{{ formatMs(run.duration_ms) }}</span>
                     <span 
                       v-if="run.retry_count > 0"
-                      class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                      class="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                      :title="`${run.retry_count} ${run.retry_count === 1 ? 'retry' : 'retries'}`"
                     >
-                      {{ run.retry_count }} {{ run.retry_count === 1 ? 'retry' : 'retries' }}
+                      {{ run.retry_count }}r
                     </span>
-                    <span v-else class="text-gray-400 dark:text-gray-600 font-mono">0</span>
                   </td>
 
                   <!-- Tokens (Prompt / Comp) -->
@@ -1165,7 +1253,7 @@ const handleChangePassword = async () => {
 
                 <!-- Expanded Error Row -->
                 <tr v-if="expandedRunId === run.id && run.error_message" class="bg-rose-50/50 dark:bg-rose-950/20">
-                  <td colspan="7" class="px-5 py-3">
+                  <td colspan="6" class="px-5 py-3">
                     <div class="space-y-1">
                       <div class="text-[11px] font-semibold text-rose-700 dark:text-rose-400 flex items-center gap-1">
                         <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">

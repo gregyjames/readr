@@ -164,7 +164,7 @@ const filteredArticles = computed(() => {
             </button>
           </div>
           <router-link
-            :to="`${article.article}`"
+            :to="`/articles/${article.ID}`"
             class="block text-2xl leading-tight font-bold text-gray-900 dark:text-white hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors mb-4 tracking-tight before:absolute before:inset-0"
           >
             {{ article.title }}
@@ -251,7 +251,7 @@ const filteredArticles = computed(() => {
               </button>
             </div>
             <router-link
-              :to="`${article.article}`"
+              :to="`/articles/${article.ID}`"
               class="text-xl font-bold text-gray-900 dark:text-white hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors tracking-tight mb-2 leading-snug before:absolute before:inset-0"
             >
               {{ article.title }}

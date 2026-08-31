@@ -61,6 +61,15 @@ func (m *mockFileStorage) SaveMarkdown(filenameID int64, content []byte) (string
 	return path, nil
 }
 
+func (m *mockFileStorage) SaveMarkdownByTitle(title string, fallbackID int64, content []byte) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.markdownDocs[fallbackID] = content
+	path := "/articles/" + SanitizeTitleFilename(title, fallbackID)
+	m.files[path] = content
+	return path, nil
+}
+
 func (m *mockFileStorage) SaveImage(filenameID int64, filename string, data []byte) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

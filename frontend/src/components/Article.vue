@@ -20,7 +20,32 @@ const previewPos = ref({ top: 0, left: 0 })
 const showPreview = ref(false)
 let previewTimeout: any = null
 
-const getArticleId = () => String(route.params.id || '').replace('.md', '')
+interface ArticleData {
+  ID: number
+  title: string
+  image: string
+  article: string
+  tags: string
+}
+
+const allArticles = ref<ArticleData[]>([])
+
+const currentArticle = computed(() => {
+  const param = String(route.params.id || '').replace('.md', '').trim()
+  return allArticles.value.find(a => 
+    String(a.ID) === param ||
+    a.title.trim().toLowerCase() === param.toLowerCase() ||
+    a.article.replace('/articles/', '').replace('.md', '').trim().toLowerCase() === param.toLowerCase()
+  ) || null
+})
+
+const getArticleId = () => {
+  if (currentArticle.value) {
+    return String(currentArticle.value.ID)
+  }
+  return String(route.params.id || '').replace('.md', '').trim()
+}
+
 const router = useRouter()
 const articleRef = ref<HTMLElement | null>(null)
 const readingProgress = ref(0)
@@ -133,11 +158,6 @@ const knownProperties = computed(() => {
   return meta
 })
 
-const currentArticle = computed(() => {
-  const id = Number(getArticleId())
-  return allArticles.value.find(a => a.ID === id)
-})
-
 const articleTitle = computed(() => {
   return knownProperties.value.title || currentArticle.value?.title || ''
 })
@@ -247,7 +267,6 @@ const showLinker = ref(false)
 const linkerPos = ref({ top: 0, left: 0 })
 const selectedText = ref('')
 const searchInput = ref('')
-const allArticles = ref<ArticleData[]>([])
 
 const filteredArticles = computed(() => {
   const query = searchInput.value.toLowerCase()
@@ -256,14 +275,6 @@ const filteredArticles = computed(() => {
     a.title.toLowerCase().includes(query) && a.ID !== currentId
   )
 })
-
-interface ArticleData {
-  ID: number
-  title: string
-  image: string
-  article: string
-  tags: string
-}
 
 
 const graphDataCache = ref<any>(null)
@@ -428,10 +439,21 @@ const loadLocalGraph = async () => {
 const loadContent = async () => {
   try {
     articleError.value = ''
-    const articleID = getArticleId()
-    if (!articleID) return
+    const param = String(route.params.id || '').trim()
+    if (!param) return
 
-    const articleURL = `/api/articles/${articleID}.md`
+    if (allArticles.value.length === 0) {
+      await fetchArticles()
+    }
+
+    let articleURL = ''
+    if (currentArticle.value?.article) {
+      articleURL = currentArticle.value.article.startsWith('/api') ? currentArticle.value.article : `/api${currentArticle.value.article}`
+    } else {
+      const cleanParam = param.endsWith('.md') ? param : `${param}.md`
+      articleURL = `/api/articles/${encodeURIComponent(cleanParam)}`
+    }
+
     // Always append cache buster to prevent stale browser cache after navigation
     const fetchUrl = `${articleURL}?t=${Date.now()}`
 
@@ -447,7 +469,8 @@ const loadContent = async () => {
       
       const targetArticle = allArticles.value.find(a => 
         a.title.trim().toLowerCase() === targetTitle.toLowerCase() ||
-        String(a.ID) === targetTitle
+        String(a.ID) === targetTitle ||
+        a.article.replace('/articles/', '').replace('.md', '').trim().toLowerCase() === targetTitle.toLowerCase()
       )
 
       if (targetArticle) {

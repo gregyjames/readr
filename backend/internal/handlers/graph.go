@@ -51,13 +51,38 @@ func LinkArticles(db *gorm.DB, dataDir string, req LinkRequest) (*repository.Gor
 	}
 
 	// 3. Read and update markdown file
-	sourcePath := filepath.Join(dataDir, "articles", fmt.Sprintf("%d.md", req.SourceID))
+	sourcePath := ""
+	if source.Article != "" {
+		candidate := filepath.Join(dataDir, strings.TrimPrefix(source.Article, "/"))
+		if _, err := os.Stat(candidate); err == nil {
+			sourcePath = candidate
+		}
+	}
+	if sourcePath == "" {
+		sourcePath = filepath.Join(dataDir, "articles", fmt.Sprintf("%d.md", req.SourceID))
+	}
+
 	content, err := os.ReadFile(sourcePath)
 	if err != nil {
 		return nil, &LinkError{StatusCode: fiber.StatusInternalServerError, Message: "Could not read source article"}
 	}
 
-	wikilink := fmt.Sprintf("[[%s|%s]]", target.Title, req.SelectedText)
+	targetName := target.Title
+	if target.Article != "" {
+		base := strings.TrimSuffix(filepath.Base(target.Article), ".md")
+		isNum := len(base) > 0
+		for _, r := range base {
+			if r < '0' || r > '9' {
+				isNum = false
+				break
+			}
+		}
+		if !isNum && base != "" {
+			targetName = base
+		}
+	}
+
+	wikilink := fmt.Sprintf("[[%s|%s]]", targetName, req.SelectedText)
 	newContent := strings.Replace(string(content), req.SelectedText, wikilink, 1)
 
 	if err := os.WriteFile(sourcePath, []byte(newContent), 0644); err != nil {

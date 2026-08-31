@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"example.com/backend/internal/chat"
 	"example.com/backend/internal/graph"
@@ -21,6 +22,16 @@ type ArticleFileFetcher struct {
 }
 
 func (f *ArticleFileFetcher) GetMarkdownContent(ctx context.Context, id int64) (string, error) {
+	if f.DB != nil {
+		var a repository.GormArticle
+		if err := f.DB.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&a).Error; err == nil && a.Article != "" {
+			candidate := filepath.Join(f.DataDir, strings.TrimPrefix(a.Article, "/"))
+			if content, err := os.ReadFile(candidate); err == nil {
+				return string(content), nil
+			}
+		}
+	}
+
 	path := filepath.Join(f.DataDir, "articles", fmt.Sprintf("%d.md", id))
 	content, err := os.ReadFile(path)
 	if err != nil {
