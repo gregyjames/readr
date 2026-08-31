@@ -161,7 +161,7 @@ const handleChangePassword = async () => {
   passwordError.value = ''
   passwordSuccess.value = ''
 
-  if (!currentPassword.value) {
+  if (authState.isAuthConfigured && !currentPassword.value) {
     passwordError.value = 'Please enter your current password'
     return
   }
@@ -183,7 +183,9 @@ const handleChangePassword = async () => {
   isUpdatingPassword.value = false
 
   if (res.success) {
-    passwordSuccess.value = 'Master password updated successfully!'
+    authState.isAuthConfigured = true
+    authState.isAuthenticated = true
+    passwordSuccess.value = authState.isAuthConfigured ? 'Master password updated successfully!' : 'Master password set successfully!'
     currentPassword.value = ''
     newPassword.value = ''
     confirmNewPassword.value = ''
@@ -609,8 +611,8 @@ const handleChangePassword = async () => {
 
       <!-- Password Form -->
       <form @submit.prevent="handleChangePassword" class="space-y-4">
-        <!-- Current Password -->
-        <div class="space-y-2">
+        <!-- Current Password (only if already configured) -->
+        <div v-if="authState.isAuthConfigured" class="space-y-2">
           <label for="current-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
             Current Password
           </label>
@@ -621,7 +623,6 @@ const handleChangePassword = async () => {
               :type="showCurrentPassword ? 'text' : 'password'"
               placeholder="••••••••••••"
               class="w-full pl-4 pr-12 py-3 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-xl focus:bg-white dark:focus:bg-[#1a1a1a] focus:border-gray-300 dark:focus:border-gray-600 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-800 focus:outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-600 text-gray-900 dark:text-gray-100 text-sm font-mono"
-              required
             />
             <button
               type="button"
