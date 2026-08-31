@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,18 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestMain(m *testing.M) {
+	tempDir, err := os.MkdirTemp("", "readr-test-*")
+	if err == nil {
+		os.Setenv("DATA_DIR", tempDir)
+	}
+	code := m.Run()
+	if err == nil {
+		os.RemoveAll(tempDir)
+	}
+	os.Exit(code)
+}
 
 func initTestDB() *gorm.DB {
 	sqlDB, err := sql.Open("sqlite", "file::memory:?cache=shared")
@@ -1142,4 +1155,163 @@ func TestGetTemplatesEndpoint(t *testing.T) {
 		t.Errorf("Expected [github.com], got %+v", templates)
 	}
 }
+
+func TestAuthEndpoints_Flow(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("DATA_DIR", tempDir)
+	db := initTestDB()
+	app := setupApp(db)
+
+	// 1. Initial status: unconfigured
+	req := httptest.NewRequest("GET", "/api/auth/status", nil)
+	resp, err := app.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("GET /api/auth/status failed: %v", err)
+	}
+	var status struct {
+		AuthConfigured bool `json:"auth_configured"`
+		Authenticated  bool `json:"authenticated"`
+	}
+	body, _ := io.ReadAll(resp.Body)
+	json.Unmarshal(body, &status)
+	if status.AuthConfigured {
+		t.Fatalf("expected auth_configured to be false initially")
+	}
+
+	// 2. Setup master password
+	setupPayload, _ := json.Marshal(map[string]string{"password": "testPassword123"})
+	req = httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(setupPayload))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = app.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("POST /api/auth/setup failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("POST /api/auth/setup failed with status %d", resp.StatusCode)
+	}
+
+	// 3. Login with password
+	loginPayload, _ := json.Marshal(map[string]string{"password": "testPassword123"})
+	req = httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(loginPayload))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = app.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("POST /api/auth/login failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("POST /api/auth/login failed with status %d", resp.StatusCode)
+	}
+	cookieHeader := resp.Header.Get("Set-Cookie")
+	if !strings.Contains(cookieHeader, "readr_session=") {
+		t.Fatalf("expected Set-Cookie readr_session, got: %s", cookieHeader)
+	}
+
+	// 4. Change password -> issues new token and rotates secret
+	changePayload, _ := json.Marshal(map[string]string{
+		"current_password": "testPassword123",
+		"new_password":     "newSecretPassword456",
+	})
+	req = httptest.NewRequest("POST", "/api/auth/change-password", bytes.NewReader(changePayload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", cookieHeader)
+	resp, err = app.Test(req, 10000)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("POST /api/auth/change-password failed: %v, status: %d", err, resp.StatusCode)
+	}
+
+	// 5. Old session cookie is now invalid (due to rotated SessionSecret)
+	req = httptest.NewRequest("GET", "/api/auth/status", nil)
+	req.Header.Set("Cookie", cookieHeader)
+	resp, err = app.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("GET /api/auth/status failed: %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	json.Unmarshal(body, &status)
+	if status.Authenticated {
+		t.Fatalf("expected old session token to be invalid after password change")
+	}
+
+	// 6. Logout rotates secret and invalidates any sessions
+	req = httptest.NewRequest("POST", "/api/auth/logout", nil)
+	resp, err = app.Test(req, 10000)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("POST /api/auth/logout failed: %v, status: %d", err, resp.StatusCode)
+	}
+}
+
+func TestAuthMiddleware_Protection(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("DATA_DIR", tempDir)
+	os.MkdirAll(filepath.Join(tempDir, "articles"), 0755)
+	os.WriteFile(filepath.Join(tempDir, "articles", "1.md"), []byte("# Article 1"), 0644)
+	db := initTestDB()
+	app := setupApp(db)
+
+	// Setup password
+	setupPayload, _ := json.Marshal(map[string]string{"password": "secretPassword"})
+	req := httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(setupPayload))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("POST /api/auth/setup failed: %v", err)
+	}
+	cookie := resp.Header.Get("Set-Cookie")
+
+	// Protected endpoint without cookie -> 401
+	req = httptest.NewRequest("GET", "/api/getarticles", nil)
+	resp, err = app.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("GET /api/getarticles failed: %v", err)
+	}
+	if resp.StatusCode != 401 {
+		t.Fatalf("expected 401 for unauthenticated request, got %d", resp.StatusCode)
+	}
+
+	// Protected endpoint with valid cookie -> 200
+	req = httptest.NewRequest("GET", "/api/getarticles", nil)
+	req.Header.Set("Cookie", cookie)
+	resp, err = app.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("GET /api/getarticles with cookie failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 for authenticated request, got %d", resp.StatusCode)
+	}
+
+	// Protected endpoint with Bearer token -> 200
+	// Extract token from cookie (readr_session=<token>; ...)
+	parts := strings.Split(cookie, ";")
+	tokenPart := strings.TrimPrefix(parts[0], "readr_session=")
+	req = httptest.NewRequest("GET", "/api/getarticles", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenPart)
+	resp, err = app.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("GET /api/getarticles with Bearer failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 for Bearer authenticated request, got %d", resp.StatusCode)
+	}
+
+	// Verify /api/articles/:filename route is also protected
+	req = httptest.NewRequest("GET", "/api/articles/1.md", nil)
+	resp, err = app.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("GET /api/articles/1.md failed: %v", err)
+	}
+	if resp.StatusCode != 401 {
+		t.Fatalf("expected 401 for unauthenticated /api/articles/1.md, got %d", resp.StatusCode)
+	}
+
+	req = httptest.NewRequest("GET", "/api/articles/1.md", nil)
+	req.Header.Set("Cookie", cookie)
+	resp, err = app.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("GET /api/articles/1.md with cookie failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 for authenticated /api/articles/1.md, got %d", resp.StatusCode)
+	}
+}
+
 

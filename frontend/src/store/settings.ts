@@ -1,12 +1,17 @@
 import { reactive } from 'vue'
 
+const savedTheme = typeof window !== 'undefined' ? localStorage.getItem('readr_theme') : null
+if (typeof document !== 'undefined' && savedTheme) {
+  document.documentElement.className = savedTheme
+}
+
 export const settings = reactive({
   api_key: '',
   model: 'openai/gpt-4o-mini',
   agent_enricher: true,
   agent_linker: true,
   agent_summarizer: true,
-  theme: 'light',
+  theme: savedTheme || 'light',
   view_mode: 'card',
   graph_context_expansion: true,
 })
@@ -24,7 +29,10 @@ export async function initSettings() {
     console.error('Failed to load settings:', e)
   } finally {
     isSettingsLoaded.value = true
-    document.documentElement.className = settings.theme
+    if (settings.theme) {
+      try { localStorage.setItem('readr_theme', settings.theme) } catch {}
+      document.documentElement.className = settings.theme
+    }
   }
 }
 
@@ -37,5 +45,8 @@ export async function saveSettingsToServer() {
   if (!res.ok) {
     throw new Error('Network response was not ok')
   }
-  document.documentElement.className = settings.theme
+  if (settings.theme) {
+    try { localStorage.setItem('readr_theme', settings.theme) } catch {}
+    document.documentElement.className = settings.theme
+  }
 }

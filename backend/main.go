@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"example.com/backend/internal/agents"
+	"example.com/backend/internal/auth"
 	"example.com/backend/internal/chat"
 	"example.com/backend/internal/graph"
 	"example.com/backend/internal/ingest"
@@ -60,6 +61,8 @@ type ServerSettings struct {
 	Theme                 string `json:"theme"`
 	ViewMode              string `json:"view_mode"`
 	GraphContextExpansion bool   `json:"graph_context_expansion"`
+	PasswordHash          string `json:"password_hash,omitempty"`
+	SessionSecret         string `json:"session_secret,omitempty"`
 }
 
 func loadServerSettings(dataDir string) ServerSettings {
@@ -75,15 +78,23 @@ func loadServerSettings(dataDir string) ServerSettings {
 	}
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
-		_ = saveServerSettings(dataDir, defaults)
-		return defaults
+		if os.IsNotExist(err) {
+			defaults.SessionSecret, _ = auth.GenerateRandomSecret()
+			_ = saveServerSettings(dataDir, defaults)
+			return defaults
+		}
+		logger.Fatal("Failed to read settings file", zap.String("path", settingsPath), zap.Error(err))
 	}
 	s := defaults
 	if err := json.Unmarshal(data, &s); err != nil {
-		return defaults
+		logger.Fatal("Failed to parse settings file", zap.String("path", settingsPath), zap.Error(err))
 	}
 	if s.Model == "" {
 		s.Model = "openai/gpt-4o-mini"
+	}
+	if s.SessionSecret == "" {
+		s.SessionSecret, _ = auth.GenerateRandomSecret()
+		_ = saveServerSettings(dataDir, s)
 	}
 	return s
 }
@@ -159,7 +170,7 @@ type LinkRequest struct {
 	SelectedText string `json:"selectedText"`
 }
 
-var logger *zap.Logger
+var logger = zap.NewNop()
 
 func initLogger() {
 	config := zap.NewProductionEncoderConfig()
@@ -407,20 +418,6 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return err
 	})
 
-	app.Get("/api/articles/:filename", func(c *fiber.Ctx) error {
-		filename := c.Params("filename")
-		clean := filepath.Clean(filename)
-		filePath := filepath.Join(dataDirectory, "articles", clean)
-
-		content, err := os.ReadFile(filePath)
-		if err != nil {
-			return c.Status(fiber.StatusNotFound).SendString("Article not found")
-		}
-		c.Set("Content-Type", "text/markdown; charset=utf-8")
-		// Prevent aggressive browser caching of raw files
-		c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
-		return c.Send(content)
-	})
 	app.Static("/images", filepath.Join(dataDirectory, "images"))
 
 	repo := repository.NewGormRepository(db)
@@ -449,6 +446,223 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	api := app.Group("/api")
 
+	extractSessionToken := func(c *fiber.Ctx) string {
+		token := c.Cookies("readr_session")
+		if token == "" {
+			authHeader := c.Get("Authorization")
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+			}
+		}
+		return token
+	}
+
+	setSessionCookie := func(c *fiber.Ctx, token string) {
+		isSecure := c.Protocol() == "https" || c.Get("X-Forwarded-Proto") == "https"
+		c.Cookie(&fiber.Cookie{
+			Name:     "readr_session",
+			Value:    token,
+			Path:     "/",
+			MaxAge:   int(auth.SessionMaxAge.Seconds()),
+			HTTPOnly: true,
+			Secure:   isSecure,
+			SameSite: "Lax",
+		})
+	}
+
+	clearSessionCookie := func(c *fiber.Ctx) {
+		isSecure := c.Protocol() == "https" || c.Get("X-Forwarded-Proto") == "https"
+		c.Cookie(&fiber.Cookie{
+			Name:     "readr_session",
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HTTPOnly: true,
+			Secure:   isSecure,
+			SameSite: "Lax",
+		})
+	}
+
+	api.Use(func(c *fiber.Ctx) error {
+		path := c.Path()
+		if path == "/api/auth/status" || path == "/api/auth/login" || path == "/api/auth/setup" || path == "/api/auth/logout" {
+			return c.Next()
+		}
+
+		settingsMu.RLock()
+		pwdHash := serverSettings.PasswordHash
+		secret := serverSettings.SessionSecret
+		settingsMu.RUnlock()
+
+		// If no password is set, allow access
+		if pwdHash == "" {
+			return c.Next()
+		}
+
+		token := extractSessionToken(c)
+		if token == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+		}
+
+		valid, err := auth.VerifySession(secret, token, time.Now())
+		if err != nil || !valid {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+		}
+
+		return c.Next()
+	})
+
+	api.Get("/auth/status", func(c *fiber.Ctx) error {
+		settingsMu.RLock()
+		pwdHash := serverSettings.PasswordHash
+		secret := serverSettings.SessionSecret
+		theme := serverSettings.Theme
+		settingsMu.RUnlock()
+
+		authConfigured := pwdHash != ""
+		authenticated := false
+
+		if authConfigured {
+			token := extractSessionToken(c)
+			if token != "" {
+				valid, err := auth.VerifySession(secret, token, time.Now())
+				if err == nil && valid {
+					authenticated = true
+				}
+			}
+		}
+
+		if theme == "" {
+			theme = "light"
+		}
+
+		return c.JSON(fiber.Map{
+			"auth_configured": authConfigured,
+			"authenticated":   authenticated,
+			"theme":           theme,
+		})
+	})
+
+	api.Post("/auth/setup", func(c *fiber.Ctx) error {
+		settingsMu.Lock()
+		defer settingsMu.Unlock()
+
+		if serverSettings.PasswordHash != "" {
+			return c.Status(400).JSON(fiber.Map{"error": "Authentication is already configured"})
+		}
+
+		var req struct {
+			Password string `json:"password"`
+		}
+		if err := c.BodyParser(&req); err != nil || len(strings.TrimSpace(req.Password)) < 6 {
+			return c.Status(400).JSON(fiber.Map{"error": "Password must be at least 6 characters"})
+		}
+
+		hash, err := auth.HashPassword(req.Password)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to hash password"})
+		}
+
+		newSettings := serverSettings
+		newSettings.PasswordHash = hash
+		if newSettings.SessionSecret == "" {
+			newSettings.SessionSecret, _ = auth.GenerateRandomSecret()
+		}
+
+		if err := saveServerSettings(dataDirectory, newSettings); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to save settings"})
+		}
+		serverSettings = newSettings
+
+		// Issue session
+		token := auth.SignSession(serverSettings.SessionSecret, time.Now())
+		setSessionCookie(c, token)
+
+		return c.JSON(fiber.Map{"status": "success", "token": token})
+	})
+
+	api.Post("/auth/login", func(c *fiber.Ctx) error {
+		settingsMu.RLock()
+		pwdHash := serverSettings.PasswordHash
+		secret := serverSettings.SessionSecret
+		settingsMu.RUnlock()
+
+		if pwdHash == "" {
+			return c.JSON(fiber.Map{"status": "success", "message": "Auth not required"})
+		}
+
+		var req struct {
+			Password string `json:"password"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "Invalid request"})
+		}
+
+		if !auth.VerifyPassword(pwdHash, req.Password) {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid password"})
+		}
+
+		token := auth.SignSession(secret, time.Now())
+		setSessionCookie(c, token)
+
+		return c.JSON(fiber.Map{"status": "success", "token": token})
+	})
+
+	api.Post("/auth/logout", func(c *fiber.Ctx) error {
+		settingsMu.Lock()
+		if newSecret, err := auth.GenerateRandomSecret(); err == nil {
+			newSettings := serverSettings
+			newSettings.SessionSecret = newSecret
+			if err := saveServerSettings(dataDirectory, newSettings); err == nil {
+				serverSettings = newSettings
+			}
+		}
+		settingsMu.Unlock()
+
+		clearSessionCookie(c)
+		return c.JSON(fiber.Map{"status": "success"})
+	})
+
+	api.Post("/auth/change-password", func(c *fiber.Ctx) error {
+		var req struct {
+			CurrentPassword string `json:"current_password"`
+			NewPassword     string `json:"new_password"`
+		}
+		if err := c.BodyParser(&req); err != nil || len(strings.TrimSpace(req.NewPassword)) < 6 {
+			return c.Status(400).JSON(fiber.Map{"error": "New password must be at least 6 characters"})
+		}
+
+		settingsMu.Lock()
+		defer settingsMu.Unlock()
+
+		if serverSettings.PasswordHash != "" {
+			if !auth.VerifyPassword(serverSettings.PasswordHash, req.CurrentPassword) {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Current password incorrect"})
+			}
+		}
+
+		hash, err := auth.HashPassword(req.NewPassword)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to hash password"})
+		}
+
+		newSecret, _ := auth.GenerateRandomSecret()
+		newSettings := serverSettings
+		newSettings.PasswordHash = hash
+		if newSecret != "" {
+			newSettings.SessionSecret = newSecret
+		}
+		if err := saveServerSettings(dataDirectory, newSettings); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to save settings"})
+		}
+		serverSettings = newSettings
+
+		token := auth.SignSession(serverSettings.SessionSecret, time.Now())
+		setSessionCookie(c, token)
+
+		return c.JSON(fiber.Map{"status": "success", "token": token})
+	})
+
 	extractOpenRouterCredentials := func(c *fiber.Ctx) (string, string) {
 		settingsMu.RLock()
 		defer settingsMu.RUnlock()
@@ -462,6 +676,21 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to list templates"})
 		}
 		return c.JSON(templates)
+	})
+
+	api.Get("/articles/:filename", func(c *fiber.Ctx) error {
+		filename := c.Params("filename")
+		clean := filepath.Clean(filename)
+		filePath := filepath.Join(dataDirectory, "articles", clean)
+
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			return c.Status(fiber.StatusNotFound).SendString("Article not found")
+		}
+		c.Set("Content-Type", "text/markdown; charset=utf-8")
+		// Prevent aggressive browser caching of raw files
+		c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+		return c.Send(content)
 	})
 
 	api.Get("/chats", func(c *fiber.Ctx) error {
@@ -622,6 +851,8 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		if newSettings.Model == "" {
 			newSettings.Model = "openai/gpt-4o-mini"
 		}
+		newSettings.PasswordHash = serverSettings.PasswordHash
+		newSettings.SessionSecret = serverSettings.SessionSecret
 
 		if err := saveServerSettings(dataDirectory, newSettings); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to save settings"})
