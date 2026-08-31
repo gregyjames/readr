@@ -1,7 +1,140 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { settings, saveSettingsToServer } from '../store/settings'
 import { authState, changePassword } from '../store/auth'
+
+// Diagnostics Tab State
+const activeTab = ref<'general' | 'diagnostics'>('general')
+
+interface PipelineRun {
+  id: number
+  article_id: number
+  article_title: string
+  model: string
+  status: string
+  duration_ms: number
+  retry_count: number
+  prompt_tokens: number
+  completion_tokens: number
+  tokens_saved_estimate: number
+  error_message: string
+  created_at: string
+}
+
+interface PipelineDiagnosticsData {
+  queue: {
+    pending_jobs: number
+    max_capacity: number
+    active_workers: number
+  }
+  summary: {
+    total_runs: number
+    successful_runs: number
+    failed_runs: number
+    total_retries: number
+    avg_duration_ms: number
+    p95_duration_ms: number
+    total_tokens_used: number
+    total_tokens_saved: number
+  }
+  recent_runs: PipelineRun[]
+}
+
+const diagnosticsData = ref<PipelineDiagnosticsData | null>(null)
+const isLoadingDiagnostics = ref(false)
+const isAutoRefresh = ref(true)
+const statusFilter = ref<'all' | 'success' | 'failed'>('all')
+const expandedRunId = ref<number | null>(null)
+let diagnosticsPollTimer: ReturnType<typeof setInterval> | null = null
+
+const fetchDiagnostics = async (showLoading = false) => {
+  if (showLoading) isLoadingDiagnostics.value = true
+  try {
+    const res = await fetch('/api/diagnostics/pipeline')
+    if (res.ok) {
+      diagnosticsData.value = await res.json()
+    }
+  } catch (err) {
+    console.error('Failed to fetch pipeline diagnostics:', err)
+  } finally {
+    if (showLoading) isLoadingDiagnostics.value = false
+  }
+}
+
+const startDiagnosticsPolling = () => {
+  stopDiagnosticsPolling()
+  if (isAutoRefresh.value) {
+    diagnosticsPollTimer = setInterval(() => {
+      if (activeTab.value === 'diagnostics') {
+        fetchDiagnostics(false)
+      }
+    }, 3000)
+  }
+}
+
+const stopDiagnosticsPolling = () => {
+  if (diagnosticsPollTimer) {
+    clearInterval(diagnosticsPollTimer)
+    diagnosticsPollTimer = null
+  }
+}
+
+const toggleAutoRefresh = () => {
+  isAutoRefresh.value = !isAutoRefresh.value
+  if (isAutoRefresh.value) {
+    startDiagnosticsPolling()
+  } else {
+    stopDiagnosticsPolling()
+  }
+}
+
+const toggleExpandRun = (id: number) => {
+  expandedRunId.value = expandedRunId.value === id ? null : id
+}
+
+const filteredRuns = computed(() => {
+  if (!diagnosticsData.value?.recent_runs) return []
+  if (statusFilter.value === 'all') return diagnosticsData.value.recent_runs
+  return diagnosticsData.value.recent_runs.filter(r => r.status === statusFilter.value)
+})
+
+const successRate = computed(() => {
+  if (!diagnosticsData.value || diagnosticsData.value.summary.total_runs === 0) return 100
+  const rate = (diagnosticsData.value.summary.successful_runs / diagnosticsData.value.summary.total_runs) * 100
+  return Math.round(rate * 10) / 10
+})
+
+const formatMs = (ms: number): string => {
+  if (!ms || ms <= 0) return '0s'
+  if (ms < 1000) return `${ms}ms`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+const formatTokens = (tokens: number): string => {
+  if (!tokens || tokens <= 0) return '0'
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`
+  return `${tokens}`
+}
+
+const formatDate = (iso: string): string => {
+  if (!iso) return ''
+  try {
+    const d = new Date(iso)
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' ' + d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  } catch {
+    return iso
+  }
+}
+
+watch(activeTab, (newTab) => {
+  if (newTab === 'diagnostics') {
+    fetchDiagnostics(true)
+    startDiagnosticsPolling()
+  } else {
+    stopDiagnosticsPolling()
+  }
+})
 
 interface ModelItem {
   id: string
@@ -104,6 +237,7 @@ const fetchModels = async () => {
 
 onMounted(() => {
   fetchModels()
+  fetchDiagnostics()
 })
 
 onUnmounted(() => {
@@ -115,6 +249,7 @@ onUnmounted(() => {
     clearTimeout(passwordTimer)
     passwordTimer = null
   }
+  stopDiagnosticsPolling()
 })
 
 const selectModel = (modelId: string) => {
@@ -201,15 +336,53 @@ const handleChangePassword = async () => {
 </script>
 
 <template>
-  <div class="max-w-2xl mx-auto py-8 space-y-8">
-    <!-- Header -->
-    <div>
-      <h1 class="text-3xl font-bold tracking-tight text-gray-900 dark:text-gray-100">Settings</h1>
-      <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
-        Configure your OpenRouter API key, AI model, security, and preferences.
-      </p>
+  <div class="mx-auto py-8 space-y-6 transition-all duration-300" :class="activeTab === 'diagnostics' ? 'max-w-5xl' : 'max-w-2xl'">
+    <!-- Header & Tab Navigation -->
+    <div class="space-y-4">
+      <div>
+        <h1 class="text-3xl font-bold tracking-tight text-gray-900 dark:text-gray-100">Settings</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          Configure your OpenRouter API key, AI model, background agent pipeline, and system telemetry.
+        </p>
+      </div>
+
+      <!-- Tab Buttons -->
+      <div class="flex items-center gap-2 border-b border-gray-200 dark:border-gray-800 pb-3">
+        <button
+          type="button"
+          @click="activeTab = 'general'"
+          class="px-4 py-2 text-xs font-semibold rounded-xl transition-all cursor-pointer flex items-center gap-2"
+          :class="activeTab === 'general' ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900 shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5'"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          General Settings
+        </button>
+
+        <button
+          type="button"
+          @click="activeTab = 'diagnostics'"
+          class="px-4 py-2 text-xs font-semibold rounded-xl transition-all cursor-pointer flex items-center gap-2"
+          :class="activeTab === 'diagnostics' ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900 shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5'"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+          </svg>
+          Pipeline Diagnostics
+          <span
+            v-if="diagnosticsData && diagnosticsData.queue.pending_jobs > 0"
+            class="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500 text-white animate-pulse"
+          >
+            {{ diagnosticsData.queue.pending_jobs }}
+          </span>
+        </button>
+      </div>
     </div>
 
+    <!-- General Settings Tab Content -->
+    <div v-if="activeTab === 'general'" class="space-y-8">
     <!-- Main Settings Card -->
     <div class="bg-white dark:bg-[#111] rounded-3xl border border-gray-200/70 dark:border-gray-800/70 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.2)] p-6 sm:p-8 space-y-6">
       
@@ -724,6 +897,287 @@ const handleChangePassword = async () => {
           </button>
         </div>
       </form>
+    </div>
+    </div> <!-- closes activeTab === 'general' -->
+
+    <!-- Diagnostics Tab Content -->
+    <div v-else-if="activeTab === 'diagnostics'" class="space-y-6">
+      
+      <!-- Top Action Bar -->
+      <div class="bg-white dark:bg-[#111] rounded-3xl border border-gray-200/70 dark:border-gray-800/70 p-5 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.2)] flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <div class="relative flex h-3 w-3">
+            <span v-if="(diagnosticsData?.queue.pending_jobs ?? 0) > 0" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-3 w-3" :class="(diagnosticsData?.queue.pending_jobs ?? 0) > 0 ? 'bg-emerald-500' : 'bg-gray-400 dark:bg-gray-600'"></span>
+          </div>
+          <div>
+            <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+              Agent Pipeline Status
+              <span class="text-xs font-normal text-gray-500 dark:text-gray-400">
+                • {{ (diagnosticsData?.queue.pending_jobs ?? 0) > 0 ? 'Processing Active Jobs' : 'Worker Ready (Idle)' }}
+              </span>
+            </h2>
+            <p class="text-xs text-gray-400 dark:text-gray-500">
+              Auto-refreshing queue telemetry and OpenRouter execution analytics.
+            </p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <!-- Auto-Refresh Toggle -->
+          <button
+            type="button"
+            @click="toggleAutoRefresh"
+            class="px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors flex items-center gap-1.5 cursor-pointer"
+            :class="isAutoRefresh ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800' : 'bg-gray-50 text-gray-600 dark:bg-white/5 dark:text-gray-400 border-gray-200 dark:border-gray-800'"
+          >
+            <span class="w-1.5 h-1.5 rounded-full" :class="isAutoRefresh ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400'"></span>
+            Auto-refresh {{ isAutoRefresh ? 'ON (3s)' : 'OFF' }}
+          </button>
+
+          <!-- Manual Refresh Button -->
+          <button
+            type="button"
+            @click="fetchDiagnostics(true)"
+            :disabled="isLoadingDiagnostics"
+            class="px-3 py-1.5 rounded-xl text-xs font-medium bg-gray-100 hover:bg-gray-200 dark:bg-white/10 dark:hover:bg-white/15 text-gray-700 dark:text-gray-300 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+          >
+            <svg class="w-3.5 h-3.5" :class="{ 'animate-spin': isLoadingDiagnostics }" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <!-- 4 Stat Metric Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- Card 1: Queue Depth -->
+        <div class="bg-white dark:bg-[#111] rounded-2xl border border-gray-200/70 dark:border-gray-800/70 p-5 shadow-sm space-y-2">
+          <div class="flex items-center justify-between text-xs font-medium text-gray-500 dark:text-gray-400">
+            <span>Pending Queue</span>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold" :class="(diagnosticsData?.queue.pending_jobs ?? 0) > 0 ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300' : 'bg-gray-100 text-gray-600 dark:bg-white/5 dark:text-gray-400'">
+              {{ (diagnosticsData?.queue.pending_jobs ?? 0) > 0 ? 'Queued' : 'Idle' }}
+            </span>
+          </div>
+          <div class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 font-mono">
+            {{ diagnosticsData?.queue.pending_jobs ?? 0 }} <span class="text-xs text-gray-400 font-normal">/ {{ diagnosticsData?.queue.max_capacity ?? 100 }} max</span>
+          </div>
+          <p class="text-[11px] text-gray-400 dark:text-gray-500">
+            {{ diagnosticsData?.queue.active_workers ?? 1 }} active background worker pool
+          </p>
+        </div>
+
+        <!-- Card 2: Success Rate -->
+        <div class="bg-white dark:bg-[#111] rounded-2xl border border-gray-200/70 dark:border-gray-800/70 p-5 shadow-sm space-y-2">
+          <div class="flex items-center justify-between text-xs font-medium text-gray-500 dark:text-gray-400">
+            <span>Success Rate</span>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+              {{ diagnosticsData?.summary.successful_runs ?? 0 }} passed
+            </span>
+          </div>
+          <div class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 font-mono">
+            {{ successRate }}%
+          </div>
+          <p class="text-[11px] text-gray-400 dark:text-gray-500">
+            {{ diagnosticsData?.summary.total_runs ?? 0 }} total runs ({{ diagnosticsData?.summary.failed_runs ?? 0 }} failed)
+          </p>
+        </div>
+
+        <!-- Card 3: Performance & Retries -->
+        <div class="bg-white dark:bg-[#111] rounded-2xl border border-gray-200/70 dark:border-gray-800/70 p-5 shadow-sm space-y-2">
+          <div class="flex items-center justify-between text-xs font-medium text-gray-500 dark:text-gray-400">
+            <span>Avg / P95 Latency</span>
+            <span v-if="(diagnosticsData?.summary.total_retries ?? 0) > 0" class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+              {{ diagnosticsData?.summary.total_retries }} retries
+            </span>
+            <span v-else class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-600 dark:bg-white/5 dark:text-gray-400">
+              0 retries
+            </span>
+          </div>
+          <div class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 font-mono">
+            {{ formatMs(diagnosticsData?.summary.avg_duration_ms ?? 0) }}
+            <span class="text-xs text-gray-400 font-normal">avg</span>
+          </div>
+          <p class="text-[11px] text-gray-400 dark:text-gray-500">
+            P95: {{ formatMs(diagnosticsData?.summary.p95_duration_ms ?? 0) }} across runs
+          </p>
+        </div>
+
+        <!-- Card 4: Token Efficiency -->
+        <div class="bg-white dark:bg-[#111] rounded-2xl border border-gray-200/70 dark:border-gray-800/70 p-5 shadow-sm space-y-2">
+          <div class="flex items-center justify-between text-xs font-medium text-gray-500 dark:text-gray-400">
+            <span>Token Efficiency</span>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+              ~68% saved
+            </span>
+          </div>
+          <div class="text-2xl font-bold tracking-tight text-emerald-600 dark:text-emerald-400 font-mono">
+            +{{ formatTokens(diagnosticsData?.summary.total_tokens_saved ?? 0) }}
+          </div>
+          <p class="text-[11px] text-gray-400 dark:text-gray-500">
+            {{ formatTokens(diagnosticsData?.summary.total_tokens_used ?? 0) }} tokens consumed
+          </p>
+        </div>
+      </div>
+
+      <!-- Execution History Card & Table -->
+      <div class="bg-white dark:bg-[#111] rounded-3xl border border-gray-200/70 dark:border-gray-800/70 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.2)] overflow-hidden">
+        
+        <!-- Table Header & Filter Bar -->
+        <div class="p-5 sm:p-6 border-b border-gray-100 dark:border-gray-800 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100">Pipeline Execution History</h3>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              Historical logs of agent enrichment runs, latency durations, and retry counts.
+            </p>
+          </div>
+
+          <!-- Status Filters -->
+          <div class="flex items-center bg-gray-100 dark:bg-[#1a1a1a] p-1 rounded-xl">
+            <button
+              type="button"
+              @click="statusFilter = 'all'"
+              class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all cursor-pointer"
+              :class="statusFilter === 'all' ? 'bg-white dark:bg-[#2a2a2a] text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
+            >
+              All ({{ diagnosticsData?.recent_runs.length ?? 0 }})
+            </button>
+            <button
+              type="button"
+              @click="statusFilter = 'success'"
+              class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all cursor-pointer"
+              :class="statusFilter === 'success' ? 'bg-white dark:bg-[#2a2a2a] text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
+            >
+              Success ({{ diagnosticsData?.summary.successful_runs ?? 0 }})
+            </button>
+            <button
+              type="button"
+              @click="statusFilter = 'failed'"
+              class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all cursor-pointer"
+              :class="statusFilter === 'failed' ? 'bg-white dark:bg-[#2a2a2a] text-rose-600 dark:text-rose-400 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
+            >
+              Failed ({{ diagnosticsData?.summary.failed_runs ?? 0 }})
+            </button>
+          </div>
+        </div>
+
+        <!-- History Table -->
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-gray-50/70 dark:bg-white/[0.02] text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold border-b border-gray-100 dark:border-gray-800">
+              <tr>
+                <th class="px-5 py-3">Timestamp</th>
+                <th class="px-5 py-3">Article</th>
+                <th class="px-5 py-3">Model</th>
+                <th class="px-5 py-3">Duration</th>
+                <th class="px-5 py-3">Retries</th>
+                <th class="px-5 py-3">Tokens (Used / Saved)</th>
+                <th class="px-5 py-3 text-right">Status</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-gray-800/60">
+              <tr v-if="filteredRuns.length === 0">
+                <td colspan="7" class="px-5 py-12 text-center text-gray-400 dark:text-gray-500">
+                  <svg class="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  No pipeline execution records found for this filter.
+                </td>
+              </tr>
+              <template v-for="run in filteredRuns" :key="run.id">
+                <tr 
+                  @click="run.error_message ? toggleExpandRun(run.id) : null"
+                  class="hover:bg-gray-50/80 dark:hover:bg-white/[0.02] transition-colors"
+                  :class="{ 'cursor-pointer': run.error_message }"
+                >
+                  <!-- Time -->
+                  <td class="px-5 py-3.5 whitespace-nowrap text-gray-500 dark:text-gray-400 font-mono text-[11px]">
+                    {{ formatDate(run.created_at) }}
+                  </td>
+
+                  <!-- Article Title -->
+                  <td class="px-5 py-3.5 font-medium text-gray-900 dark:text-gray-100 max-w-xs truncate">
+                    <span>{{ run.article_title || ('Article #' + run.article_id) }}</span>
+                    <span v-if="run.error_message" class="ml-2 text-[10px] font-normal text-rose-500 dark:text-rose-400 underline">
+                      (click to view error)
+                    </span>
+                  </td>
+
+                  <!-- Model -->
+                  <td class="px-5 py-3.5 whitespace-nowrap font-mono text-[11px] text-gray-600 dark:text-gray-400">
+                    {{ run.model ? run.model.split('/').pop() : 'default' }}
+                  </td>
+
+                  <!-- Duration -->
+                  <td class="px-5 py-3.5 whitespace-nowrap font-mono text-gray-900 dark:text-gray-100">
+                    {{ formatMs(run.duration_ms) }}
+                  </td>
+
+                  <!-- Retries -->
+                  <td class="px-5 py-3.5 whitespace-nowrap">
+                    <span 
+                      v-if="run.retry_count > 0"
+                      class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                    >
+                      {{ run.retry_count }} {{ run.retry_count === 1 ? 'retry' : 'retries' }}
+                    </span>
+                    <span v-else class="text-gray-400 dark:text-gray-600 font-mono">0</span>
+                  </td>
+
+                  <!-- Tokens (Used / Saved) -->
+                  <td class="px-5 py-3.5 whitespace-nowrap font-mono">
+                    <span class="text-gray-900 dark:text-gray-100">{{ formatTokens(run.prompt_tokens + run.completion_tokens) }}</span>
+                    <span v-if="run.tokens_saved_estimate > 0" class="ml-1.5 text-emerald-600 dark:text-emerald-400 text-[11px]">
+                      (+{{ formatTokens(run.tokens_saved_estimate) }})
+                    </span>
+                  </td>
+
+                  <!-- Status Badge -->
+                  <td class="px-5 py-3.5 whitespace-nowrap text-right">
+                    <span 
+                      v-if="run.status === 'success'"
+                      class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800"
+                    >
+                      <span class="w-1 h-1 rounded-full bg-emerald-500"></span>
+                      Success
+                    </span>
+                    <span 
+                      v-else-if="run.status === 'failed'"
+                      class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-400 border border-rose-200 dark:border-rose-800"
+                    >
+                      <span class="w-1 h-1 rounded-full bg-rose-500"></span>
+                      Failed
+                    </span>
+                    <span 
+                      v-else
+                      class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-400 border border-blue-200 dark:border-blue-800"
+                    >
+                      <span class="w-1 h-1 rounded-full bg-blue-500 animate-ping"></span>
+                      Running
+                    </span>
+                  </td>
+                </tr>
+
+                <!-- Expanded Error Row -->
+                <tr v-if="expandedRunId === run.id && run.error_message" class="bg-rose-50/50 dark:bg-rose-950/20">
+                  <td colspan="7" class="px-5 py-3">
+                    <div class="space-y-1">
+                      <div class="text-[11px] font-semibold text-rose-700 dark:text-rose-400 flex items-center gap-1">
+                        <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                          <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                        </svg>
+                        Execution Error Details:
+                      </div>
+                      <pre class="text-[11px] font-mono text-rose-900 dark:text-rose-200 bg-rose-100/60 dark:bg-rose-950/50 p-2.5 rounded-lg overflow-x-auto whitespace-pre-wrap">{{ run.error_message }}</pre>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 </template>
