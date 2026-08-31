@@ -25,6 +25,11 @@ type Job struct {
 	Payload   map[string]interface{}
 }
 
+type openRouterRequest struct {
+	Model    string        `json:"model"`
+	Messages []interface{} `json:"messages"`
+}
+
 type AgentPool struct {
 	Queue                chan Job
 	logger               *zap.Logger
