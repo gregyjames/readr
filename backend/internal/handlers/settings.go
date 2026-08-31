@@ -12,16 +12,19 @@ import (
 )
 
 type ServerSettings struct {
-	APIKey                string `json:"api_key"`
-	Model                 string `json:"model"`
-	AgentEnricher         bool   `json:"agent_enricher"`
-	AgentLinker           bool   `json:"agent_linker"`
-	AgentSummarizer       bool   `json:"agent_summarizer"`
-	Theme                 string `json:"theme"`
-	ViewMode              string `json:"view_mode"`
-	GraphContextExpansion bool   `json:"graph_context_expansion"`
-	PasswordHash          string `json:"password_hash,omitempty"`
-	SessionSecret         string `json:"session_secret,omitempty"`
+	APIKey                  string `json:"api_key"`
+	Model                   string `json:"model"`
+	AgentEnricher           bool   `json:"agent_enricher"`
+	AgentLinker             bool   `json:"agent_linker"`
+	AgentSummarizer         bool   `json:"agent_summarizer"`
+	LibrarianEnabled        bool   `json:"librarian_enabled"`
+	LibrarianCron           string `json:"librarian_cron"`
+	LibrarianMinClusterSize int    `json:"librarian_min_cluster_size"`
+	Theme                   string `json:"theme"`
+	ViewMode                string `json:"view_mode"`
+	GraphContextExpansion   bool   `json:"graph_context_expansion"`
+	PasswordHash            string `json:"password_hash,omitempty"`
+	SessionSecret           string `json:"session_secret,omitempty"`
 }
 
 type SettingsStore struct {
@@ -46,13 +49,16 @@ func NewSettingsStore(dataDir string, logger *zap.Logger) *SettingsStore {
 func (s *SettingsStore) loadFromDisk() ServerSettings {
 	settingsPath := filepath.Join(s.dataDir, "settings.json")
 	defaults := ServerSettings{
-		Model:                 "openai/gpt-4o-mini",
-		AgentEnricher:         true,
-		AgentLinker:           true,
-		AgentSummarizer:       true,
-		Theme:                 "light",
-		ViewMode:              "card",
-		GraphContextExpansion: true,
+		Model:                   "openai/gpt-4o-mini",
+		AgentEnricher:           true,
+		AgentLinker:             true,
+		AgentSummarizer:         true,
+		LibrarianEnabled:        true,
+		LibrarianCron:           "0 0 * * *",
+		LibrarianMinClusterSize: 5,
+		Theme:                   "light",
+		ViewMode:                "card",
+		GraphContextExpansion:   true,
 	}
 
 	data, err := os.ReadFile(settingsPath)

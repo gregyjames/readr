@@ -93,6 +93,33 @@ func TestBuildTopology_NodesAndEdges(t *testing.T) {
 	}
 }
 
+func TestBuildTopology_MOCNodes(t *testing.T) {
+	articles := []repository.ArticleRecord{
+		{ID: 1, Title: "Raft Consensus", Tags: "consensus", FilePath: "/articles/Raft Consensus.md"},
+		{ID: 2, Title: "MOC - Distributed Systems", Tags: "moc, distributed-systems", FilePath: "/articles/MOC - Distributed Systems.md"},
+	}
+	links := []repository.LinkRecord{
+		{SourceID: 2, TargetID: 1},
+	}
+
+	graph := BuildTopology(articles, links)
+
+	var mocNode *Node
+	for i := range graph.Nodes {
+		if graph.Nodes[i].Id == "article-2" {
+			mocNode = &graph.Nodes[i]
+			break
+		}
+	}
+
+	if mocNode == nil {
+		t.Fatalf("expected mocNode to be found in graph")
+	}
+	if mocNode.Group != GroupMOC {
+		t.Errorf("expected group %q, got %q", GroupMOC, mocNode.Group)
+	}
+}
+
 func TestExtractLocalSubgraph(t *testing.T) {
 	articles := []repository.ArticleRecord{
 		{ID: 1, Title: "Root Article", Tags: "tech"},

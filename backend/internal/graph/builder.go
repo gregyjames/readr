@@ -7,6 +7,20 @@ import (
 	"example.com/backend/internal/repository"
 )
 
+func isMOCArticle(title string, tags string) bool {
+	lowerTitle := strings.ToLower(title)
+	if strings.HasPrefix(lowerTitle, "moc - ") || strings.HasPrefix(lowerTitle, "moc:") || strings.HasPrefix(lowerTitle, "moc ") || strings.EqualFold(title, "moc") {
+		return true
+	}
+	tagList := strings.Split(tags, ",")
+	for _, t := range tagList {
+		if strings.TrimSpace(strings.ToLower(t)) == "moc" {
+			return true
+		}
+	}
+	return false
+}
+
 // BuildTopology generates full nodes and edges for articles, tags, and wikilinks.
 func BuildTopology(articles []repository.ArticleRecord, links []repository.LinkRecord) *GraphData {
 	nodes := make([]Node, 0, len(articles))
@@ -14,10 +28,15 @@ func BuildTopology(articles []repository.ArticleRecord, links []repository.LinkR
 	tagSet := make(map[string]bool)
 
 	for _, article := range articles {
+		group := GroupArticle
+		if isMOCArticle(article.Title, article.Tags) {
+			group = GroupMOC
+		}
+
 		nodes = append(nodes, Node{
 			Id:    fmt.Sprintf("article-%d", article.ID),
 			Label: article.Title,
-			Group: GroupArticle,
+			Group: group,
 		})
 
 		if article.Tags != "" {
