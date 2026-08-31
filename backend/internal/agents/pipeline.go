@@ -245,18 +245,24 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		frontmatter = yamlHeader
 
 		mergedTagsStr := strings.Join(mergedTags, ", ")
-		if repo != nil {
-			_ = repo.UpdateArticleTags(context.Background(), job.ArticleID, mergedTagsStr)
-		}
 		if p.db != nil {
 			txErr := p.db.Transaction(func(tx *gorm.DB) error {
+				if repo != nil {
+					if err := repo.UpdateArticleTags(context.Background(), job.ArticleID, mergedTagsStr); err != nil {
+						return err
+					}
+				}
 				if err := tx.Exec("DELETE FROM articles_fts WHERE rowid = ?", job.ArticleID).Error; err != nil {
 					return err
 				}
 				return tx.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", job.ArticleID, metadata.Title, mergedTagsStr).Error
 			})
 			if txErr != nil {
-				p.logger.Error("Pipeline failed to sync articles_fts index", zap.Error(txErr), zap.Int64("article_id", job.ArticleID))
+				p.logger.Error("Pipeline failed to sync article tags and articles_fts index", zap.Error(txErr), zap.Int64("article_id", job.ArticleID))
+			}
+		} else if repo != nil {
+			if err := repo.UpdateArticleTags(context.Background(), job.ArticleID, mergedTagsStr); err != nil {
+				p.logger.Error("Pipeline failed to update article tags", zap.Error(err), zap.Int64("article_id", job.ArticleID))
 			}
 		}
 
