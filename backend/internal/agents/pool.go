@@ -14,10 +14,7 @@ import (
 type JobType string
 
 const (
-	JobTypeEnrichFrontmatter JobType = "enrich_frontmatter"
-	JobTypeAutoLinker        JobType = "auto_linker"
-	JobTypeSummarizer        JobType = "summarizer"
-	JobTypePipeline          JobType = "pipeline"
+	JobTypePipeline JobType = "pipeline"
 )
 
 type PipelineSettings struct {
@@ -31,11 +28,6 @@ type Job struct {
 	Type      JobType
 	Payload   map[string]interface{}
 	Settings  PipelineSettings
-}
-
-type openRouterRequest struct {
-	Model    string        `json:"model"`
-	Messages []interface{} `json:"messages"`
 }
 
 type AgentPool struct {
@@ -75,12 +67,6 @@ func (p *AgentPool) worker(id int) {
 		p.logger.Info("Agent processing job", zap.Int("worker_id", id), zap.Int64("article_id", job.ArticleID), zap.String("type", string(job.Type)))
 		
 		switch job.Type {
-		case JobTypeEnrichFrontmatter:
-			p.processEnrichFrontmatter(job)
-		case JobTypeAutoLinker:
-			p.processAutoLinker(job)
-		case JobTypeSummarizer:
-			p.processSummarizer(job)
 		case JobTypePipeline:
 			p.processPipeline(job)
 		default:
