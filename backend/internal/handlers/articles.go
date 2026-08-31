@@ -41,6 +41,43 @@ func dispatchArticleJobs(articleID int64, apiKey string, settings ServerSettings
 	})
 }
 
+// resolveArticleFilePath safely resolves a candidate filename or relative path strictly under dataDir/articles.
+// It rejects absolute paths, empty paths, and any path containing ".." components or escaping the directory.
+func resolveArticleFilePath(dataDir, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("empty path")
+	}
+
+	// Reject absolute paths
+	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") || strings.HasPrefix(name, "\\") {
+		return "", errors.New("invalid absolute path")
+	}
+
+	clean := filepath.Clean(name)
+	// Reject paths starting with ".." or equaling "." / ".."
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "..\\") {
+		return "", errors.New("path traversal detected")
+	}
+
+	articlesDir := filepath.Join(dataDir, "articles")
+	fullPath := filepath.Join(articlesDir, clean)
+
+	// Ensure the resolved full path is strictly inside articlesDir
+	rel, err := filepath.Rel(articlesDir, fullPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || strings.HasPrefix(rel, "../") {
+		return "", errors.New("path outside articles directory")
+	}
+
+	return fullPath, nil
+}
+
+func resolveArticleFromRecord(dataDir, recordArticlePath string) (string, error) {
+	rel := strings.TrimPrefix(recordArticlePath, "/")
+	rel = strings.TrimPrefix(rel, "articles/")
+	return resolveArticleFilePath(dataDir, rel)
+}
+
 func RegisterArticles(router fiber.Router, h *HandlerContext) {
 	router.Get("/getarticles", func(c *fiber.Ctx) error {
 		var articles []repository.GormArticle
@@ -72,53 +109,55 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		} else if unescaped, err := url.QueryUnescape(filename); err == nil && unescaped != "" {
 			filename = unescaped
 		}
-		clean := filepath.Clean(filename)
 
 		// 1. Direct file lookup in data/articles/<clean>
-		filePath := filepath.Join(h.DataDir, "articles", clean)
-		if content, err := os.ReadFile(filePath); err == nil {
-			c.Set("Content-Type", "text/markdown; charset=utf-8")
-			c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
-			return c.Send(content)
-		}
-
-		// 2. Direct file lookup with .md appended
-		if !strings.HasSuffix(clean, ".md") {
-			if content, err := os.ReadFile(filePath + ".md"); err == nil {
+		if targetPath, err := resolveArticleFilePath(h.DataDir, filename); err == nil {
+			if content, err := os.ReadFile(targetPath); err == nil {
 				c.Set("Content-Type", "text/markdown; charset=utf-8")
 				c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
 				return c.Send(content)
 			}
 		}
 
+		// 2. Direct file lookup with .md appended
+		if !strings.HasSuffix(filename, ".md") {
+			if targetPath, err := resolveArticleFilePath(h.DataDir, filename+".md"); err == nil {
+				if content, err := os.ReadFile(targetPath); err == nil {
+					c.Set("Content-Type", "text/markdown; charset=utf-8")
+					c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+					return c.Send(content)
+				}
+			}
+		}
+
 		// 3. Lookup by numeric ID (e.g. "123" or "123.md")
-		numStr := strings.TrimSuffix(clean, ".md")
+		numStr := strings.TrimSuffix(filepath.Base(filename), ".md")
 		if id, err := strconv.ParseInt(numStr, 10, 64); err == nil && id > 0 {
 			var a repository.GormArticle
 			if err := h.DB.WithContext(c.Context()).Where("id = ? AND deleted_at IS NULL", id).First(&a).Error; err == nil {
 				if a.Article != "" {
-					relPath := strings.TrimPrefix(a.Article, "/")
-					candidate := filepath.Join(h.DataDir, relPath)
-					if content, err := os.ReadFile(candidate); err == nil {
-						c.Set("Content-Type", "text/markdown; charset=utf-8")
-						c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
-						return c.Send(content)
+					if targetPath, err := resolveArticleFromRecord(h.DataDir, a.Article); err == nil {
+						if content, err := os.ReadFile(targetPath); err == nil {
+							c.Set("Content-Type", "text/markdown; charset=utf-8")
+							c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+							return c.Send(content)
+						}
 					}
 				}
 			}
 		}
 
 		// 4. Lookup by Title in DB
-		titleToLookup := strings.TrimSuffix(clean, ".md")
+		titleToLookup := strings.TrimSuffix(filepath.Base(filename), ".md")
 		var a repository.GormArticle
 		if err := h.DB.WithContext(c.Context()).Where("LOWER(title) = LOWER(?) AND deleted_at IS NULL", titleToLookup).First(&a).Error; err == nil {
 			if a.Article != "" {
-				relPath := strings.TrimPrefix(a.Article, "/")
-				candidate := filepath.Join(h.DataDir, relPath)
-				if content, err := os.ReadFile(candidate); err == nil {
-					c.Set("Content-Type", "text/markdown; charset=utf-8")
-					c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
-					return c.Send(content)
+				if targetPath, err := resolveArticleFromRecord(h.DataDir, a.Article); err == nil {
+					if content, err := os.ReadFile(targetPath); err == nil {
+						c.Set("Content-Type", "text/markdown; charset=utf-8")
+						c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+						return c.Send(content)
+					}
 				}
 			}
 		}
@@ -203,9 +242,13 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		}
 
 		if article.Article != "" {
-			_ = os.Remove(filepath.Join(h.DataDir, strings.TrimPrefix(article.Article, "/")))
+			if p, err := resolveArticleFromRecord(h.DataDir, article.Article); err == nil {
+				_ = os.Remove(p)
+			}
 		}
-		_ = os.Remove(filepath.Join(h.DataDir, "articles", fmt.Sprintf("%s.md", id)))
+		if p, err := resolveArticleFilePath(h.DataDir, fmt.Sprintf("%s.md", id)); err == nil {
+			_ = os.Remove(p)
+		}
 
 		deleteImagesError := os.RemoveAll(filepath.Join(h.DataDir, "images", id))
 		if deleteImagesError != nil {
@@ -262,13 +305,19 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 
 		sourcePath := ""
 		if article.Article != "" {
-			candidate := filepath.Join(h.DataDir, strings.TrimPrefix(article.Article, "/"))
-			if _, err := os.Stat(candidate); err == nil {
-				sourcePath = candidate
+			if p, err := resolveArticleFromRecord(h.DataDir, article.Article); err == nil {
+				if _, err := os.Stat(p); err == nil {
+					sourcePath = p
+				}
 			}
 		}
 		if sourcePath == "" {
-			sourcePath = filepath.Join(h.DataDir, "articles", fmt.Sprintf("%s.md", id))
+			if p, err := resolveArticleFilePath(h.DataDir, fmt.Sprintf("%s.md", id)); err == nil {
+				sourcePath = p
+			}
+		}
+		if sourcePath == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid article file path"})
 		}
 
 		if err := os.WriteFile(sourcePath, []byte(req.Content), 0644); err != nil {

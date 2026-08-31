@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"example.com/backend/internal/repository"
@@ -136,6 +137,88 @@ func TestGetArticleContent_EndpointVariations(t *testing.T) {
 			}
 			if resp.StatusCode != 200 {
 				t.Fatalf("expected 200 for %s, got %d", p, resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestResolveArticleFilePath_Security(t *testing.T) {
+	tempDir := t.TempDir()
+
+	validTests := []string{
+		"article.md",
+		"Sub Folder/article.md",
+		"what is raft.md",
+		"101",
+	}
+	for _, v := range validTests {
+		p, err := resolveArticleFilePath(tempDir, v)
+		if err != nil {
+			t.Errorf("expected valid path for %q, got error: %v", v, err)
+		}
+		if !strings.HasPrefix(p, filepath.Join(tempDir, "articles")) {
+			t.Errorf("expected path inside articles dir, got %q", p)
+		}
+	}
+
+	invalidTests := []string{
+		"",
+		"/etc/passwd",
+		"../test.db",
+		"../../secret.txt",
+		"..",
+		".",
+		"/articles/test.md",
+		"articles/../../etc/shadow",
+	}
+	for _, inv := range invalidTests {
+		_, err := resolveArticleFilePath(tempDir, inv)
+		if err == nil {
+			t.Errorf("expected error for traversal path %q, got nil", inv)
+		}
+	}
+}
+
+func TestGetArticleContent_PathTraversalRejected(t *testing.T) {
+	tempDir := t.TempDir()
+	articlesDir := filepath.Join(tempDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0755)
+
+	// Write secret file outside articles dir
+	_ = os.WriteFile(filepath.Join(tempDir, "secret.txt"), []byte("SECRET_DATA"), 0644)
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.AutoMigrate(&repository.GormArticle{})
+
+	repo := repository.NewGormRepository(db)
+	hCtx := &HandlerContext{
+		DB:      db,
+		DataDir: tempDir,
+		Repo:    repo,
+	}
+
+	app := fiber.New()
+	RegisterArticles(app, hCtx)
+
+	traversalPaths := []string{
+		"/articles/../secret.txt",
+		"/articles/%2E%2E%2Fsecret.txt",
+		"/articles/..%2Fsecret.txt",
+		"/articles/%2Fetc%2Fpasswd",
+	}
+
+	for _, tp := range traversalPaths {
+		t.Run(tp, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tp, nil)
+			resp, err := app.Test(req, 5000)
+			if err != nil {
+				t.Fatalf("request %s failed: %v", tp, err)
+			}
+			if resp.StatusCode != 404 && resp.StatusCode != 400 {
+				t.Fatalf("expected 404 or 400 for traversal path %s, got %d", tp, resp.StatusCode)
 			}
 		})
 	}
