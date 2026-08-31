@@ -49,9 +49,13 @@ func TestProcessAutoLinker_CandidateBoundedPrompt(t *testing.T) {
 	db.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (202, 'Container Overview', 'containers')")
 
 	promptReceived := ""
+	var capturedResponseFormat map[string]interface{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]interface{}
 		json.NewDecoder(r.Body).Decode(&req)
+		if rf, ok := req["response_format"].(map[string]interface{}); ok {
+			capturedResponseFormat = rf
+		}
 		if msgs, ok := req["messages"].([]interface{}); ok && len(msgs) > 0 {
 			if m, ok := msgs[0].(map[string]interface{}); ok {
 				promptReceived = fmt.Sprint(m["content"])
@@ -85,6 +89,15 @@ func TestProcessAutoLinker_CandidateBoundedPrompt(t *testing.T) {
 
 	job := Job{ArticleID: 202, Type: JobTypeAutoLinker}
 	pool.processAutoLinkerWithURL(job, ts.URL)
+
+	// Verify response_format uses strict json_schema
+	if capturedResponseFormat == nil || capturedResponseFormat["type"] != "json_schema" {
+		t.Fatalf("expected response_format type json_schema, got: %v", capturedResponseFormat)
+	}
+	schemaDef, ok := capturedResponseFormat["json_schema"].(map[string]interface{})
+	if !ok || schemaDef["name"] != "auto_linker_links" || schemaDef["strict"] != true {
+		t.Fatalf("expected strict json_schema auto_linker_links, got: %v", schemaDef)
+	}
 
 	// Verify prompt contained ID 201 candidate but not excluded 202
 	if !strings.Contains(promptReceived, "- ID: 201, Title: Docker Guide") {

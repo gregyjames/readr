@@ -26,12 +26,29 @@ type llmLinkerResponseJSON struct {
 	LinksToInject []llmLink `json:"links_to_inject"`
 }
 
+type jsonSchemaField struct {
+	Type                 string                     `json:"type"`
+	Properties           map[string]jsonSchemaField `json:"properties,omitempty"`
+	Items                *jsonSchemaField           `json:"items,omitempty"`
+	Required             []string                   `json:"required,omitempty"`
+	AdditionalProperties bool                       `json:"additionalProperties"`
+}
+
+type jsonSchemaDefinition struct {
+	Name   string          `json:"name"`
+	Strict bool            `json:"strict"`
+	Schema jsonSchemaField `json:"schema"`
+}
+
+type responseFormat struct {
+	Type       string                `json:"type"`
+	JSONSchema *jsonSchemaDefinition `json:"json_schema,omitempty"`
+}
+
 type linkerOpenRouterRequest struct {
-	Model          string        `json:"model"`
-	Messages       []interface{} `json:"messages"`
-	ResponseFormat *struct {
-		Type string `json:"type"`
-	} `json:"response_format,omitempty"`
+	Model          string          `json:"model"`
+	Messages       []interface{}   `json:"messages"`
+	ResponseFormat *responseFormat `json:"response_format,omitempty"`
 }
 
 func (p *AgentPool) processAutoLinker(job Job) {
@@ -152,9 +169,36 @@ Article Content:
 	reqPayload := linkerOpenRouterRequest{
 		Model:    model,
 		Messages: apiMsgs,
-		ResponseFormat: &struct {
-			Type string `json:"type"`
-		}{Type: "json_object"},
+		ResponseFormat: &responseFormat{
+			Type: "json_schema",
+			JSONSchema: &jsonSchemaDefinition{
+				Name:   "auto_linker_links",
+				Strict: true,
+				Schema: jsonSchemaField{
+					Type: "object",
+					Properties: map[string]jsonSchemaField{
+						"links_to_inject": {
+							Type: "array",
+							Items: &jsonSchemaField{
+								Type: "object",
+								Properties: map[string]jsonSchemaField{
+									"existing_article_id": {
+										Type: "integer",
+									},
+									"exact_phrase_in_text": {
+										Type: "string",
+									},
+								},
+								Required:             []string{"existing_article_id", "exact_phrase_in_text"},
+								AdditionalProperties: false,
+							},
+						},
+					},
+					Required:             []string{"links_to_inject"},
+					AdditionalProperties: false,
+				},
+			},
+		},
 	}
 
 	bodyJSON, _ := json.Marshal(reqPayload)
