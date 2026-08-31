@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"example.com/backend/internal/agents"
@@ -32,7 +33,7 @@ func dispatchArticleJobs(articleID int64, apiKey string, settings ServerSettings
 		ArticleID: articleID,
 		Type:      agents.JobTypePipeline,
 		Settings: agents.PipelineSettings{
-			Summarizer: settings.AgentSummarizer,
+			Summarizer: apiKey != "" && settings.AgentSummarizer,
 			Enricher:   settings.AgentEnricher,
 			Linker:     settings.AgentLinker,
 		},
@@ -53,18 +54,46 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		return c.JSON(articles)
 	})
 
+	router.Get("/articles", func(c *fiber.Ctx) error {
+		articles, err := h.Repo.GetAllArticles(c.Context())
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{
+				"error": "Failed to retrieve articles",
+			})
+		}
+		return c.JSON(articles)
+	})
+
 	router.Get("/articles/:filename", func(c *fiber.Ctx) error {
 		filename := c.Params("filename")
 		clean := filepath.Clean(filename)
-		filePath := filepath.Join(h.DataDir, "articles", clean)
 
-		content, err := os.ReadFile(filePath)
-		if err != nil {
-			return c.Status(fiber.StatusNotFound).SendString("Article not found")
+		// 1. Direct file lookup in data/articles/<clean>
+		filePath := filepath.Join(h.DataDir, "articles", clean)
+		if content, err := os.ReadFile(filePath); err == nil {
+			c.Set("Content-Type", "text/markdown; charset=utf-8")
+			c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+			return c.Send(content)
 		}
-		c.Set("Content-Type", "text/markdown; charset=utf-8")
-		c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
-		return c.Send(content)
+
+		// 2. If not found and filename is numeric (e.g. "123" or "123.md"), look up article by ID
+		numStr := strings.TrimSuffix(clean, ".md")
+		if id, err := strconv.ParseInt(numStr, 10, 64); err == nil && id > 0 {
+			var a repository.GormArticle
+			if err := h.DB.WithContext(c.Context()).Where("id = ? AND deleted_at IS NULL", id).First(&a).Error; err == nil {
+				if a.Article != "" {
+					relPath := strings.TrimPrefix(a.Article, "/")
+					candidate := filepath.Join(h.DataDir, relPath)
+					if content, err := os.ReadFile(candidate); err == nil {
+						c.Set("Content-Type", "text/markdown; charset=utf-8")
+						c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+						return c.Send(content)
+					}
+				}
+			}
+		}
+
+		return c.Status(fiber.StatusNotFound).SendString("Article not found")
 	})
 
 	router.Post("/add", func(c *fiber.Ctx) error {
