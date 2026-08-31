@@ -54,6 +54,10 @@ func (p *AgentPool) processEnrichFrontmatter(job Job) {
 			body = parts[2]
 		}
 	}
+	bodyRunes := []rune(body)
+	if len(bodyRunes) > 8000 {
+		body = string(bodyRunes[:8000]) // rune safe truncation
+	}
 	// 3. Ask LLM to generate OKF frontmatter
 	prompt := fmt.Sprintf(`You are an expert knowledge curator. Generate ONLY a valid YAML frontmatter block (enclosed in ---) following the Open Knowledge Format (OKF) specification for the following article.
 Requirements:
