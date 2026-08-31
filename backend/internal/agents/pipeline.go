@@ -39,12 +39,12 @@ type pipelineOpenRouterRequest struct {
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
 }
 
+var reProtected = regexp.MustCompile(`(\[\[[\s\S]*?\]\]|\[[\s\S]*?\]\([\s\S]*?\)|` + "`[\\s\\S]*?`" + `)`)
+
 func injectLinksIntoBody(body string, links []llmLink, candidates []repository.ArticleRecord, sourceID int64, db *gorm.DB) string {
 	if len(links) == 0 {
 		return body
 	}
-
-	reProtected := regexp.MustCompile(`(\[\[[\s\S]*?\]\]|\[[\s\S]*?\]\([\s\S]*?\)|` + "`[\\s\\S]*?`" + `)`)
 
 	for _, link := range links {
 		phrase := strings.TrimSpace(link.ExactPhraseInText)
