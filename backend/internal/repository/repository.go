@@ -35,5 +35,7 @@ type Repository interface {
 	FindCandidates(ctx context.Context, excludeID int64, title string, body string, limit int) ([]ArticleRecord, error)
 	GetDistinctTags(ctx context.Context) ([]string, error)
 	UpdateArticleTags(ctx context.Context, id int64, tags string) error
+	RecordPipelineMetric(ctx context.Context, metric *PipelineMetric) error
+	GetPipelineDiagnostics(ctx context.Context, limit int) (*PipelineDiagnosticsSummary, []PipelineMetric, error)
 }
 

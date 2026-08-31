@@ -84,7 +84,7 @@ func initDB() *gorm.DB {
 		panic(err)
 	}
 
-	db.AutoMigrate(&Article{}, &ArticleLink{})
+	db.AutoMigrate(&Article{}, &ArticleLink{}, &repository.PipelineMetric{})
 	handlers.EnsureFTS(db, logger)
 
 	return db
@@ -111,7 +111,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		if err != nil {
 			panic(err)
 		}
-		db.AutoMigrate(&Article{}, &ArticleLink{})
+		db.AutoMigrate(&Article{}, &ArticleLink{}, &repository.PipelineMetric{})
 
 		dataDir := getDataDir()
 		os.MkdirAll(filepath.Join(dataDir, "articles"), os.ModePerm)
