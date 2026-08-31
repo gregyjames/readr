@@ -29,6 +29,9 @@ var defaultStopwords = map[string]struct{}{
 }
 
 func extractCandidateKeywords(title, body string, maxKeywords int) []string {
+	if maxKeywords <= 0 {
+		return nil
+	}
 	combined := title + " "
 	bodyRunes := []rune(body)
 	if len(bodyRunes) > 1000 {
@@ -213,6 +216,83 @@ func (r *GormRepository) DeleteArticle(ctx context.Context, id int64) error {
 }
 
 func (r *GormRepository) FindCandidates(ctx context.Context, excludeID int64, title string, body string, limit int) ([]ArticleRecord, error) {
-	return nil, nil
+	if limit <= 0 {
+		limit = 15
+	}
+
+	keywords := extractCandidateKeywords(title, body, 10)
+	var candidates []ArticleRecord
+	seenIDs := make(map[int64]struct{})
+	if excludeID > 0 {
+		seenIDs[excludeID] = struct{}{}
+	}
+
+	// 1. If we have keywords, try FTS5 query
+	if len(keywords) > 0 {
+		var queryParts []string
+		for _, kw := range keywords {
+			queryParts = append(queryParts, kw+"*")
+		}
+		safeFTSQuery := strings.Join(queryParts, " OR ")
+
+		var matchedArticles []GormArticle
+		err := r.db.WithContext(ctx).Raw(`
+			SELECT a.id, a.title, a.image, a.article, a.tags
+			FROM articles_fts fts
+			JOIN articles a ON a.id = fts.rowid
+			WHERE articles_fts MATCH ?
+			  AND a.deleted_at IS NULL
+			  AND a.id != ?
+			ORDER BY bm25(articles_fts, 2.0, 1.0)
+			LIMIT ?
+		`, safeFTSQuery, excludeID, limit).Scan(&matchedArticles).Error
+
+		if err == nil {
+			for _, a := range matchedArticles {
+				if _, exists := seenIDs[a.ID]; !exists {
+					seenIDs[a.ID] = struct{}{}
+					candidates = append(candidates, ArticleRecord{
+						ID:        a.ID,
+						Title:     a.Title,
+						ImagePath: a.Image,
+						FilePath:  a.Article,
+						Tags:      a.Tags,
+					})
+				}
+			}
+		}
+	}
+
+	// 2. If under limit, backfill with recent active articles
+	if len(candidates) < limit {
+		needed := limit - len(candidates)
+		var excludedList []int64
+		for id := range seenIDs {
+			excludedList = append(excludedList, id)
+		}
+
+		var fallbackArticles []GormArticle
+		query := r.db.WithContext(ctx).Where("deleted_at IS NULL")
+		if len(excludedList) > 0 {
+			query = query.Where("id NOT IN (?)", excludedList)
+		}
+		err := query.Order("created_at DESC").Limit(needed).Find(&fallbackArticles).Error
+		if err == nil {
+			for _, a := range fallbackArticles {
+				if _, exists := seenIDs[a.ID]; !exists {
+					seenIDs[a.ID] = struct{}{}
+					candidates = append(candidates, ArticleRecord{
+						ID:        a.ID,
+						Title:     a.Title,
+						ImagePath: a.Image,
+						FilePath:  a.Article,
+						Tags:      a.Tags,
+					})
+				}
+			}
+		}
+	}
+
+	return candidates, nil
 }
 
