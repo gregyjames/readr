@@ -78,7 +78,7 @@ func loadServerSettings(dataDir string) ServerSettings {
 		_ = saveServerSettings(dataDir, defaults)
 		return defaults
 	}
-	var s ServerSettings
+	s := defaults
 	if err := json.Unmarshal(data, &s); err != nil {
 		return defaults
 	}
