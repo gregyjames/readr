@@ -22,6 +22,32 @@ let previewTimeout: any = null
 
 const getArticleId = () => String(route.params.id || '').replace('.md', '')
 const router = useRouter()
+const articleRef = ref<HTMLElement | null>(null)
+const readingProgress = ref(0)
+
+const updateReadingProgress = () => {
+  if (!articleRef.value) {
+    const total = document.documentElement.scrollHeight - window.innerHeight
+    readingProgress.value = total > 0 ? Math.min(Math.max((window.scrollY / total) * 100, 0), 100) : 0
+    return
+  }
+
+  const rect = articleRef.value.getBoundingClientRect()
+  const navHeight = 80 // navbar height (h-20)
+  const articleTop = rect.top + window.scrollY - navHeight
+  const articleHeight = rect.height
+  const viewportHeight = window.innerHeight
+
+  const scrollableDistance = articleHeight - (viewportHeight - navHeight)
+  if (scrollableDistance <= 0) {
+    readingProgress.value = 100
+    return
+  }
+
+  const progress = ((window.scrollY - articleTop) / scrollableDistance) * 100
+  readingProgress.value = Math.min(Math.max(progress, 0), 100)
+}
+
 const markdownContent = ref('')
 const rawMarkdown = ref('')
 const isEditing = ref(false)
@@ -536,6 +562,9 @@ onMounted(async () => {
   document.addEventListener('mouseover', handleMouseOver)
   document.addEventListener('mouseout', handleMouseOut)
   
+  window.addEventListener('scroll', updateReadingProgress, { passive: true })
+  window.addEventListener('resize', updateReadingProgress, { passive: true })
+  
   observer = new MutationObserver(() => {
     if (localNetwork) {
       const isDark = document.documentElement.classList.contains('dark')
@@ -548,10 +577,16 @@ onMounted(async () => {
   observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
 })
 
+watch(markdownContent, () => {
+  nextTick(updateReadingProgress)
+})
+
 onBeforeUnmount(() => {
   if (notificationTimer) {
     clearTimeout(notificationTimer)
   }
+  window.removeEventListener('scroll', updateReadingProgress)
+  window.removeEventListener('resize', updateReadingProgress)
   emitter.off('article-added', handleReparseComplete)
   emitter.off('graph-updated', handleReparseComplete)
   document.removeEventListener('mouseup', handleSelection)
@@ -571,11 +606,22 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <!-- Fixed Reading Progress Bar under Navbar -->
+  <div
+    class="fixed top-20 left-0 w-full h-[2.5px] z-40 bg-gray-200/40 dark:bg-white/5 pointer-events-none overflow-hidden"
+    aria-hidden="true"
+  >
+    <div
+      class="h-full bg-emerald-500 dark:bg-emerald-400 transition-[width] duration-75 ease-out shadow-[0_0_8px_rgba(16,185,129,0.6)]"
+      :style="{ width: `${readingProgress}%` }"
+    ></div>
+  </div>
+
   <div v-if="articleError" class="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-4 text-center w-full font-medium border-b border-red-100 dark:border-red-900/30">
     {{ articleError }}
   </div>
   <div class="flex flex-col lg:flex-row w-full max-w-7xl mx-auto items-start relative px-4 lg:px-8">
-    <article class="w-full lg:w-2/3 max-w-2xl mx-auto py-16 transition-colors duration-300">
+    <article ref="articleRef" class="w-full lg:w-2/3 max-w-2xl mx-auto py-16 transition-colors duration-300">
       
       
       <!-- If Editing Markdown -->
