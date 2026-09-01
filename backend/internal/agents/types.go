@@ -9,7 +9,7 @@ type OKFMetadata struct {
 	Type        string           `json:"type" yaml:"type"`
 	Title       string           `json:"title" yaml:"title"`
 	Description string           `json:"description" yaml:"description"`
-	Resource    string           `json:"resource,omitempty" yaml:"resource,omitempty"`
+	Source      string           `json:"source,omitempty" yaml:"source,omitempty"`
 	Tags        []string         `json:"tags" yaml:"tags"`
 	Generated   OKFGeneratedInfo `json:"-" yaml:"generated"`
 }
@@ -21,9 +21,7 @@ type OKFGeneratedInfo struct {
 
 type OKFFrontmatterResponse struct {
 	Type        string   `json:"type"`
-	Title       string   `json:"title"`
 	Description string   `json:"description"`
-	Resource    string   `json:"resource"`
 	Tags        []string `json:"tags"`
 }
 
