@@ -473,9 +473,23 @@ const loadContent = async () => {
     properties.value = parseFrontmatter(raw)
     
     const parsedRaw = raw.replace(/\[\[([^[\]\n]+?)\]\]/g, (_, p1) => {
+      const fullText = String(p1 || '').trim()
+      
+      // 1. First check if the full un-split string matches an article title (e.g. "Title | Site Name")
+      const matchFull = allArticles.value.find(a => 
+        a.title.trim().toLowerCase() === fullText.toLowerCase() ||
+        String(a.ID) === fullText ||
+        a.article.replace(/^\/?articles\//, '').replace(/\.md$/, '').trim().toLowerCase() === fullText.toLowerCase()
+      )
+
+      if (matchFull) {
+        return `<a href="/articles/${matchFull.ID}" data-article-id="${matchFull.ID}" class="wikilink font-semibold text-emerald-600 dark:text-emerald-400 no-underline hover:underline hover:text-emerald-700 dark:hover:text-emerald-300 transition-colors bg-emerald-50/50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded-md border border-emerald-100 dark:border-emerald-800/50 cursor-pointer">${matchFull.title}</a>`
+      }
+
+      // 2. If no full match and contains '|', treat as [[Target|Display Alias]]
       const parts = p1.split('|')
       const targetTitle = parts[0].trim()
-      const display = parts.length > 1 ? parts[1].trim() : targetTitle
+      const display = parts.length > 1 ? parts.slice(1).join('|').trim() : targetTitle
       
       const targetArticle = allArticles.value.find(a => 
         a.title.trim().toLowerCase() === targetTitle.toLowerCase() ||

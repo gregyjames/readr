@@ -639,9 +639,9 @@ func (r *LibrarianRunner) assembleMOCMarkdown(synthesis *MOCSynthesisResponse, m
 			}
 			contextNote := strings.TrimSpace(item.ContextNote)
 			if contextNote != "" {
-				sb.WriteString(fmt.Sprintf("- [[%s|%s]] — %s\n", title, title, contextNote))
+				sb.WriteString(fmt.Sprintf("- [[%s]] - %s\n", title, contextNote))
 			} else {
-				sb.WriteString(fmt.Sprintf("- [[%s|%s]]\n", title, title))
+				sb.WriteString(fmt.Sprintf("- [[%s]]\n", title))
 			}
 		}
 		sb.WriteString("\n")
@@ -916,12 +916,29 @@ func applyDeltaPlacements(existingContent string, placements []MOCDeltaPlacement
 			if !ok {
 				title = fmt.Sprintf("Article %d", item.ArticleID)
 			}
+
+			// Prevent duplicate additions if title is already referenced anywhere in existing lines
+			alreadyPresent := false
+			for _, line := range lines {
+				if strings.Contains(line, fmt.Sprintf("[[%s]]", title)) || (strings.Contains(line, title) && strings.Contains(line, "[[")) {
+					alreadyPresent = true
+					break
+				}
+			}
+			if alreadyPresent {
+				continue
+			}
+
 			note := strings.TrimSpace(item.ContextNote)
 			if note != "" {
 				itemLines = append(itemLines, fmt.Sprintf("- [[%s]] - %s", title, note))
 			} else {
 				itemLines = append(itemLines, fmt.Sprintf("- [[%s]]", title))
 			}
+		}
+
+		if len(itemLines) == 0 {
+			continue
 		}
 
 		if headerIdx != -1 {
@@ -1042,17 +1059,36 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 	return nil
 }
 
-var reMOCWikilink = regexp.MustCompile(`\[\[([^\]|]+)(?:\|[^\]]*)?\]\]`)
+var reMOCWikilink = regexp.MustCompile(`\[\[([^[\]\n]+?)\]\]`)
 
 func extractLinkedArticlesFromMOC(mocContent string) map[string]bool {
 	linked := make(map[string]bool)
 	matches := reMOCWikilink.FindAllStringSubmatch(mocContent, -1)
 	for _, m := range matches {
 		if len(m) > 1 {
-			target := strings.TrimSpace(m[1])
-			if target != "" {
-				linked[target] = true
-				linked[strings.ToLower(target)] = true
+			raw := strings.TrimSpace(m[1])
+			if raw == "" {
+				continue
+			}
+			// 1. Mark the entire raw string inside [[...]] as linked
+			linked[raw] = true
+			linked[strings.ToLower(raw)] = true
+
+			// 2. If it contains a pipe, also index parts
+			if strings.Contains(raw, "|") {
+				parts := strings.Split(raw, "|")
+				for _, p := range parts {
+					trimmed := strings.TrimSpace(p)
+					if trimmed != "" {
+						linked[trimmed] = true
+						linked[strings.ToLower(trimmed)] = true
+					}
+				}
+				firstPart := strings.TrimSpace(parts[0])
+				if firstPart != "" {
+					linked[firstPart] = true
+					linked[strings.ToLower(firstPart)] = true
+				}
 			}
 		}
 	}

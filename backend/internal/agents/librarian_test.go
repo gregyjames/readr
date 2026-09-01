@@ -710,5 +710,96 @@ Overview of distributed systems.
 	}
 }
 
+func TestLibrarian_ArticlesWithPipesInTitle_NeverDuplicate(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// Create 5 articles including one with a pipe in the title
+	for i := 1; i <= 4; i++ {
+		title := fmt.Sprintf("Development Note %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "development",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	pipeTitle := "How to Optimize NumPy with Cython | Paperspace Blog"
+	filePath := filepath.Join(articlesDir, "cython.md")
+	_ = os.WriteFile(filePath, []byte("# Cython Guide\nContent"), 0644)
+	db.Create(&repository.GormArticle{
+		ID:      5,
+		Title:   pipeTitle,
+		Tags:    "development",
+		Article: "/articles/cython.md",
+	})
+
+	callCount := 0
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{"topic_title":"Development","executive_summary":"Development tools summary","sections":[{"title":"Core Tools","items":[{"article_id":5,"context_note":"NumPy and Cython optimization techniques."},{"article_id":1,"context_note":"Dev note 1."},{"article_id":2,"context_note":"Dev note 2."},{"article_id":3,"context_note":"Dev note 3."},{"article_id":4,"context_note":"Dev note 4."}]}]}`,
+					},
+				},
+			},
+			"usage": map[string]int{
+				"prompt_tokens":     300,
+				"completion_tokens": 100,
+				"total_tokens":      400,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"openai/gpt-4o","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+
+	// Run 1: Synthesizes initial MOC
+	res1, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("first run failed: %v", err)
+	}
+	if res1.CreatedMOCs != 1 {
+		t.Fatalf("expected 1 created MOC, got %d", res1.CreatedMOCs)
+	}
+
+	mocPath := filepath.Join(articlesDir, "MOC - Development.md")
+	contentBytes, err := os.ReadFile(mocPath)
+	if err != nil {
+		t.Fatalf("failed to read MOC: %v", err)
+	}
+	mocContent := string(contentBytes)
+
+	// Verify formatted cleanly without broken double pipe [[title|title]]
+	if strings.Contains(mocContent, "[[How to Optimize NumPy with Cython | Paperspace Blog|") {
+		t.Errorf("found broken double-pipe wikilink in MOC:\n%s", mocContent)
+	}
+	if !strings.Contains(mocContent, "[[How to Optimize NumPy with Cython | Paperspace Blog]]") {
+		t.Errorf("expected clean wikilink [[How to Optimize NumPy with Cython | Paperspace Blog]] in MOC, got:\n%s", mocContent)
+	}
+
+	// Run 2: Immediate subsequent run MUST zero-token skip (no new calls!)
+	res2, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("second run failed: %v", err)
+	}
+	if res2.CreatedMOCs != 0 || res2.UpdatedMOCs != 0 {
+		t.Errorf("expected 0 created/updated on second run, got created=%d, updated=%d", res2.CreatedMOCs, res2.UpdatedMOCs)
+	}
+	if callCount != 1 {
+		t.Errorf("expected exactly 1 LLM call across both runs, got %d", callCount)
+	}
+}
+
 
 
