@@ -1316,7 +1316,7 @@ func TestLibrarian_PruneEmptyMOC_WhenNoUserNotes(t *testing.T) {
 	})
 
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("LLM should not be called when 0 clusters are detected")
+		t.Errorf("LLM should not be called when 0 clusters are detected")
 	}))
 	defer mockServer.Close()
 
@@ -1380,7 +1380,7 @@ I wrote extensive custom notes and reflections on this topic here! DO NOT DELETE
 	})
 
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("LLM should not be called when 0 clusters are detected")
+		t.Errorf("LLM should not be called when 0 clusters are detected")
 	}))
 	defer mockServer.Close()
 
