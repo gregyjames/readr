@@ -320,3 +320,85 @@ func TestLibrarian_RecordsPipelineMetrics(t *testing.T) {
 		t.Errorf("expected prompt 450 / comp 120, got %d / %d", recent[0].PromptTokens, recent[0].CompletionTokens)
 	}
 }
+
+func TestLibrarian_ZeroTokenSkip_WhenUpToDate(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	existingMOCContent := `---
+type: moc
+title: MOC - Distributed Systems
+tags:
+  - moc
+  - distributed-systems
+---
+
+# MOC - Distributed Systems
+
+## Executive Overview
+Overview of distributed systems.
+
+## Curated Index
+### Consensus
+- [[Node 1|Node 1]] — Node 1 description
+- [[Node 2|Node 2]] — Node 2 description
+- [[Node 3|Node 3]] — Node 3 description
+- [[Node 4|Node 4]] — Node 4 description
+- [[Node 5|Node 5]] — Node 5 description
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+`
+	mocPath := filepath.Join(articlesDir, "MOC - Distributed Systems.md")
+	_ = os.WriteFile(mocPath, []byte(existingMOCContent), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      100,
+		Title:   "MOC - Distributed Systems",
+		Tags:    "moc, distributed-systems",
+		Article: "/articles/MOC - Distributed Systems.md",
+	})
+
+	for i := 1; i <= 5; i++ {
+		title := fmt.Sprintf("Node %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "distributed-systems",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	httpCalls := 0
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpCalls++
+		t.Fatalf("HTTP server should not be called for up-to-date MOC")
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.CreatedMOCs != 0 {
+		t.Errorf("expected 0 CreatedMOCs, got %d", result.CreatedMOCs)
+	}
+	if result.UpdatedMOCs != 0 {
+		t.Errorf("expected 0 UpdatedMOCs, got %d", result.UpdatedMOCs)
+	}
+	if len(result.Errors) != 0 {
+		t.Errorf("expected 0 Errors, got %v", result.Errors)
+	}
+	if httpCalls != 0 {
+		t.Errorf("expected 0 HTTP calls, got %d", httpCalls)
+	}
+}
+

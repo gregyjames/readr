@@ -240,6 +240,19 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	result.ScannedArticles = len(allArticles)
 
 	for _, cluster := range clusters {
+		if cluster.ExistingMOC != nil {
+			unlinked, _, err := r.getUnlinkedArticles(cluster)
+			if err != nil {
+				r.logger.Error("Failed to check unlinked articles for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
+				result.Errors = append(result.Errors, fmt.Sprintf("unlinked %s: %v", cluster.Tag, err))
+				continue
+			}
+			if len(unlinked) == 0 {
+				r.logger.Info(fmt.Sprintf("MOC cluster %s is up-to-date (0 new notes), skipping LLM call", cluster.Tag), zap.String("tag", cluster.Tag))
+				continue
+			}
+		}
+
 		synthesis, err := r.synthesizeCluster(ctx, cluster, apiKey, model, apiURL)
 		if err != nil {
 			r.logger.Error("Failed to synthesize MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
@@ -616,6 +629,83 @@ func (r *LibrarianRunner) assembleMOCMarkdown(synthesis *MOCSynthesisResponse, m
 	sb.WriteString(userNotesContent + "\n")
 
 	return sb.String()
+}
+
+var reMOCWikilink = regexp.MustCompile(`\[\[([^\]|]+)(?:\|[^\]]*)?\]\]`)
+
+func extractLinkedArticlesFromMOC(mocContent string) map[string]bool {
+	linked := make(map[string]bool)
+	matches := reMOCWikilink.FindAllStringSubmatch(mocContent, -1)
+	for _, m := range matches {
+		if len(m) > 1 {
+			target := strings.TrimSpace(m[1])
+			if target != "" {
+				linked[target] = true
+				linked[strings.ToLower(target)] = true
+			}
+		}
+	}
+	return linked
+}
+
+func getUnlinkedArticles(cluster ClusterCandidate, dataDir string) ([]repository.ArticleRecord, string, error) {
+	if cluster.ExistingMOC == nil {
+		return cluster.Articles, "", nil
+	}
+
+	mocFilePath := ""
+	if cluster.ExistingMOC.FilePath != "" {
+		candidate := filepath.Join(dataDir, strings.TrimPrefix(cluster.ExistingMOC.FilePath, "/"))
+		if _, err := os.Stat(candidate); err == nil {
+			mocFilePath = candidate
+		}
+	}
+	if mocFilePath == "" && cluster.ExistingMOC.Title != "" {
+		candidate := filepath.Join(dataDir, "articles", fmt.Sprintf("%s.md", cluster.ExistingMOC.Title))
+		if _, err := os.Stat(candidate); err == nil {
+			mocFilePath = candidate
+		}
+	}
+	if mocFilePath == "" && cluster.ExistingMOC.ID > 0 {
+		candidate := filepath.Join(dataDir, "articles", fmt.Sprintf("%d.md", cluster.ExistingMOC.ID))
+		if _, err := os.Stat(candidate); err == nil {
+			mocFilePath = candidate
+		}
+	}
+
+	if mocFilePath == "" {
+		return cluster.Articles, "", fmt.Errorf("existing MOC file not found on disk")
+	}
+
+	bytes, err := os.ReadFile(mocFilePath)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read existing MOC file %s: %w", mocFilePath, err)
+	}
+
+	existingContent := string(bytes)
+	linkedTitles := extractLinkedArticlesFromMOC(existingContent)
+
+	var unlinked []repository.ArticleRecord
+	for _, a := range cluster.Articles {
+		title := strings.TrimSpace(a.Title)
+		normTitle := strings.ToLower(title)
+		if linkedTitles[title] || linkedTitles[normTitle] {
+			continue
+		}
+		if a.FilePath != "" {
+			base := strings.TrimSuffix(filepath.Base(a.FilePath), ".md")
+			if linkedTitles[base] || linkedTitles[strings.ToLower(base)] {
+				continue
+			}
+		}
+		unlinked = append(unlinked, a)
+	}
+
+	return unlinked, existingContent, nil
+}
+
+func (r *LibrarianRunner) getUnlinkedArticles(cluster ClusterCandidate) ([]repository.ArticleRecord, string, error) {
+	return getUnlinkedArticles(cluster, r.dataDir)
 }
 
 func (r *LibrarianRunner) getSettings() (apiKey, model string, minClusterSize int, enabled bool) {
