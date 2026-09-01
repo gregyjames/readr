@@ -60,6 +60,26 @@ func initTestDB() *gorm.DB {
 	return db
 }
 
+func TestSetupApp_SurfacesInvalidLibrarianCron(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("DATA_DIR", tempDir)
+	settings := []byte(`{"librarian_enabled":true,"librarian_cron":"not a cron expression"}`)
+	if err := os.WriteFile(filepath.Join(tempDir, "settings.json"), settings, 0600); err != nil {
+		t.Fatalf("failed to write settings: %v", err)
+	}
+
+	app, err := setupAppWithError(initTestDB())
+	if err == nil {
+		t.Fatal("expected invalid Librarian cron schedule to fail app setup")
+	}
+	if app != nil {
+		t.Error("expected no app when Librarian cron setup fails")
+	}
+	if !strings.Contains(err.Error(), "start Librarian background cron scheduler") {
+		t.Errorf("expected Librarian cron context in setup error, got %v", err)
+	}
+}
+
 func BenchmarkDownloadImagesSequential(b *testing.B) {
 	// Setup a mock server
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1313,5 +1333,3 @@ func TestAuthMiddleware_Protection(t *testing.T) {
 		t.Fatalf("expected 200 for authenticated /api/articles/1.md, got %d", resp.StatusCode)
 	}
 }
-
-

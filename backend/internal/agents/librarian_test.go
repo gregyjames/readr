@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -168,7 +169,7 @@ DO NOT OVERWRITE THIS TEXT.
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.UpdatedMOCs != 1 && result.CreatedMOCs != 1 {
+	if result.UpdatedMOCs != 1 || result.CreatedMOCs != 0 {
 		t.Errorf("expected 1 MOC updated or created, got result: %+v", result)
 	}
 
@@ -194,9 +195,26 @@ DO NOT OVERWRITE THIS TEXT.
 
 func TestLibrarian_ThreadSafeExecution(t *testing.T) {
 	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	for i := 1; i <= 5; i++ {
+		title := fmt.Sprintf("Concurrent Note %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "concurrency",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	requestStarted := make(chan struct{})
+	releaseResponse := make(chan struct{})
 
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(100 * time.Millisecond)
+		close(requestStarted)
+		<-releaseResponse
 		res := map[string]interface{}{
 			"choices": []map[string]interface{}{
 				{
@@ -215,27 +233,63 @@ func TestLibrarian_ThreadSafeExecution(t *testing.T) {
 
 	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
 
-	var wg sync.WaitGroup
-	errCount := 0
 	var mu sync.Mutex
+	successCount := 0
+	alreadyRunningCount := 0
+	unexpectedErrors := make([]string, 0)
+	recordResult := func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case err == nil:
+			successCount++
+		case err.Error() == "librarian is already running":
+			alreadyRunningCount++
+		default:
+			unexpectedErrors = append(unexpectedErrors, err.Error())
+		}
+	}
 
-	for i := 0; i < 3; i++ {
-		wg.Add(1)
+	var firstRun sync.WaitGroup
+	firstRun.Add(1)
+	go func() {
+		defer firstRun.Done()
+		_, err := runner.RunLibrarianWithURL(context.Background(), "concurrent", mockServer.URL)
+		recordResult(err)
+	}()
+
+	select {
+	case <-requestStarted:
+	case <-time.After(5 * time.Second):
+		close(releaseResponse)
+		firstRun.Wait()
+		t.Fatal("timed out waiting for the first Librarian execution to reach the mock server")
+	}
+
+	var concurrentRuns sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		concurrentRuns.Add(1)
 		go func() {
-			defer wg.Done()
+			defer concurrentRuns.Done()
 			_, err := runner.RunLibrarianWithURL(context.Background(), "concurrent", mockServer.URL)
-			if err != nil && strings.Contains(err.Error(), "already running") {
-				mu.Lock()
-				errCount++
-				mu.Unlock()
-			}
+			recordResult(err)
 		}()
 	}
 
-	wg.Wait()
+	concurrentRuns.Wait()
+	close(releaseResponse)
+	firstRun.Wait()
 
-	if errCount == 0 {
-		t.Log("Note: Concurrent executions were fast, but thread-safety was respected")
+	mu.Lock()
+	defer mu.Unlock()
+	if successCount != 1 {
+		t.Errorf("expected exactly 1 successful execution, got %d", successCount)
+	}
+	if alreadyRunningCount != 2 {
+		t.Errorf("expected 2 already-running errors, got %d", alreadyRunningCount)
+	}
+	if len(unexpectedErrors) != 0 {
+		t.Errorf("expected no unexpected errors, got %v", unexpectedErrors)
 	}
 }
 
@@ -365,10 +419,11 @@ Overview of distributed systems.
 		})
 	}
 
-	httpCalls := 0
+	var httpCalls int32
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		httpCalls++
-		t.Fatalf("HTTP server should not be called for up-to-date MOC")
+		atomic.AddInt32(&httpCalls, 1)
+		t.Errorf("HTTP server should not be called for up-to-date MOC")
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
 	}))
 	defer mockServer.Close()
 
@@ -390,8 +445,8 @@ Overview of distributed systems.
 	if len(result.Errors) != 0 {
 		t.Errorf("expected 0 Errors, got %v", result.Errors)
 	}
-	if httpCalls != 0 {
-		t.Errorf("expected 0 HTTP calls, got %d", httpCalls)
+	if calls := atomic.LoadInt32(&httpCalls); calls != 0 {
+		t.Errorf("expected 0 HTTP calls, got %d", calls)
 	}
 }
 
@@ -458,9 +513,9 @@ Custom user research notes that must never be deleted.
 		Article: "/articles/Raft Consensus Protocol.md",
 	})
 
-	httpCalls := 0
+	var httpCalls int32
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		httpCalls++
+		atomic.AddInt32(&httpCalls, 1)
 		var reqBody struct {
 			Messages []struct {
 				Role    string `json:"role"`
@@ -475,10 +530,12 @@ Custom user research notes that must never be deleted.
 		}
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
-			t.Fatalf("failed to read request body: %v", err)
+			t.Errorf("failed to read request body: %v", err)
+			return
 		}
 		if err := json.Unmarshal(bodyBytes, &reqBody); err != nil {
-			t.Fatalf("failed to unmarshal request body: %v", err)
+			t.Errorf("failed to unmarshal request body: %v", err)
+			return
 		}
 
 		if reqBody.ResponseFormat.JSONSchema.Name != "moc_delta_placement" {
@@ -486,7 +543,8 @@ Custom user research notes that must never be deleted.
 		}
 
 		if len(reqBody.Messages) == 0 {
-			t.Fatalf("expected at least 1 message in prompt")
+			t.Errorf("expected at least 1 message in prompt")
+			return
 		}
 		promptContent := reqBody.Messages[0].Content
 
@@ -541,8 +599,8 @@ Custom user research notes that must never be deleted.
 	if result.UpdatedMOCs != 1 {
 		t.Errorf("expected 1 UpdatedMOC, got %d (result: %+v)", result.UpdatedMOCs, result)
 	}
-	if httpCalls != 1 {
-		t.Errorf("expected 1 HTTP call, got %d", httpCalls)
+	if calls := atomic.LoadInt32(&httpCalls); calls != 1 {
+		t.Errorf("expected 1 HTTP call, got %d", calls)
 	}
 
 	updatedBytes, err := os.ReadFile(mocPath)
@@ -869,6 +927,3 @@ func TestLibrarian_TopicTitlePathTraversal_SanitizedSafely(t *testing.T) {
 		t.Fatalf("expected MOC file created in articlesDir, found none")
 	}
 }
-
-
-

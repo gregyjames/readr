@@ -244,7 +244,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	}
 	r.isRunning = true
 	r.mu.Unlock()
-	
+
 	defer func() {
 		r.mu.Lock()
 		r.isRunning = false
@@ -284,6 +284,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 			if err != nil {
 				r.logger.Error("Failed to check unlinked articles for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
 				result.Errors = append(result.Errors, fmt.Sprintf("unlinked %s: %v", cluster.Tag, err))
+				result.Status = "partial_failure"
 				continue
 			}
 			if len(unlinked) == 0 {
@@ -295,12 +296,14 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 			if err != nil {
 				r.logger.Error("Failed to synthesize delta MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
 				result.Errors = append(result.Errors, fmt.Sprintf("tag %s: %v", cluster.Tag, err))
+				result.Status = "partial_failure"
 				continue
 			}
 
 			if err := r.saveDeltaMOC(ctx, cluster, deltaResp, existingContent); err != nil {
 				r.logger.Error("Failed to save delta MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
 				result.Errors = append(result.Errors, fmt.Sprintf("save delta %s: %v", cluster.Tag, err))
+				result.Status = "partial_failure"
 				continue
 			}
 
@@ -312,12 +315,14 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 		if err != nil {
 			r.logger.Error("Failed to synthesize MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
 			result.Errors = append(result.Errors, fmt.Sprintf("tag %s: %v", cluster.Tag, err))
+			result.Status = "partial_failure"
 			continue
 		}
 
 		if err := r.saveMOC(ctx, cluster, synthesis); err != nil {
 			r.logger.Error("Failed to save MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
 			result.Errors = append(result.Errors, fmt.Sprintf("save %s: %v", cluster.Tag, err))
+			result.Status = "partial_failure"
 			continue
 		}
 
@@ -489,8 +494,11 @@ Instructions:
 		} `json:"usage"`
 	}
 
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil || len(chatResp.Choices) == 0 {
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
 		return nil, fmt.Errorf("failed to parse openrouter response: %w", err)
+	}
+	if len(chatResp.Choices) == 0 {
+		return nil, fmt.Errorf("openrouter response contained no choices")
 	}
 
 	rawContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
@@ -871,8 +879,11 @@ Instructions:
 		} `json:"usage"`
 	}
 
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil || len(chatResp.Choices) == 0 {
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
 		return nil, fmt.Errorf("failed to parse openrouter response: %w", err)
+	}
+	if len(chatResp.Choices) == 0 {
+		return nil, fmt.Errorf("openrouter response contained no choices")
 	}
 
 	rawContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
@@ -1273,6 +1284,10 @@ func (m *LibrarianCronManager) Start(cronExpr string, enabled bool) error {
 	defer m.mu.Unlock()
 
 	if !enabled {
+		if m.entryID != 0 {
+			m.cron.Remove(m.entryID)
+			m.entryID = 0
+		}
 		m.logger.Info("Librarian background cron disabled in settings")
 		return nil
 	}
@@ -1289,6 +1304,9 @@ func (m *LibrarianCronManager) Start(cronExpr string, enabled bool) error {
 		return fmt.Errorf("failed to register cron schedule %q: %w", cronExpr, err)
 	}
 
+	if m.entryID != 0 {
+		m.cron.Remove(m.entryID)
+	}
 	m.entryID = id
 	m.cron.Start()
 	m.logger.Info("Started Librarian background cron scheduler", zap.String("cron", cronExpr))

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"example.com/backend/internal/agents"
 	"example.com/backend/internal/auth"
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
@@ -129,7 +130,7 @@ func (s *SettingsStore) ExtractOpenRouterCredentials() (string, string) {
 	return s.settings.APIKey, s.settings.Model
 }
 
-func RegisterSettings(router fiber.Router, h *HandlerContext) {
+func RegisterSettings(router fiber.Router, h *HandlerContext, librarianCron *agents.LibrarianCronManager) {
 	router.Get("/settings", func(c *fiber.Ctx) error {
 		fresh := h.SettingsStore.Reload()
 		return c.JSON(fiber.Map{
@@ -153,7 +154,7 @@ func RegisterSettings(router fiber.Router, h *HandlerContext) {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid JSON"})
 		}
 
-		_, err := h.SettingsStore.Update(func(current *ServerSettings) error {
+		updated, err := h.SettingsStore.Update(func(current *ServerSettings) error {
 			current.APIKey = req.APIKey
 			if req.Model != "" {
 				current.Model = req.Model
@@ -182,6 +183,16 @@ func RegisterSettings(router fiber.Router, h *HandlerContext) {
 
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to save settings"})
+		}
+		if err := librarianCron.Start(updated.LibrarianCron, updated.LibrarianEnabled); err != nil {
+			if h.Logger != nil {
+				h.Logger.Error("Failed to reconfigure Librarian background cron scheduler",
+					zap.String("cron", updated.LibrarianCron),
+					zap.Bool("enabled", updated.LibrarianEnabled),
+					zap.Error(err),
+				)
+			}
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to configure Librarian schedule"})
 		}
 
 		return c.JSON(fiber.Map{"status": "success"})

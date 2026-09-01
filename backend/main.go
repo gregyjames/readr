@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,6 +97,14 @@ func LinkArticles(db *gorm.DB, req LinkRequest) (*ArticleLink, error) {
 }
 
 func setupApp(customDB ...*gorm.DB) *fiber.App {
+	app, err := setupAppWithError(customDB...)
+	if err != nil {
+		panic(err)
+	}
+	return app
+}
+
+func setupAppWithError(customDB ...*gorm.DB) (*fiber.App, error) {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -227,13 +236,14 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			zap.Bool("enabled", initialSettings.LibrarianEnabled),
 			zap.Error(err),
 		)
+		return nil, fmt.Errorf("start Librarian background cron scheduler: %w", err)
 	}
 
 	handlers.RegisterAuth(api, hCtx)
 	handlers.RegisterArticles(api, hCtx)
 	handlers.RegisterGraph(api, hCtx)
 	handlers.RegisterChat(api, hCtx)
-	handlers.RegisterSettings(api, hCtx)
+	handlers.RegisterSettings(api, hCtx, librarianCron)
 	handlers.RegisterTemplates(api, hCtx)
 	handlers.RegisterSearch(api, hCtx)
 	handlers.RegisterEvents(api, hCtx)
@@ -266,7 +276,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		}
 	}
 
-	return app
+	return app, nil
 }
 
 func main() {
@@ -279,7 +289,11 @@ func main() {
 	os.MkdirAll(filepath.Join(dataDirectory, "templates"), os.ModePerm)
 
 	db := initDB()
-	app := setupApp(db)
+	app, err := setupAppWithError(db)
+	if err != nil {
+		logger.Fatal("Failed to set up server", zap.Error(err))
+		panic(err)
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
