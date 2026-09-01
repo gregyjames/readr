@@ -147,6 +147,10 @@ func (m *mockArticleRepository) FindCandidates(ctx context.Context, excludeID in
 	return nil, nil
 }
 
+func (m *mockArticleRepository) FindRelevantTags(ctx context.Context, excludeID int64, title string, body string, limit int) ([]string, error) {
+	return nil, nil
+}
+
 func (m *mockArticleRepository) GetDistinctTags(ctx context.Context) ([]string, error) {
 	return nil, nil
 }

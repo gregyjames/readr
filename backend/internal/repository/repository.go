@@ -49,6 +49,7 @@ type Repository interface {
 	CreateLink(ctx context.Context, sourceID, targetID int64) (*LinkRecord, error)
 	DeleteArticle(ctx context.Context, id int64) error
 	FindCandidates(ctx context.Context, excludeID int64, title string, body string, limit int) ([]ArticleRecord, error)
+	FindRelevantTags(ctx context.Context, excludeID int64, title string, body string, limit int) ([]string, error)
 	GetDistinctTags(ctx context.Context) ([]string, error)
 	UpdateArticleTags(ctx context.Context, id int64, tags string) error
 	RecordPipelineMetric(ctx context.Context, metric *PipelineMetric) error
