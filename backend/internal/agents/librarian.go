@@ -320,8 +320,17 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 					topicTitle = cleanTitle
 				}
 			}
+			var fileErr error
 			for _, a := range cluster.Articles {
-				_, _ = r.organizer.FileArticle(ctx, a.ID, topicTitle)
+				if _, err := r.organizer.FileArticle(ctx, a.ID, topicTitle); err != nil {
+					r.logger.Error("Failed to file article into topic folder", zap.Int64("article_id", a.ID), zap.String("topic", topicTitle), zap.Error(err))
+					result.Status = "partial (some clusters failed)"
+					result.Errors = append(result.Errors, fmt.Sprintf("file article %d into %s: %v", a.ID, topicTitle, err))
+					fileErr = err
+				}
+			}
+			if fileErr != nil {
+				continue
 			}
 
 			result.UpdatedMOCs++
@@ -347,15 +356,32 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 		if topicTitle == "" {
 			topicTitle = cluster.Tag
 		}
+		var fileErr error
 		for _, a := range cluster.Articles {
-			_, _ = r.organizer.FileArticle(ctx, a.ID, topicTitle)
+			if _, err := r.organizer.FileArticle(ctx, a.ID, topicTitle); err != nil {
+				r.logger.Error("Failed to file article into topic folder", zap.Int64("article_id", a.ID), zap.String("topic", topicTitle), zap.Error(err))
+				result.Status = "partial (some clusters failed)"
+				result.Errors = append(result.Errors, fmt.Sprintf("file article %d into %s: %v", a.ID, topicTitle, err))
+				fileErr = err
+			}
+		}
+		if fileErr != nil {
+			continue
 		}
 
 		result.CreatedMOCs++
 	}
 
-	_ = r.organizer.CleanEmptyFolders()
-	_ = r.organizer.UpdateMasterIndex(ctx)
+	if err := r.organizer.CleanEmptyFolders(); err != nil {
+		r.logger.Error("Failed to clean empty topic folders", zap.Error(err))
+		result.Status = "partial (some clusters failed)"
+		result.Errors = append(result.Errors, fmt.Sprintf("clean empty folders: %v", err))
+	}
+	if err := r.organizer.UpdateMasterIndex(ctx); err != nil {
+		r.logger.Error("Failed to update master index", zap.Error(err))
+		result.Status = "partial (some clusters failed)"
+		result.Errors = append(result.Errors, fmt.Sprintf("update master index: %v", err))
+	}
 
 	if len(result.Errors) > 0 {
 		if result.CreatedMOCs == 0 && result.UpdatedMOCs == 0 {
