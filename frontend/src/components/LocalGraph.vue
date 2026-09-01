@@ -105,36 +105,94 @@ async function initLocalGraph() {
     if (!networkContainer.value) return;
     const colors = getGraphColors();
 
+    const mocs = graphNodes.filter((n) => n.group === 'moc');
+    const mocCount = Math.max(mocs.length, 1);
+    const clusterRadius = 240;
+
+    const mocPositions = new Map<string, { x: number; y: number; angle: number }>();
+    mocs.forEach((moc, index) => {
+      const angle = (index / mocCount) * 2 * Math.PI;
+      mocPositions.set(moc.id, {
+        x: Math.cos(angle) * clusterRadius,
+        y: Math.sin(angle) * clusterRadius,
+        angle,
+      });
+    });
+
+    const articleMocMap = new Map<string, string>();
+    graphEdges.forEach((e) => {
+      if (mocPositions.has(e.from) && !mocPositions.has(e.to)) {
+        articleMocMap.set(e.to, e.from);
+      } else if (mocPositions.has(e.to) && !mocPositions.has(e.from)) {
+        articleMocMap.set(e.from, e.to);
+      }
+    });
+
     const formattedNodes = graphNodes.map((node) => {
       const isMOC = node.group === 'moc';
       const isArticle = node.group === 'article';
       const isCurrent = node.id === `article-${numericId}`;
+      const connections = graphEdges.filter((e) => e.from === node.id || e.to === node.id).length;
 
       let bg = colors.tagBg;
       let border = colors.tagBorder;
       let highlight = colors.tagHighlight;
 
+      let nodeSize = 7;
+      let fontSize = 9;
+
       if (isCurrent) {
-        bg = '#059669';
+        bg = '#10b981';
         border = '#34d399';
         highlight = '#34d399';
+        nodeSize = Math.max(14, Math.min(14 + connections * 1.5, 24));
+        fontSize = 12;
       } else if (isMOC) {
         bg = colors.mocBg;
         border = colors.mocBorder;
         highlight = colors.mocHighlight;
+        nodeSize = Math.max(13, Math.min(13 + connections * 1.6, 26));
+        fontSize = 11;
       } else if (isArticle) {
         bg = colors.articleBg;
         border = colors.articleBorder;
         highlight = colors.articleHighlight;
+        nodeSize = Math.max(6, Math.min(6 + connections * 1.4, 20));
+        fontSize = Math.max(9, Math.min(9 + Math.floor(connections * 0.3), 12));
+      } else {
+        nodeSize = Math.max(5, Math.min(5 + connections * 0.7, 14));
+        fontSize = 9;
+      }
+
+      const showLocalLabel = isCurrent || isMOC || node.group === 'tag' || connections >= 4;
+      const displayLabel = showLocalLabel ? (node.label.length > 24 ? node.label.slice(0, 22) + '…' : node.label) : undefined;
+      const mass = isMOC ? 6.0 : (node.group === 'tag' ? 2.0 : 0.8);
+
+      let initialX: number | undefined = undefined;
+      let initialY: number | undefined = undefined;
+
+      if (isMOC && mocPositions.has(node.id)) {
+        const pos = mocPositions.get(node.id)!;
+        initialX = pos.x;
+        initialY = pos.y;
+      } else if (articleMocMap.has(node.id)) {
+        const parentPos = mocPositions.get(articleMocMap.get(node.id)!)!;
+        const angle = parentPos.angle + (Math.random() - 0.5) * 1.4;
+        const dist = 40 + Math.random() * 40;
+        initialX = parentPos.x + Math.cos(angle) * dist;
+        initialY = parentPos.y + Math.sin(angle) * dist;
       }
 
       return {
         id: node.id,
-        label: isArticle || isMOC ? undefined : node.label,
-        title: node.label,
+        label: displayLabel,
+        title: `${node.label} (${connections} connection${connections === 1 ? '' : 's'})`,
         shape: isMOC ? 'hexagon' : (isArticle ? 'dot' : 'box'),
-        size: isCurrent ? 14 : (isMOC ? 14 : 10),
-        margin: isArticle || isMOC ? 10 : 8,
+        size: nodeSize,
+        mass: mass,
+        x: initialX,
+        y: initialY,
+        margin: isArticle || isMOC ? 8 : 4,
         color: {
           background: bg,
           border: border,
@@ -142,26 +200,42 @@ async function initLocalGraph() {
             background: highlight,
             border: border,
           },
+          highlight: {
+            background: highlight,
+            border: '#34d399',
+          }
         },
         font: {
-          color: colors.isDark ? '#fff' : '#000',
-          size: isCurrent ? 12 : 10,
-          face: 'Outfit, sans-serif',
+          color: isMOC ? (colors.isDark ? '#fef3c7' : '#92400e') : (colors.isDark ? '#e5e7eb' : '#374151'),
+          size: fontSize,
+          face: 'Inter, system-ui, sans-serif',
+          strokeWidth: 3,
+          strokeColor: colors.isDark ? '#0a0a0a' : '#f8f9fa',
+          vadjust: isArticle || isMOC ? 2 : 0,
+          bold: isCurrent || isMOC ? 'bold' : undefined,
         },
-        borderWidth: isCurrent ? 3 : 2,
+        borderWidth: isCurrent ? 2.5 : 1.5,
       };
     });
 
-    const formattedEdges = graphEdges.map((edge) => ({
-      from: edge.from,
-      to: edge.to,
-      color: {
-        color: colors.edgeColor,
-        highlight: colors.edgeHighlight,
-      },
-      width: 1.5,
-      smooth: { enabled: true, type: 'continuous', roundness: 0.5 },
-    }));
+    const mocNodeIds = new Set(graphNodes.filter((n) => n.group === 'moc').map((n) => n.id));
+
+    const formattedEdges = graphEdges.map((edge) => {
+      const isMocEdge = mocNodeIds.has(edge.from) || mocNodeIds.has(edge.to);
+      return {
+        from: edge.from,
+        to: edge.to,
+        length: isMocEdge ? 65 : 220,
+        springConstant: isMocEdge ? 0.045 : 0.015,
+        color: isMocEdge
+          ? { color: colors.isDark ? 'rgba(245, 158, 11, 0.25)' : 'rgba(217, 119, 6, 0.2)', highlight: '#f59e0b', hover: '#f59e0b' }
+          : { color: colors.edgeColor, highlight: colors.edgeHighlight, hover: colors.edgeHighlight },
+        width: 1,
+        hoverWidth: 2,
+        selectionWidth: 2,
+        smooth: false,
+      };
+    });
 
     if (network) {
       network.destroy();
@@ -169,21 +243,37 @@ async function initLocalGraph() {
     }
 
     const options = {
-      nodes: { borderWidthSelected: 2, widthConstraint: { maximum: 120 } },
-      edges: { selectionWidth: 2 },
+      nodes: { borderWidthSelected: 2, widthConstraint: { maximum: 110 } },
+      edges: { selectionWidth: 1.5 },
+      layout: { improvedLayout: false },
       physics: {
-        barnesHut: {
-          gravitationalConstant: -2000,
-          centralGravity: 0.3,
-          springLength: 90,
-          damping: 0.2,
+        enabled: true,
+        solver: 'repulsion',
+        repulsion: {
+          nodeDistance: 220,
+          centralGravity: 0.003,
+          springLength: 220,
+          springConstant: 0.03,
+          damping: 0.45,
         },
+        stabilization: {
+          enabled: true,
+          iterations: 80,
+          updateInterval: 25,
+          fit: true,
+        },
+        minVelocity: 0.35,
+        maxVelocity: 50,
       },
       interaction: {
-        hover: true,
-        tooltipDelay: 100,
-        zoomView: false, // Disabled mouse wheel zoom
+        dragNodes: true,
         dragView: true,
+        hover: true,
+        hoverConnectedEdges: true,
+        selectConnectedEdges: true,
+        hideEdgesOnDrag: true,
+        tooltipDelay: 100,
+        zoomView: false,
       },
     };
 
@@ -196,13 +286,30 @@ async function initLocalGraph() {
       options as any
     );
 
+    let hasDraggedLocal = false;
+
+    network.on('dragStart', () => {
+      hasDraggedLocal = false;
+    });
+
+    network.on('dragging', () => {
+      hasDraggedLocal = true;
+    });
+
+    network.on('dragEnd', () => {
+      setTimeout(() => {
+        hasDraggedLocal = false;
+      }, 100);
+    });
+
     network.on('click', (params: any) => {
+      if (hasDraggedLocal) return;
       if (params.nodes && params.nodes.length > 0) {
         const selectedId = String(params.nodes[0]);
         if (selectedId.startsWith('article-')) {
-          const targetId = selectedId.replace('article-', '');
-          if (targetId !== String(numericId)) {
-            router.push(`/articles/${targetId}`);
+          const articleId = selectedId.replace('article-', '');
+          if (articleId !== String(numericId)) {
+            router.push(`/articles/${articleId}`);
           }
         }
       }
