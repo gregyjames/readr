@@ -664,3 +664,30 @@ func TestProcessPipeline_RecordsMetrics(t *testing.T) {
 		t.Errorf("expected total tokens 190, got %d", recent[0].TotalTokens)
 	}
 }
+
+func TestPipeline_MOCTagExcludedFromEnricherAndStripped(t *testing.T) {
+	// 1. Verify buildPipelinePrompt excludes "moc" from Existing Vault Tags and adds warning
+	settings := PipelineSettings{Enricher: true}
+	existingTags := []string{"moc", "golang", "microservices"}
+	prompt := buildPipelinePrompt(settings, "Article content", nil, existingTags)
+
+	if strings.Contains(prompt, "Existing Vault Tags:\nmoc") || strings.Contains(prompt, "moc, ") || strings.Contains(prompt, ", moc") {
+		t.Errorf("prompt Existing Vault Tags should NOT contain 'moc', got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "golang") || !strings.Contains(prompt, "microservices") {
+		t.Errorf("prompt should still contain other valid vault tags")
+	}
+
+	// 2. Verify mergeArticleTags strips "moc" from aiTags
+	aiTags := []string{"golang", "MOC", "distributed-systems"}
+	merged := mergeArticleTags("existing-tag", aiTags)
+
+	for _, tag := range merged {
+		if strings.ToLower(tag) == "moc" {
+			t.Errorf("mergeArticleTags should have stripped 'moc' tag, but found in: %v", merged)
+		}
+	}
+	if len(merged) != 3 {
+		t.Errorf("expected 3 merged tags (existing-tag, golang, distributed-systems), got %d: %v", len(merged), merged)
+	}
+}

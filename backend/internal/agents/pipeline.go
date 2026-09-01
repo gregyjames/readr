@@ -129,7 +129,11 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	var existingVaultTags []string
 	if job.Settings.Enricher && repo != nil {
 		if tags, err := repo.GetDistinctTags(context.Background()); err == nil && len(tags) > 0 {
-			existingVaultTags = tags
+			for _, t := range tags {
+				if strings.ToLower(strings.TrimSpace(t)) != "moc" {
+					existingVaultTags = append(existingVaultTags, t)
+				}
+			}
 		}
 	}
 

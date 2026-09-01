@@ -162,6 +162,16 @@ const articleTitle = computed(() => {
   return knownProperties.value.title || currentArticle.value?.title || ''
 })
 
+const isMOC = computed(() => {
+  if (properties.value.some(p => p.key.toLowerCase() === 'type' && String(p.value).toLowerCase() === 'moc')) return true
+  if (currentArticle.value) {
+    const title = currentArticle.value.title.toLowerCase()
+    if (title.startsWith('moc - ') || title.startsWith('moc:') || title.startsWith('moc ') || title === 'moc') return true
+    if (currentArticle.value.tags && currentArticle.value.tags.toLowerCase().split(',').map(t => t.trim()).includes('moc')) return true
+  }
+  return false
+})
+
 function formatDisplayDate(dateStr: string): string {
   if (!dateStr) return ''
   try {
@@ -463,9 +473,23 @@ const loadContent = async () => {
     properties.value = parseFrontmatter(raw)
     
     const parsedRaw = raw.replace(/\[\[([^[\]\n]+?)\]\]/g, (_, p1) => {
+      const fullText = String(p1 || '').trim()
+      
+      // 1. First check if the full un-split string matches an article title (e.g. "Title | Site Name")
+      const matchFull = allArticles.value.find(a => 
+        a.title.trim().toLowerCase() === fullText.toLowerCase() ||
+        String(a.ID) === fullText ||
+        a.article.replace(/^\/?articles\//, '').replace(/\.md$/, '').trim().toLowerCase() === fullText.toLowerCase()
+      )
+
+      if (matchFull) {
+        return `<a href="/articles/${matchFull.ID}" data-article-id="${matchFull.ID}" class="wikilink font-semibold text-emerald-600 dark:text-emerald-400 no-underline hover:underline hover:text-emerald-700 dark:hover:text-emerald-300 transition-colors bg-emerald-50/50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded-md border border-emerald-100 dark:border-emerald-800/50 cursor-pointer">${matchFull.title}</a>`
+      }
+
+      // 2. If no full match and contains '|', treat as [[Target|Display Alias]]
       const parts = p1.split('|')
       const targetTitle = parts[0].trim()
-      const display = parts.length > 1 ? parts[1].trim() : targetTitle
+      const display = parts.length > 1 ? parts.slice(1).join('|').trim() : targetTitle
       
       const targetArticle = allArticles.value.find(a => 
         a.title.trim().toLowerCase() === targetTitle.toLowerCase() ||
@@ -665,6 +689,15 @@ onBeforeUnmount(() => {
           <!-- Top Row: Source Publisher, Date, and Edit Button -->
           <div class="flex items-center justify-between gap-4">
             <div class="flex flex-wrap items-center gap-3">
+              <!-- MOC Hub Badge -->
+              <span
+                v-if="isMOC"
+                class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 text-xs font-semibold tracking-tight shadow-sm"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-amber-500"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/><path d="M6 10h10"/></svg>
+                Map of Content (Hub)
+              </span>
+
               <!-- Source Badge -->
               <a
                 v-if="knownProperties.source"

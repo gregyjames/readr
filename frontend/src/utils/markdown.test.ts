@@ -31,12 +31,14 @@ Here is a link to [[Artificial Intelligence|AI]] and [[Backpropagation]].
   });
 
   it('replaces [[wikilinks]] with interactive HTML links', () => {
-    const content = 'Read [[AI Guide|Artificial Intelligence]] and [[Machine Learning]].';
+    const content = 'Read [[AI Guide|Artificial Intelligence]] and [[Machine Learning]] and [[Cython Fast|NumPy | Cython]].';
     const replaced = replaceWikilinks(content);
     expect(replaced).toContain('data-target="AI Guide"');
     expect(replaced).toContain('>Artificial Intelligence</a>');
     expect(replaced).toContain('data-target="Machine Learning"');
     expect(replaced).toContain('>Machine Learning</a>');
+    expect(replaced).toContain('data-target="Cython Fast"');
+    expect(replaced).toContain('>NumPy | Cython</a>');
   });
 
   it('extracts hostnames cleanly without throwing', () => {

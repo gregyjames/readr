@@ -63,34 +63,35 @@ func TestFindCandidates_FTS5AndFallback(t *testing.T) {
 	repo := NewGormRepository(db)
 	ctx := context.Background()
 
-	// Seed articles
+	// Seed articles including a MOC hub note
 	articles := []GormArticle{
 		{ID: 1, Title: "Introduction to Golang and Concurrency", Tags: "golang, concurrency"},
 		{ID: 2, Title: "Deep Dive into Kubernetes Operators", Tags: "k8s, containers"},
 		{ID: 3, Title: "Database Optimization with SQLite FTS5", Tags: "sqlite, search"},
 		{ID: 4, Title: "Cooking Pasta Recipes", Tags: "cooking, food"},
+		{ID: 5, Title: "MOC - Distributed Systems", Tags: "moc, golang, k8s"},
 	}
 	for _, a := range articles {
 		db.Create(&a)
 		db.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", a.ID, a.Title, a.Tags)
 	}
 
-	// Case 1: Search for Golang related candidate, exclude ID 1
-	candidates, err := repo.FindCandidates(ctx, 1, "Golang Microservices in Kubernetes", "We use Go channels and Kubernetes pods.", 2)
+	// Case 1: Search for Golang related candidate, exclude ID 1 -> must NOT return MOC (ID 5)
+	candidates, err := repo.FindCandidates(ctx, 1, "Golang Microservices in Kubernetes", "We use Go channels and Kubernetes pods.", 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(candidates) != 2 {
-		t.Fatalf("expected 2 candidates, got %d", len(candidates))
 	}
 	for _, c := range candidates {
 		if c.ID == 1 {
 			t.Errorf("candidate should not include excluded ID 1")
 		}
+		if c.ID == 5 || IsMOCArticle(c.Title, c.Tags) {
+			t.Errorf("candidate should NOT include MOC article: %+v", c)
+		}
 	}
 
-	// Case 2: Zero FTS matches falls back to recent articles
-	candidatesFallback, err := repo.FindCandidates(ctx, 4, "Quantum Astrophysics Relativity", "Gravitational waves in spacetime.", 3)
+	// Case 2: Zero FTS matches falls back to recent articles -> must NOT return MOC (ID 5)
+	candidatesFallback, err := repo.FindCandidates(ctx, 4, "Quantum Astrophysics Relativity", "Gravitational waves in spacetime.", 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -100,6 +101,9 @@ func TestFindCandidates_FTS5AndFallback(t *testing.T) {
 	for _, c := range candidatesFallback {
 		if c.ID == 4 {
 			t.Errorf("fallback should not include excluded ID 4")
+		}
+		if c.ID == 5 || IsMOCArticle(c.Title, c.Tags) {
+			t.Errorf("fallback should NOT include MOC article: %+v", c)
 		}
 	}
 }

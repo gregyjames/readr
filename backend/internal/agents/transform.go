@@ -131,7 +131,7 @@ func mergeArticleTags(existingTags string, aiTags []string) []string {
 	}
 	for _, t := range aiTags {
 		cleaned := strings.ToLower(strings.TrimSpace(t))
-		if cleaned != "" {
+		if cleaned != "" && cleaned != "moc" {
 			if _, exists := seen[cleaned]; !exists {
 				seen[cleaned] = struct{}{}
 				merged = append(merged, cleaned)

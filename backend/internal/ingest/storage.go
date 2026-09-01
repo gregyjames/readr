@@ -40,7 +40,7 @@ func isWindowsReservedName(name string) bool {
 func SanitizeTitleFilename(title string, fallbackID int64) string {
 	var b strings.Builder
 	for _, r := range title {
-		if r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' || r < 32 {
+		if r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' || r == '#' || r == '^' || r == '[' || r == ']' || r < 32 {
 			b.WriteRune(' ')
 		} else {
 			b.WriteRune(r)

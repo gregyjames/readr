@@ -69,11 +69,13 @@ export function stripFrontmatter(rawText: string): string {
  */
 export function replaceWikilinks(content: string): string {
   if (!content) return '';
-  const wikilinkRegex = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
-  return content.replace(wikilinkRegex, (_, title, label) => {
-    const targetTitle = title.trim();
-    const displayLabel = (label || title).trim();
-    return `<a class="wikilink text-emerald-600 dark:text-emerald-400 font-medium border-b border-emerald-500/30 hover:border-emerald-500 transition-colors cursor-pointer" data-target="${targetTitle}">${displayLabel}</a>`;
+  const wikilinkRegex = /\[\[([^[\]\n]+?)\]\]/g;
+  return content.replace(wikilinkRegex, (_, raw) => {
+    const trimmed = raw.trim();
+    const parts = trimmed.split('|');
+    const target = parts[0].trim();
+    const label = parts.length > 1 ? parts.slice(1).join('|').trim() : target;
+    return `<a class="wikilink text-emerald-600 dark:text-emerald-400 font-medium border-b border-emerald-500/30 hover:border-emerald-500 transition-colors cursor-pointer" data-target="${target}">${label}</a>`;
   });
 }
 

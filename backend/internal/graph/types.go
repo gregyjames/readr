@@ -7,6 +7,7 @@ type NodeGroup string
 const (
 	GroupArticle NodeGroup = "article"
 	GroupTag     NodeGroup = "tag"
+	GroupMOC     NodeGroup = "moc"
 )
 
 type Node struct {
