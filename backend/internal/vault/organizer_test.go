@@ -254,3 +254,42 @@ func TestVaultOrganizer_UpdateMasterIndex(t *testing.T) {
 		t.Errorf("expected '[[MOC - Distributed Systems]] — 1 notes' in index.md, got:\n%s", content)
 	}
 }
+
+func TestVaultOrganizer_FileArticle_RollbackOnDBError(t *testing.T) {
+	db, organizer, dataDir := setupTestDBAndOrganizer(t)
+	// Create an article in the DB and on disk
+	articlesDir := filepath.Join(dataDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0755)
+	articlePath := filepath.Join(articlesDir, "Rollback Test.md")
+	if err := os.WriteFile(articlePath, []byte("# Rollback Test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	article := repository.GormArticle{
+		ID:      888,
+		Title:   "Rollback Test",
+		Article: "/articles/Rollback Test.md",
+	}
+	db.Create(&article)
+
+	// Create an SQLite trigger that fails any UPDATE on articles table
+	if err := db.Exec("CREATE TRIGGER fail_update BEFORE UPDATE ON articles BEGIN SELECT RAISE(ABORT, 'forced update failure'); END;").Error; err != nil {
+		t.Fatalf("failed to create fail trigger: %v", err)
+	}
+
+	_, err := organizer.FileArticle(context.Background(), 888, "Target Topic")
+	if err == nil {
+		t.Fatalf("expected error from failed db update, got nil")
+	}
+
+	// Verify target file does NOT exist
+	targetPath := filepath.Join(dataDir, "articles", "Target Topic", "Rollback Test.md")
+	if _, err := os.Stat(targetPath); !os.IsNotExist(err) {
+		t.Errorf("expected target file %s not to exist after rollback", targetPath)
+	}
+
+	// Verify original file was restored
+	if _, err := os.Stat(articlePath); err != nil {
+		t.Errorf("expected original file %s to be restored: %v", articlePath, err)
+	}
+}

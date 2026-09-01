@@ -74,11 +74,14 @@ func (o *VaultOrganizer) FileArticle(ctx context.Context, articleID int64, topic
 		return dbPath, nil
 	}
 
+	var srcMovedFrom string
+
 	// Move physical file if source exists
 	if _, err := os.Stat(currentAbs); err == nil {
 		if err := os.Rename(currentAbs, targetAbs); err != nil {
 			return "", fmt.Errorf("failed to move article file from %s to %s: %w", currentAbs, targetAbs, err)
 		}
+		srcMovedFrom = currentAbs
 	} else {
 		// If current file wasn't found at registered path, try locating it in root articles/
 		fallbackSrc := filepath.Join(o.dataDir, "articles", fileName)
@@ -86,11 +89,15 @@ func (o *VaultOrganizer) FileArticle(ctx context.Context, articleID int64, topic
 			if err := os.Rename(fallbackSrc, targetAbs); err != nil {
 				return "", fmt.Errorf("failed to move fallback article file from %s to %s: %w", fallbackSrc, targetAbs, err)
 			}
+			srcMovedFrom = fallbackSrc
 		}
 	}
 
 	// Update DB record with leading slash
 	if err := o.db.WithContext(ctx).Model(&repository.GormArticle{}).Where("id = ?", articleID).Update("article", dbPath).Error; err != nil {
+		if srcMovedFrom != "" {
+			_ = os.Rename(targetAbs, srcMovedFrom)
+		}
 		return "", fmt.Errorf("failed to update article %d path in db: %w", articleID, err)
 	}
 
