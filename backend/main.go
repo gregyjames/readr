@@ -87,6 +87,7 @@ func initDB() *gorm.DB {
 	db.AutoMigrate(&Article{}, &ArticleLink{}, &repository.PipelineMetric{})
 	handlers.EnsureFTS(db, logger)
 	handlers.MigrateLegacyArticleFilenames(db, getDataDir(), logger)
+	handlers.MigrateLegacyArticleTags(db, getDataDir(), logger)
 
 	return db
 }

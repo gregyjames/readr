@@ -111,34 +111,12 @@ func injectLinksIntoBody(body string, links []llmLink, candidates []repository.A
 }
 
 func mergeArticleTags(existingTags string, aiTags []string) []string {
-	var existing []string
+	var allRaw []string
 	if strings.TrimSpace(existingTags) != "" {
-		for _, t := range strings.Split(existingTags, ",") {
-			cleaned := strings.ToLower(strings.TrimSpace(t))
-			if cleaned != "" {
-				existing = append(existing, cleaned)
-			}
-		}
+		allRaw = append(allRaw, strings.Split(existingTags, ",")...)
 	}
-
-	seen := make(map[string]struct{})
-	var merged []string
-	for _, t := range existing {
-		if _, exists := seen[t]; !exists {
-			seen[t] = struct{}{}
-			merged = append(merged, t)
-		}
-	}
-	for _, t := range aiTags {
-		cleaned := strings.ToLower(strings.TrimSpace(t))
-		if cleaned != "" && cleaned != "moc" {
-			if _, exists := seen[cleaned]; !exists {
-				seen[cleaned] = struct{}{}
-				merged = append(merged, cleaned)
-			}
-		}
-	}
-	return merged
+	allRaw = append(allRaw, aiTags...)
+	return repository.SanitizeObsidianTags(allRaw)
 }
 
 func serializeOKFMetadata(frontmatter *OKFFrontmatterResponse, mergedTags []string) (string, *OKFMetadata, error) {

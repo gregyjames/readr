@@ -327,8 +327,8 @@ func (r *GormRepository) GetDistinctTags(ctx context.Context) ([]string, error) 
 	for _, raw := range rawTags {
 		parts := strings.Split(raw, ",")
 		for _, p := range parts {
-			tag := strings.ToLower(strings.TrimSpace(p))
-			if tag == "" || len(tag) > 40 {
+			tag := SanitizeObsidianTag(p)
+			if tag == "" || tag == "moc" || len(tag) > 40 {
 				continue
 			}
 			if _, exists := seen[tag]; !exists {
@@ -342,10 +342,11 @@ func (r *GormRepository) GetDistinctTags(ctx context.Context) ([]string, error) 
 }
 
 func (r *GormRepository) UpdateArticleTags(ctx context.Context, id int64, tags string) error {
+	sanitized := strings.Join(SanitizeObsidianTags(strings.Split(tags, ",")), ", ")
 	return r.db.WithContext(ctx).
 		Model(&GormArticle{}).
 		Where("id = ?", id).
-		Update("tags", tags).Error
+		Update("tags", sanitized).Error
 }
 
 func (r *GormRepository) RecordPipelineMetric(ctx context.Context, metric *PipelineMetric) error {

@@ -223,3 +223,62 @@ func TestGetArticleContent_PathTraversalRejected(t *testing.T) {
 		})
 	}
 }
+
+func TestMigrateLegacyArticleTags(t *testing.T) {
+	tempDir := t.TempDir()
+	articlesDir := filepath.Join(tempDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0755)
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.AutoMigrate(&repository.GormArticle{})
+
+	// 1. Seed article with spaces in tags and markdown frontmatter
+	articleContent := `---
+type: News
+title: Google unveils Gemini Enterprise for Legal in law tech push
+tags: [google, gemini, legal tech, artificial intelligence, enterprise ai]
+---
+
+# Article body
+`
+	filePath := filepath.Join(articlesDir, "Google Legal.md")
+	_ = os.WriteFile(filePath, []byte(articleContent), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      201,
+		Title:   "Google unveils Gemini Enterprise for Legal in law tech push",
+		Article: "/articles/Google Legal.md",
+		Tags:    "google, gemini, legal tech, artificial intelligence, enterprise ai",
+	})
+
+	count, err := MigrateLegacyArticleTags(db, tempDir, zap.NewNop())
+	if err != nil {
+		t.Fatalf("unexpected tag migration error: %v", err)
+	}
+
+	if count != 1 {
+		t.Errorf("expected 1 migrated article, got %d", count)
+	}
+
+	var updated repository.GormArticle
+	db.First(&updated, 201)
+	expectedTags := "google, gemini, legal-tech, artificial-intelligence, enterprise-ai"
+	if updated.Tags != expectedTags {
+		t.Errorf("expected updated DB tags %q, got %q", expectedTags, updated.Tags)
+	}
+
+	updatedFileBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("failed to read updated file: %v", err)
+	}
+	updatedFileStr := string(updatedFileBytes)
+	if strings.Contains(updatedFileStr, "legal tech") || strings.Contains(updatedFileStr, "artificial intelligence") {
+		t.Errorf("file still contains unhyphenated tags:\n%s", updatedFileStr)
+	}
+	if !strings.Contains(updatedFileStr, "legal-tech") || !strings.Contains(updatedFileStr, "artificial-intelligence") {
+		t.Errorf("file missing sanitized hyphenated tags:\n%s", updatedFileStr)
+	}
+}
