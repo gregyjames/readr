@@ -89,6 +89,8 @@ func TestGetArticleContent_NestedTopicDirectories(t *testing.T) {
 			if err != nil {
 				t.Fatalf("request %s failed: %v", reqPath, err)
 			}
+			defer resp.Body.Close()
+
 			if resp.StatusCode != 200 {
 				t.Fatalf("expected status 200 for %s, got %d", reqPath, resp.StatusCode)
 			}
@@ -116,6 +118,8 @@ func TestGetArticleContent_NestedTopicDirectories(t *testing.T) {
 			if err != nil {
 				t.Fatalf("request %s failed: %v", reqPath, err)
 			}
+			defer resp.Body.Close()
+
 			if resp.StatusCode != 404 && resp.StatusCode != 403 && resp.StatusCode != 400 {
 				t.Fatalf("expected 403 or 404 or 400 for path traversal %s, got %d", reqPath, resp.StatusCode)
 			}
