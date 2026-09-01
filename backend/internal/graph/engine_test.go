@@ -44,6 +44,10 @@ func (m *mockGraphRepository) FindCandidates(ctx context.Context, excludeID int6
 	return nil, nil
 }
 
+func (m *mockGraphRepository) FindRelevantTags(ctx context.Context, excludeID int64, title string, body string, limit int) ([]string, error) {
+	return nil, nil
+}
+
 func (m *mockGraphRepository) GetDistinctTags(ctx context.Context) ([]string, error) {
 	return nil, nil
 }

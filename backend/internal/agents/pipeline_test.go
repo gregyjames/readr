@@ -179,8 +179,8 @@ func TestProcessPipeline_AllEnabled(t *testing.T) {
 	if !strings.Contains(promptReceived, "2. FRONTMATTER") {
 		t.Errorf("expected FRONTMATTER instruction in prompt")
 	}
-	if !strings.Contains(promptReceived, "Existing Vault Tags:") {
-		t.Errorf("expected Existing Vault Tags in prompt")
+	if !strings.Contains(promptReceived, "Relevant Vault Tags:") {
+		t.Errorf("expected Relevant Vault Tags in prompt, got:\n%s", promptReceived)
 	}
 	if !strings.Contains(promptReceived, "3. SMART LINKING") {
 		t.Errorf("expected SMART LINKING instruction in prompt")
@@ -672,8 +672,8 @@ func TestPipeline_MOCTagExcludedFromEnricherAndStripped(t *testing.T) {
 	existingTags := []string{"moc", "golang", "microservices"}
 	prompt := buildPipelinePrompt(settings, "Article content", nil, existingTags)
 
-	if strings.Contains(prompt, "Existing Vault Tags:\nmoc") || strings.Contains(prompt, "moc, ") || strings.Contains(prompt, ", moc") {
-		t.Errorf("prompt Existing Vault Tags should NOT contain 'moc', got:\n%s", prompt)
+	if strings.Contains(prompt, "Relevant Vault Tags:\nmoc") || strings.Contains(prompt, "moc, ") || strings.Contains(prompt, ", moc") {
+		t.Errorf("prompt Relevant Vault Tags should NOT contain 'moc', got:\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "golang") || !strings.Contains(prompt, "microservices") {
 		t.Errorf("prompt should still contain other valid vault tags")
@@ -702,5 +702,127 @@ func TestMergeArticleTags_SanitizesSpacesForObsidian(t *testing.T) {
 
 	if !reflect.DeepEqual(merged, expected) {
 		t.Errorf("expected merged tags %v, got %v", expected, merged)
+	}
+}
+
+func TestProcessPipeline_InjectsRelevantTagsOnly(t *testing.T) {
+	tempDir, db, repo := setupTestPipelineEnv(t)
+
+	// Seed related article with AI tags and unrelated article with cooking tags
+	db.Create(&repository.GormArticle{ID: 501, Title: "Raft Consensus Algorithm", Tags: "consensus, distributed-systems"})
+	db.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (501, 'Raft Consensus Algorithm', 'consensus, distributed-systems')")
+
+	db.Create(&repository.GormArticle{ID: 502, Title: "Homemade Pasta Sauce", Tags: "cooking, recipes"})
+	db.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (502, 'Homemade Pasta Sauce', 'cooking, recipes')")
+
+	// Target article to enrich
+	articlesDir := filepath.Join(tempDir, "articles")
+	articleFile := filepath.Join(articlesDir, "Paxos Algorithm.md")
+	_ = os.WriteFile(articleFile, []byte("# Paxos Consensus\nPaxos is a protocol for distributed consensus."), 0644)
+	db.Create(&repository.GormArticle{ID: 503, Title: "Paxos Algorithm", Article: "/articles/Paxos Algorithm.md"})
+	db.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (503, 'Paxos Algorithm', 'consensus protocol')")
+
+	var promptReceived string
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reqBody map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
+		messages := reqBody["messages"].([]interface{})
+		for _, m := range messages {
+			msg := m.(map[string]interface{})
+			if msg["role"] == "user" {
+				promptReceived = msg["content"].(string)
+			}
+		}
+
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]interface{}{
+						"content": `{"frontmatter":{"type":"Reference","title":"Paxos Algorithm","description":"Paxos summary","resource":"","tags":["consensus","distributed-systems"]}}`,
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	pool := &AgentPool{
+		logger:        zap.NewNop(),
+		db:            db,
+		repo:          repo,
+		dataDirectory: tempDir,
+	}
+	job := Job{
+		ArticleID: 503,
+		Type:      JobTypePipeline,
+		Settings:  PipelineSettings{Enricher: true},
+	}
+
+	pool.processPipelineWithURL(job, mockServer.URL)
+
+	// Verify relevant tags section contains matching tags and excludes unrelated tags
+	if !strings.Contains(promptReceived, "Relevant Vault Tags:") {
+		t.Errorf("expected 'Relevant Vault Tags:' in prompt, got:\n%s", promptReceived)
+	}
+	if !strings.Contains(promptReceived, "consensus") || !strings.Contains(promptReceived, "distributed-systems") {
+		t.Errorf("expected relevant tags 'consensus' and 'distributed-systems' in prompt, got:\n%s", promptReceived)
+	}
+	if strings.Contains(promptReceived, "cooking") || strings.Contains(promptReceived, "recipes") {
+		t.Errorf("unrelated tags 'cooking' / 'recipes' should NOT be in prompt, got:\n%s", promptReceived)
+	}
+}
+
+func TestProcessPipeline_OmitsTagsSectionWhenNoCandidatesMatch(t *testing.T) {
+	tempDir, db, repo := setupTestPipelineEnv(t)
+
+	// Target article on novel topic with no FTS matches
+	articlesDir := filepath.Join(tempDir, "articles")
+	articleFile := filepath.Join(articlesDir, "Quantum Entanglement.md")
+	_ = os.WriteFile(articleFile, []byte("# Quantum Entanglement\nSpooky action at a distance."), 0644)
+	db.Create(&repository.GormArticle{ID: 601, Title: "Quantum Entanglement", Article: "/articles/Quantum Entanglement.md"})
+
+	var promptReceived string
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reqBody map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
+		messages := reqBody["messages"].([]interface{})
+		for _, m := range messages {
+			msg := m.(map[string]interface{})
+			if msg["role"] == "user" {
+				promptReceived = msg["content"].(string)
+			}
+		}
+
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]interface{}{
+						"content": `{"frontmatter":{"type":"Essay","title":"Quantum Entanglement","description":"Physics overview","resource":"","tags":["quantum-physics"]}}`,
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	pool := &AgentPool{
+		logger:        zap.NewNop(),
+		db:            db,
+		repo:          repo,
+		dataDirectory: tempDir,
+	}
+	job := Job{
+		ArticleID: 601,
+		Type:      JobTypePipeline,
+		Settings:  PipelineSettings{Enricher: true},
+	}
+
+	pool.processPipelineWithURL(job, mockServer.URL)
+
+	// Verify no relevant vault tags section is injected when 0 candidates match
+	if strings.Contains(promptReceived, "Relevant Vault Tags:") || strings.Contains(promptReceived, "Existing Vault Tags:") {
+		t.Errorf("expected NO vault tags section in prompt for novel topic, got:\n%s", promptReceived)
 	}
 }

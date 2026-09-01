@@ -165,3 +165,80 @@ func TestGetDistinctTags_And_UpdateArticleTags(t *testing.T) {
 		t.Errorf("expected updated tags 'database, sqlite', got %q", updated.Tags)
 	}
 }
+
+func TestFindRelevantTags(t *testing.T) {
+	tempDir := t.TempDir()
+	sqlDB, err := sql.Open("sqlite", filepath.Join(tempDir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db.AutoMigrate(&GormArticle{})
+	db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
+		title, 
+		content, 
+		tokenize='porter'
+	)`)
+
+	repo := NewGormRepository(db)
+	ctx := context.Background()
+
+	// Seed articles with various tags
+	articles := []GormArticle{
+		{ID: 1, Title: "Neural Networks in PyTorch", Tags: "ai, machine-learning, python"},
+		{ID: 2, Title: "Deep Learning Transformers and AI", Tags: "ai, machine-learning, llm"},
+		{ID: 3, Title: "Computer Vision with PyTorch AI", Tags: "ai, vision"},
+		{ID: 4, Title: "Unrelated Gardening and Plants", Tags: "gardening, nature"},
+		{ID: 5, Title: "MOC - Artificial Intelligence", Tags: "moc, ai"},
+	}
+	for _, a := range articles {
+		db.Create(&a)
+		db.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", a.ID, a.Title, a.Tags)
+	}
+
+	// 1. Search for AI related article: should extract "ai", "machine-learning", etc. and exclude "moc"
+	tags, err := repo.FindRelevantTags(ctx, 100, "Deep Learning and Neural Networks in PyTorch", "AI transformers and computer vision", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(tags) == 0 {
+		t.Fatalf("expected relevant tags, got 0")
+	}
+
+	// "ai" appeared in 3 candidate notes, "machine-learning" in 2 -> "ai" must be first
+	if tags[0] != "ai" {
+		t.Errorf("expected most frequent tag 'ai' first, got %q", tags[0])
+	}
+
+	for _, tag := range tags {
+		if tag == "moc" {
+			t.Errorf("FindRelevantTags should never return 'moc' tag")
+		}
+		if tag == "gardening" || tag == "nature" {
+			t.Errorf("FindRelevantTags should not return unrelated tag %q", tag)
+		}
+	}
+
+	// 2. Search with limit 2
+	limitedTags, err := repo.FindRelevantTags(ctx, 100, "Deep Learning and Neural Networks in PyTorch", "AI transformers and computer vision", 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(limitedTags) > 2 {
+		t.Errorf("expected at most 2 tags, got %d", len(limitedTags))
+	}
+
+	// 3. Search with non-matching keywords: should return empty slice
+	emptyTags, err := repo.FindRelevantTags(ctx, 100, "Quantum Astrophysics Space", "Supernovae and black holes", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(emptyTags) != 0 {
+		t.Errorf("expected 0 relevant tags for non-matching article, got %v", emptyTags)
+	}
+}

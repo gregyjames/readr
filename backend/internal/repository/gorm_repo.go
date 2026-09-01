@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -310,6 +311,89 @@ func (r *GormRepository) FindCandidates(ctx context.Context, excludeID int64, ti
 	}
 
 	return candidates, nil
+}
+
+// FindRelevantTags retrieves up to limit relevant tags from matching FTS5 candidate notes.
+func (r *GormRepository) FindRelevantTags(ctx context.Context, excludeID int64, title string, body string, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+
+	keywords := extractCandidateKeywords(title, body, 8)
+	if len(keywords) == 0 {
+		return []string{}, nil
+	}
+
+	var ftsTerms []string
+	for _, kw := range keywords {
+		cleaned := strings.ReplaceAll(kw, `"`, `""`)
+		ftsTerms = append(ftsTerms, fmt.Sprintf(`"%s"*`, cleaned))
+	}
+	safeFTSQuery := strings.Join(ftsTerms, " OR ")
+
+	var matchedArticles []GormArticle
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT a.id, a.title, a.tags, a.article, a.image
+		FROM articles a
+		JOIN articles_fts fts ON a.id = fts.rowid
+		WHERE articles_fts MATCH ?
+		  AND a.id != ?
+		  AND a.deleted_at IS NULL
+		  AND a.title NOT LIKE 'MOC - %'
+		  AND a.title NOT LIKE 'MOC %'
+		  AND a.title NOT LIKE 'MOC:%'
+		  AND (a.tags NOT LIKE '%moc%' OR a.tags IS NULL)
+		ORDER BY bm25(articles_fts, 2.0, 1.0)
+		LIMIT ?
+	`, safeFTSQuery, excludeID, limit*2).Scan(&matchedArticles).Error
+	if err != nil {
+		return []string{}, nil
+	}
+
+	if len(matchedArticles) == 0 {
+		return []string{}, nil
+	}
+
+	// Count tag frequencies across matched candidates
+	tagCounts := make(map[string]int)
+	for _, a := range matchedArticles {
+		if IsMOCArticle(a.Title, a.Tags) {
+			continue
+		}
+		for _, raw := range strings.Split(a.Tags, ",") {
+			tag := SanitizeObsidianTag(raw)
+			if tag != "" && tag != "moc" {
+				tagCounts[tag]++
+			}
+		}
+	}
+
+	if len(tagCounts) == 0 {
+		return []string{}, nil
+	}
+
+	type tagFreq struct {
+		tag   string
+		count int
+	}
+	freqList := make([]tagFreq, 0, len(tagCounts))
+	for t, count := range tagCounts {
+		freqList = append(freqList, tagFreq{tag: t, count: count})
+	}
+
+	sort.Slice(freqList, func(i, j int) bool {
+		if freqList[i].count != freqList[j].count {
+			return freqList[i].count > freqList[j].count
+		}
+		return freqList[i].tag < freqList[j].tag
+	})
+
+	result := make([]string, 0, limit)
+	for i := 0; i < len(freqList) && i < limit; i++ {
+		result = append(result, freqList[i].tag)
+	}
+
+	return result, nil
 }
 
 func (r *GormRepository) GetDistinctTags(ctx context.Context) ([]string, error) {

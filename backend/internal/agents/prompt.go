@@ -96,9 +96,9 @@ func buildPipelinePrompt(settings PipelineSettings, body string, candidates []re
 
 		if len(filteredVaultTags) > 0 {
 			enricherPrompt += fmt.Sprintf(`
-- RULE FOR TAGS: PREFER reusing matching tags from the "Existing Vault Tags" list below to maintain taxonomy consistency (e.g. use "ai" instead of "artificial-intelligence" if "ai" is in the list). Do NOT assign "moc".
+- RULE FOR TAGS: PREFER reusing matching tags from the "Relevant Vault Tags" list below to maintain taxonomy consistency (e.g. use "ai" instead of "artificial-intelligence" if "ai" is in the list). Do NOT assign "moc".
 
-Existing Vault Tags:
+Relevant Vault Tags:
 %s`, strings.Join(filteredVaultTags, ", "))
 		}
 
