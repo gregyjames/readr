@@ -1334,10 +1334,15 @@ const executeLibrarian = async () => {
 
                   <!-- Article Title -->
                   <td class="px-5 py-3.5 font-medium text-gray-900 dark:text-gray-100 max-w-sm truncate">
-                    <span>{{ run.article_title || ('Article #' + run.article_id) }}</span>
-                    <span v-if="run.error_message" class="ml-2 text-[10px] font-normal text-rose-500 dark:text-rose-400 underline">
-                      (click to view error)
-                    </span>
+                    <div class="flex items-center gap-1.5 truncate">
+                      <span v-if="run.article_title?.startsWith('[Librarian]')" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 shrink-0">
+                        Librarian
+                      </span>
+                      <span class="truncate">{{ run.article_title ? run.article_title.replace('[Librarian] ', '') : ('Article #' + run.article_id) }}</span>
+                      <span v-if="run.error_message" class="ml-2 text-[10px] font-normal text-rose-500 dark:text-rose-400 underline shrink-0">
+                        (click to view error)
+                      </span>
+                    </div>
                   </td>
 
                   <!-- Model -->

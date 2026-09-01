@@ -368,16 +368,48 @@ Instructions:
 	httpReq.Header.Set("HTTP-Referer", "https://readr.app")
 	httpReq.Header.Set("X-Title", "Readr Librarian MOC Synthesizer")
 
+	startTime := time.Now()
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		if r.repo != nil {
+			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
+				ArticleID:    0,
+				ArticleTitle: fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
+				Model:        model,
+				Status:       "failed",
+				DurationMs:   time.Since(startTime).Milliseconds(),
+				RetryCount:   0,
+				PromptTokens: len(prompt) / 4,
+				CompletionTokens: 0,
+				TotalTokens:  len(prompt) / 4,
+				ErrorMessage: err.Error(),
+				CreatedAt:    startTime,
+			})
+		}
 		return nil, fmt.Errorf("openrouter request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		errMsg := fmt.Sprintf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		if r.repo != nil {
+			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
+				ArticleID:    0,
+				ArticleTitle: fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
+				Model:        model,
+				Status:       "failed",
+				DurationMs:   time.Since(startTime).Milliseconds(),
+				RetryCount:   0,
+				PromptTokens: len(prompt) / 4,
+				CompletionTokens: 0,
+				TotalTokens:  len(prompt) / 4,
+				ErrorMessage: errMsg,
+				CreatedAt:    startTime,
+			})
+		}
+		return nil, fmt.Errorf("%s", errMsg)
 	}
 
 	var chatResp struct {
@@ -386,6 +418,11 @@ Instructions:
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage *struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
 	}
 
 	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil || len(chatResp.Choices) == 0 {
@@ -396,6 +433,42 @@ Instructions:
 	var synthesis MOCSynthesisResponse
 	if err := json.Unmarshal([]byte(rawContent), &synthesis); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal structured synthesis JSON: %w (raw: %s)", err, rawContent)
+	}
+
+	promptTokens := 0
+	completionTokens := 0
+	totalTokens := 0
+	if chatResp.Usage != nil {
+		promptTokens = chatResp.Usage.PromptTokens
+		completionTokens = chatResp.Usage.CompletionTokens
+		totalTokens = chatResp.Usage.TotalTokens
+		if totalTokens == 0 {
+			totalTokens = promptTokens + completionTokens
+		}
+	} else {
+		promptTokens = len(prompt) / 4
+		completionTokens = len(rawContent) / 4
+		totalTokens = promptTokens + completionTokens
+	}
+
+	mocID := int64(0)
+	if cluster.ExistingMOC != nil {
+		mocID = cluster.ExistingMOC.ID
+	}
+
+	if r.repo != nil {
+		_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
+			ArticleID:        mocID,
+			ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
+			Model:            model,
+			Status:           "success",
+			DurationMs:       time.Since(startTime).Milliseconds(),
+			RetryCount:       0,
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      totalTokens,
+			CreatedAt:        startTime,
+		})
 	}
 
 	return &synthesis, nil

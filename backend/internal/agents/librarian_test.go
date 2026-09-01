@@ -245,3 +245,78 @@ func TestLibrarian_ThreadSafeExecution(t *testing.T) {
 		t.Log("Note: Concurrent executions were fast, but thread-safety was respected")
 	}
 }
+
+func TestLibrarian_RecordsPipelineMetrics(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// Create 5 articles sharing tag "ai"
+	for i := 1; i <= 5; i++ {
+		title := fmt.Sprintf("AI Note %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "ai",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{"topic_title":"Artificial Intelligence","executive_summary":"AI synthesis summary","sections":[{"title":"Core Models","items":[{"article_id":1,"context_note":"Foundational model"}]}]}`,
+					},
+				},
+			},
+			"usage": map[string]int{
+				"prompt_tokens":     450,
+				"completion_tokens": 120,
+				"total_tokens":      570,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"openai/gpt-4o","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error running librarian: %v", err)
+	}
+
+	if result.CreatedMOCs != 1 {
+		t.Fatalf("expected 1 created MOC, got %d", result.CreatedMOCs)
+	}
+
+	summary, recent, err := repo.GetPipelineDiagnostics(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("unexpected diagnostics error: %v", err)
+	}
+
+	if summary.TotalRuns != 1 {
+		t.Errorf("expected 1 total run in diagnostics, got %d", summary.TotalRuns)
+	}
+	if summary.TotalTokensUsed != 570 {
+		t.Errorf("expected 570 total tokens used, got %d", summary.TotalTokensUsed)
+	}
+	if len(recent) != 1 {
+		t.Fatalf("expected 1 recent run, got %d", len(recent))
+	}
+	if !strings.HasPrefix(recent[0].ArticleTitle, "[Librarian]") {
+		t.Errorf("expected ArticleTitle to start with '[Librarian]', got %q", recent[0].ArticleTitle)
+	}
+	if recent[0].Model != "openai/gpt-4o" {
+		t.Errorf("expected model 'openai/gpt-4o', got %q", recent[0].Model)
+	}
+	if recent[0].PromptTokens != 450 || recent[0].CompletionTokens != 120 {
+		t.Errorf("expected prompt 450 / comp 120, got %d / %d", recent[0].PromptTokens, recent[0].CompletionTokens)
+	}
+}
