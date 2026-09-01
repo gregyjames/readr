@@ -290,12 +290,36 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				result.Errors = append(result.Errors, fmt.Sprintf("unlinked %s: %v", cluster.Tag, err))
 				continue
 			}
+
+			// Reconcile existing MOC markdown against currently active member notes
+			activeMemberTitles := make(map[string]bool)
+			for _, a := range cluster.Articles {
+				activeMemberTitles[a.Title] = true
+				activeMemberTitles[strings.ToLower(a.Title)] = true
+				if a.FilePath != "" {
+					base := strings.TrimSuffix(filepath.Base(a.FilePath), ".md")
+					activeMemberTitles[base] = true
+					activeMemberTitles[strings.ToLower(base)] = true
+				}
+			}
+			reconciledContent, linksPruned := ReconcileMOCLinks(existingContent, activeMemberTitles)
+
 			if len(unlinked) == 0 {
-				r.logger.Info(fmt.Sprintf("MOC cluster %s is up-to-date (0 new notes), skipping LLM call", cluster.Tag), zap.String("tag", cluster.Tag))
+				if linksPruned {
+					if err := r.saveReconciledMOC(ctx, cluster, reconciledContent); err != nil {
+						r.logger.Error("Failed to save reconciled MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
+						result.Status = "partial (some clusters failed)"
+						result.Errors = append(result.Errors, fmt.Sprintf("save reconciled %s: %v", cluster.Tag, err))
+					} else {
+						result.UpdatedMOCs++
+					}
+				} else {
+					r.logger.Info(fmt.Sprintf("MOC cluster %s is up-to-date (0 new notes), skipping LLM call", cluster.Tag), zap.String("tag", cluster.Tag))
+				}
 				continue
 			}
 
-			deltaResp, err := r.synthesizeDeltaCluster(ctx, cluster, unlinked, existingContent, apiKey, model, apiURL)
+			deltaResp, err := r.synthesizeDeltaCluster(ctx, cluster, unlinked, reconciledContent, apiKey, model, apiURL)
 			if err != nil {
 				r.logger.Error("Failed to synthesize delta MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
 				result.Status = "partial (some clusters failed)"
@@ -303,7 +327,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				continue
 			}
 
-			if err := r.saveDeltaMOC(ctx, cluster, deltaResp, existingContent); err != nil {
+			if err := r.saveDeltaMOC(ctx, cluster, deltaResp, reconciledContent); err != nil {
 				r.logger.Error("Failed to save delta MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
 				result.Status = "partial (some clusters failed)"
 				result.Errors = append(result.Errors, fmt.Sprintf("save delta %s: %v", cluster.Tag, err))
@@ -1274,7 +1298,25 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 		r.db.WithContext(ctx).Save(&mocRecord)
 	}
 
-	// Update article_links
+	// Synchronize article_links: delete any targets that are no longer cluster members
+	validIDs := make(map[int64]bool)
+	for _, a := range cluster.Articles {
+		validIDs[a.ID] = true
+	}
+	for _, p := range deltaResp.Placements {
+		if p.ArticleID > 0 {
+			validIDs[p.ArticleID] = true
+		}
+	}
+	var existingLinks []repository.GormArticleLink
+	r.db.WithContext(ctx).Where("source_id = ?", cluster.ExistingMOC.ID).Find(&existingLinks)
+	for _, el := range existingLinks {
+		if !validIDs[el.TargetID] {
+			r.db.WithContext(ctx).Delete(&el)
+		}
+	}
+
+	// Add new article_links
 	for _, p := range deltaResp.Placements {
 		if p.ArticleID > 0 && p.ArticleID != cluster.ExistingMOC.ID {
 			var count int64
@@ -1288,6 +1330,72 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 				}
 				r.db.WithContext(ctx).Create(&link)
 			}
+		}
+	}
+
+	return nil
+}
+
+func (r *LibrarianRunner) saveReconciledMOC(ctx context.Context, cluster ClusterCandidate, reconciledContent string) error {
+	topicTitle := cluster.Tag
+	if cluster.ExistingMOC != nil && cluster.ExistingMOC.Title != "" {
+		cleanTitle := strings.TrimPrefix(cluster.ExistingMOC.Title, "MOC - ")
+		cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
+		cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
+		cleanTitle = strings.TrimSpace(cleanTitle)
+		if cleanTitle != "" {
+			topicTitle = cleanTitle
+		}
+	}
+
+	folder, err := r.organizer.EnsureTopicFolder(topicTitle)
+	if err != nil {
+		return fmt.Errorf("failed to ensure topic folder: %w", err)
+	}
+
+	targetFilename := fmt.Sprintf("MOC - %s.md", folder)
+	destinationPath := filepath.Join(r.dataDir, "articles", folder, targetFilename)
+	relArticlePath := fmt.Sprintf("/articles/%s/%s", folder, targetFilename)
+
+	var oldPath string
+	if cluster.ExistingMOC != nil && cluster.ExistingMOC.FilePath != "" {
+		existingPath := filepath.Join(r.dataDir, strings.TrimPrefix(cluster.ExistingMOC.FilePath, "/"))
+		if _, err := os.Stat(existingPath); err == nil {
+			oldPath = existingPath
+		}
+	}
+
+	dir := filepath.Dir(destinationPath)
+	_ = os.MkdirAll(dir, 0755)
+	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(destinationPath)))
+	if err := os.WriteFile(tmpFile, []byte(reconciledContent), 0644); err != nil {
+		return fmt.Errorf("failed to write tmp file: %w", err)
+	}
+	if err := os.Rename(tmpFile, destinationPath); err != nil {
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("failed to rename tmp file: %w", err)
+	}
+
+	if oldPath != "" && oldPath != destinationPath {
+		_ = os.Remove(oldPath)
+	}
+
+	var mocRecord repository.GormArticle
+	r.db.WithContext(ctx).First(&mocRecord, cluster.ExistingMOC.ID)
+	if mocRecord.ID > 0 {
+		mocRecord.Article = relArticlePath
+		r.db.WithContext(ctx).Save(&mocRecord)
+	}
+
+	validIDs := make(map[int64]bool)
+	for _, a := range cluster.Articles {
+		validIDs[a.ID] = true
+	}
+	var existingLinks []repository.GormArticleLink
+	r.db.WithContext(ctx).Where("source_id = ?", cluster.ExistingMOC.ID).Find(&existingLinks)
+	for _, el := range existingLinks {
+		if !validIDs[el.TargetID] {
+			r.db.WithContext(ctx).Delete(&el)
 		}
 	}
 

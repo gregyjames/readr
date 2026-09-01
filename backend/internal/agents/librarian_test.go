@@ -1178,3 +1178,113 @@ My custom thoughts linking to [[Deleted Note]] which should NOT be touched in us
 		t.Errorf("user notes section was corrupted:\n%s", reconciled)
 	}
 }
+
+func TestLibrarian_ReconcilesStaleLinksInExistingMOC(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// 1. Create existing MOC in topic folder with links to Note 1, Note 2, and Note 3 (which was deleted/re-filed)
+	topicFolder := filepath.Join(articlesDir, "Distributed Systems")
+	_ = os.MkdirAll(topicFolder, 0755)
+	mocPath := filepath.Join(topicFolder, "MOC - Distributed Systems.md")
+
+	existingMocBody := `# MOC - Distributed Systems
+
+## Core Concepts
+- [[Active Note 1]] - Active member 1.
+- [[Active Note 2]] - Active member 2.
+- [[Deleted Note 3]] - This note was deleted from the vault.
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*
+`
+	_ = os.WriteFile(mocPath, []byte(existingMocBody), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      100,
+		Title:   "MOC - Distributed Systems",
+		Tags:    "moc, distributed-systems",
+		Article: "/articles/Distributed Systems/MOC - Distributed Systems.md",
+	})
+
+	// Active cluster members: 5 notes (Note 1, 2, 4, 5, 6), Note 3 is absent/deleted
+	for i := 1; i <= 6; i++ {
+		if i == 3 {
+			continue // Deleted Note 3
+		}
+		title := fmt.Sprintf("Active Note %d", i)
+		filePath := filepath.Join(topicFolder, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "distributed-systems",
+			Article: fmt.Sprintf("/articles/Distributed Systems/%s.md", title),
+		})
+	}
+
+	// Seed legacy article_links
+	db.Create(&repository.GormArticleLink{ID: 1, SourceID: 100, TargetID: 1})
+	db.Create(&repository.GormArticleLink{ID: 2, SourceID: 100, TargetID: 2})
+	db.Create(&repository.GormArticleLink{ID: 3, SourceID: 100, TargetID: 3}) // Stale link
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{
+							"placements": [
+								{"article_id": 4, "target_section": "Core Concepts", "context_note": "Placed note 4."},
+								{"article_id": 5, "target_section": "Core Concepts", "context_note": "Placed note 5."},
+								{"article_id": 6, "target_section": "Core Concepts", "context_note": "Placed note 6."}
+							]
+						}`,
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.UpdatedMOCs != 1 {
+		t.Errorf("expected 1 MOC updated, got %+v", result)
+	}
+
+	updatedBytes, err := os.ReadFile(mocPath)
+	if err != nil {
+		t.Fatalf("failed to read updated MOC: %v", err)
+	}
+	updatedContent := string(updatedBytes)
+
+	// Deleted Note 3 must be pruned
+	if strings.Contains(updatedContent, "[[Deleted Note 3]]") {
+		t.Errorf("expected Deleted Note 3 to be pruned from MOC markdown, got:\n%s", updatedContent)
+	}
+
+	// Active Note 1, 2, 4, 5, 6 must all be present
+	for _, expectedNote := range []string{"Active Note 1", "Active Note 2", "Active Note 4", "Active Note 5", "Active Note 6"} {
+		if !strings.Contains(updatedContent, fmt.Sprintf("[[%s]]", expectedNote)) {
+			t.Errorf("expected %s to be present in MOC markdown", expectedNote)
+		}
+	}
+
+	// In article_links, TargetID 3 must be deleted
+	var staleCount int64
+	db.Model(&repository.GormArticleLink{}).Where("source_id = ? AND target_id = ?", 100, 3).Count(&staleCount)
+	if staleCount != 0 {
+		t.Errorf("expected stale article_link for target_id 3 to be deleted, got count %d", staleCount)
+	}
+}
