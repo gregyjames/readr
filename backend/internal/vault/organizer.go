@@ -67,9 +67,10 @@ func (o *VaultOrganizer) FileArticle(ctx context.Context, articleID int64, topic
 
 	targetRel := filepath.Join("articles", topicFolder, fileName)
 	targetAbs := filepath.Join(o.dataDir, targetRel)
+	dbPath := "/" + filepath.ToSlash(targetRel)
 
 	if currentAbs == targetAbs {
-		return targetRel, nil
+		return dbPath, nil
 	}
 
 	// Move physical file if source exists
@@ -88,7 +89,6 @@ func (o *VaultOrganizer) FileArticle(ctx context.Context, articleID int64, topic
 	}
 
 	// Update DB record with leading slash
-	dbPath := "/" + filepath.ToSlash(targetRel)
 	if err := o.db.WithContext(ctx).Model(&repository.GormArticle{}).Where("id = ?", articleID).Update("article", dbPath).Error; err != nil {
 		return "", fmt.Errorf("failed to update article %d path in db: %w", articleID, err)
 	}
