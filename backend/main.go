@@ -221,7 +221,13 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	})
 	librarianCron := agents.NewLibrarianCronManager(librarianRunner, logger)
 	initialSettings := settingsStore.Get()
-	_ = librarianCron.Start(initialSettings.LibrarianCron, initialSettings.LibrarianEnabled)
+	if err := librarianCron.Start(initialSettings.LibrarianCron, initialSettings.LibrarianEnabled); err != nil {
+		logger.Error("Failed to start Librarian background cron scheduler",
+			zap.String("cron", initialSettings.LibrarianCron),
+			zap.Bool("enabled", initialSettings.LibrarianEnabled),
+			zap.Error(err),
+		)
+	}
 
 	handlers.RegisterAuth(api, hCtx)
 	handlers.RegisterArticles(api, hCtx)
