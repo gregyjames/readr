@@ -54,4 +54,3 @@ type Repository interface {
 	RecordPipelineMetric(ctx context.Context, metric *PipelineMetric) error
 	GetPipelineDiagnostics(ctx context.Context, limit int) (*PipelineDiagnosticsSummary, []PipelineMetric, error)
 }
-

@@ -1313,5 +1313,3 @@ func TestAuthMiddleware_Protection(t *testing.T) {
 		t.Fatalf("expected 200 for authenticated /api/articles/1.md, got %d", resp.StatusCode)
 	}
 }
-
-

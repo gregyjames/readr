@@ -17,6 +17,7 @@ import (
 
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
+	"example.com/backend/internal/vault"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
@@ -95,13 +96,13 @@ type LibrarianRunResult struct {
 }
 
 type LibrarianStatus struct {
-	Enabled         bool       `json:"enabled"`
-	Cron            string     `json:"cron"`
-	MinClusterSize  int        `json:"min_cluster_size"`
-	LastRun         *time.Time `json:"last_run,omitempty"`
-	NextRun         *time.Time `json:"next_run,omitempty"`
-	IsRunning       bool       `json:"is_running"`
-	LastResult      *LibrarianRunResult `json:"last_result,omitempty"`
+	Enabled        bool                `json:"enabled"`
+	Cron           string              `json:"cron"`
+	MinClusterSize int                 `json:"min_cluster_size"`
+	LastRun        *time.Time          `json:"last_run,omitempty"`
+	NextRun        *time.Time          `json:"next_run,omitempty"`
+	IsRunning      bool                `json:"is_running"`
+	LastResult     *LibrarianRunResult `json:"last_result,omitempty"`
 }
 
 type LibrarianRunner struct {
@@ -110,6 +111,7 @@ type LibrarianRunner struct {
 	db            *gorm.DB
 	repo          repository.Repository
 	dataDir       string
+	organizer     *vault.VaultOrganizer
 	onGraphUpdate func()
 	lastRun       *time.Time
 	lastResult    *LibrarianRunResult
@@ -125,6 +127,7 @@ func NewLibrarianRunner(logger *zap.Logger, db *gorm.DB, repo repository.Reposit
 		db:            db,
 		repo:          repo,
 		dataDir:       dataDir,
+		organizer:     vault.NewVaultOrganizer(dataDir, db, logger),
 		onGraphUpdate: onGraphUpdate,
 	}
 }
@@ -244,7 +247,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	}
 	r.isRunning = true
 	r.mu.Unlock()
-	
+
 	defer func() {
 		r.mu.Lock()
 		r.isRunning = false
@@ -307,6 +310,29 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				continue
 			}
 
+			topicTitle := cluster.Tag
+			if cluster.ExistingMOC.Title != "" {
+				cleanTitle := strings.TrimPrefix(cluster.ExistingMOC.Title, "MOC - ")
+				cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
+				cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
+				cleanTitle = strings.TrimSpace(cleanTitle)
+				if cleanTitle != "" {
+					topicTitle = cleanTitle
+				}
+			}
+			var fileErr error
+			for _, a := range cluster.Articles {
+				if _, err := r.organizer.FileArticle(ctx, a.ID, topicTitle); err != nil {
+					r.logger.Error("Failed to file article into topic folder", zap.Int64("article_id", a.ID), zap.String("topic", topicTitle), zap.Error(err))
+					result.Status = "partial (some clusters failed)"
+					result.Errors = append(result.Errors, fmt.Sprintf("file article %d into %s: %v", a.ID, topicTitle, err))
+					fileErr = err
+				}
+			}
+			if fileErr != nil {
+				continue
+			}
+
 			result.UpdatedMOCs++
 			continue
 		}
@@ -326,7 +352,35 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 			continue
 		}
 
+		topicTitle := strings.TrimSpace(synthesis.TopicTitle)
+		if topicTitle == "" {
+			topicTitle = cluster.Tag
+		}
+		var fileErr error
+		for _, a := range cluster.Articles {
+			if _, err := r.organizer.FileArticle(ctx, a.ID, topicTitle); err != nil {
+				r.logger.Error("Failed to file article into topic folder", zap.Int64("article_id", a.ID), zap.String("topic", topicTitle), zap.Error(err))
+				result.Status = "partial (some clusters failed)"
+				result.Errors = append(result.Errors, fmt.Sprintf("file article %d into %s: %v", a.ID, topicTitle, err))
+				fileErr = err
+			}
+		}
+		if fileErr != nil {
+			continue
+		}
+
 		result.CreatedMOCs++
+	}
+
+	if err := r.organizer.CleanEmptyFolders(); err != nil {
+		r.logger.Error("Failed to clean empty topic folders", zap.Error(err))
+		result.Status = "partial (some clusters failed)"
+		result.Errors = append(result.Errors, fmt.Sprintf("clean empty folders: %v", err))
+	}
+	if err := r.organizer.UpdateMasterIndex(ctx); err != nil {
+		r.logger.Error("Failed to update master index", zap.Error(err))
+		result.Status = "partial (some clusters failed)"
+		result.Errors = append(result.Errors, fmt.Sprintf("update master index: %v", err))
 	}
 
 	if len(result.Errors) > 0 {
@@ -451,17 +505,17 @@ Instructions:
 	if err != nil {
 		if r.repo != nil {
 			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
-				ArticleID:    0,
-				ArticleTitle: fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
-				Model:        model,
-				Status:       "failed",
-				DurationMs:   time.Since(startTime).Milliseconds(),
-				RetryCount:   0,
-				PromptTokens: len(prompt) / 4,
+				ArticleID:        0,
+				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
+				Model:            model,
+				Status:           "failed",
+				DurationMs:       time.Since(startTime).Milliseconds(),
+				RetryCount:       0,
+				PromptTokens:     len(prompt) / 4,
 				CompletionTokens: 0,
-				TotalTokens:  len(prompt) / 4,
-				ErrorMessage: err.Error(),
-				CreatedAt:    startTime,
+				TotalTokens:      len(prompt) / 4,
+				ErrorMessage:     err.Error(),
+				CreatedAt:        startTime,
 			})
 		}
 		return nil, fmt.Errorf("openrouter request failed: %w", err)
@@ -473,17 +527,17 @@ Instructions:
 		errMsg := fmt.Sprintf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
 		if r.repo != nil {
 			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
-				ArticleID:    0,
-				ArticleTitle: fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
-				Model:        model,
-				Status:       "failed",
-				DurationMs:   time.Since(startTime).Milliseconds(),
-				RetryCount:   0,
-				PromptTokens: len(prompt) / 4,
+				ArticleID:        0,
+				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
+				Model:            model,
+				Status:           "failed",
+				DurationMs:       time.Since(startTime).Milliseconds(),
+				RetryCount:       0,
+				PromptTokens:     len(prompt) / 4,
 				CompletionTokens: 0,
-				TotalTokens:  len(prompt) / 4,
-				ErrorMessage: errMsg,
-				CreatedAt:    startTime,
+				TotalTokens:      len(prompt) / 4,
+				ErrorMessage:     errMsg,
+				CreatedAt:        startTime,
 			})
 		}
 		return nil, fmt.Errorf("%s", errMsg)
@@ -557,43 +611,24 @@ Instructions:
 func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate, synthesis *MOCSynthesisResponse) error {
 	topicTitle := strings.TrimSpace(synthesis.TopicTitle)
 	if topicTitle == "" {
-		topicTitle = strings.Title(strings.ReplaceAll(cluster.Tag, "-", " "))
+		topicTitle = cluster.Tag
 	}
 
-	sanitizedTopic := strings.TrimSuffix(ingest.SanitizeTitleFilename(topicTitle, 0), ".md")
-	if sanitizedTopic == "" || sanitizedTopic == "Article" {
-		fallback := strings.Title(strings.ReplaceAll(cluster.Tag, "-", " "))
-		sanitizedTopic = strings.TrimSuffix(ingest.SanitizeTitleFilename(fallback, 0), ".md")
-	}
-	if sanitizedTopic == "" || sanitizedTopic == "Article" {
-		sanitizedTopic = "Topic"
+	folder, err := r.organizer.EnsureTopicFolder(topicTitle)
+	if err != nil {
+		return fmt.Errorf("failed to ensure topic folder: %w", err)
 	}
 
-	mocTitle := fmt.Sprintf("MOC - %s", sanitizedTopic)
-	articlesDir := filepath.Join(r.dataDir, "articles")
-	_ = os.MkdirAll(articlesDir, 0755)
-
-	targetFilename := fmt.Sprintf("%s.md", mocTitle)
-	filePath := filepath.Join(articlesDir, targetFilename)
-
-	// Ensure target path is safely contained within articlesDir
-	rel, err := filepath.Rel(articlesDir, filePath)
-	if err != nil || strings.HasPrefix(rel, "..") || strings.Contains(rel, "/") || strings.Contains(rel, "\\") {
-		cleanTag := strings.TrimSuffix(ingest.SanitizeTitleFilename(cluster.Tag, 0), ".md")
-		targetFilename = fmt.Sprintf("MOC - %s.md", cleanTag)
-		filePath = filepath.Join(articlesDir, targetFilename)
-	}
+	mocTitle := fmt.Sprintf("MOC - %s", folder)
+	targetFilename := fmt.Sprintf("MOC - %s.md", folder)
+	filePath := filepath.Join(r.dataDir, "articles", folder, targetFilename)
+	relArticlePath := fmt.Sprintf("/articles/%s/%s", folder, targetFilename)
 
 	existingBody := ""
 	if cluster.ExistingMOC != nil && cluster.ExistingMOC.FilePath != "" {
 		existingPath := filepath.Join(r.dataDir, strings.TrimPrefix(cluster.ExistingMOC.FilePath, "/"))
-		rel, err := filepath.Rel(articlesDir, existingPath)
-		if err == nil && !strings.HasPrefix(rel, "..") {
-			if bytes, err := os.ReadFile(existingPath); err == nil {
-				existingBody = string(bytes)
-				filePath = existingPath
-				targetFilename = filepath.Base(existingPath)
-			}
+		if bytes, err := os.ReadFile(existingPath); err == nil {
+			existingBody = string(bytes)
 		}
 	}
 
@@ -611,6 +646,7 @@ func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate,
 
 	// Atomic disk write
 	dir := filepath.Dir(filePath)
+	_ = os.MkdirAll(dir, 0755)
 	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(filePath)))
 	if err := os.WriteFile(tmpFile, []byte(newMarkdown), 0644); err != nil {
 		return fmt.Errorf("failed to write tmp file: %w", err)
@@ -621,7 +657,6 @@ func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate,
 	}
 
 	// Update or Create DB Article Record
-	relArticlePath := fmt.Sprintf("/articles/%s", targetFilename)
 	tags := fmt.Sprintf("moc, %s", cluster.Tag)
 
 	var mocRecord repository.GormArticle
@@ -1090,22 +1125,31 @@ func applyDeltaPlacements(existingContent string, placements []MOCDeltaPlacement
 }
 
 func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandidate, deltaResp *MOCDeltaResponse, existingContent string) error {
-	mocTitle := cluster.ExistingMOC.Title
-	if mocTitle == "" {
-		mocTitle = fmt.Sprintf("MOC - %s", strings.Title(strings.ReplaceAll(cluster.Tag, "-", " ")))
+	topicTitle := cluster.Tag
+	if cluster.ExistingMOC != nil && cluster.ExistingMOC.Title != "" {
+		cleanTitle := strings.TrimPrefix(cluster.ExistingMOC.Title, "MOC - ")
+		cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
+		cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
+		cleanTitle = strings.TrimSpace(cleanTitle)
+		if cleanTitle != "" {
+			topicTitle = cleanTitle
+		}
 	}
-	articlesDir := filepath.Join(r.dataDir, "articles")
-	_ = os.MkdirAll(articlesDir, 0755)
 
-	targetFilename := fmt.Sprintf("%s.md", mocTitle)
-	filePath := filepath.Join(articlesDir, targetFilename)
+	folder, err := r.organizer.EnsureTopicFolder(topicTitle)
+	if err != nil {
+		return fmt.Errorf("failed to ensure topic folder: %w", err)
+	}
 
-	if cluster.ExistingMOC.FilePath != "" {
+	targetFilename := fmt.Sprintf("MOC - %s.md", folder)
+	destinationPath := filepath.Join(r.dataDir, "articles", folder, targetFilename)
+	relArticlePath := fmt.Sprintf("/articles/%s/%s", folder, targetFilename)
+
+	var oldPath string
+	if cluster.ExistingMOC != nil && cluster.ExistingMOC.FilePath != "" {
 		existingPath := filepath.Join(r.dataDir, strings.TrimPrefix(cluster.ExistingMOC.FilePath, "/"))
-		rel, err := filepath.Rel(articlesDir, existingPath)
-		if err == nil && !strings.HasPrefix(rel, "..") {
-			filePath = existingPath
-			targetFilename = filepath.Base(existingPath)
+		if _, err := os.Stat(existingPath); err == nil {
+			oldPath = existingPath
 		}
 	}
 
@@ -1121,22 +1165,28 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 
 	updatedMarkdown := applyDeltaPlacements(existingContent, deltaResp.Placements, articleInfoMap)
 
-	// Atomic disk write
-	dir := filepath.Dir(filePath)
-	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(filePath)))
+	// Atomic disk write to topic folder destination
+	dir := filepath.Dir(destinationPath)
+	_ = os.MkdirAll(dir, 0755)
+	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(destinationPath)))
 	if err := os.WriteFile(tmpFile, []byte(updatedMarkdown), 0644); err != nil {
 		return fmt.Errorf("failed to write tmp file: %w", err)
 	}
-	if err := os.Rename(tmpFile, filePath); err != nil {
+	if err := os.Rename(tmpFile, destinationPath); err != nil {
 		_ = os.Remove(tmpFile)
 		return fmt.Errorf("failed to rename tmp file: %w", err)
 	}
 
-	// Update DB record if needed
+	// Remove old file location only after new file is durable at destination
+	if oldPath != "" && oldPath != destinationPath {
+		_ = os.Remove(oldPath)
+	}
+
+	// Update DB record with new topic folder path
 	var mocRecord repository.GormArticle
 	r.db.WithContext(ctx).First(&mocRecord, cluster.ExistingMOC.ID)
 	if mocRecord.ID > 0 {
-		mocRecord.Article = fmt.Sprintf("/articles/%s", targetFilename)
+		mocRecord.Article = relArticlePath
 		r.db.WithContext(ctx).Save(&mocRecord)
 	}
 

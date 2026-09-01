@@ -82,7 +82,7 @@ func InitPool(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataD
 	for i := 0; i < numWorkers; i++ {
 		go Pool.worker(i)
 	}
-	
+
 	logger.Info("Background agent pool started", zap.Int("workers", numWorkers))
 }
 
@@ -101,7 +101,7 @@ func (p *AgentPool) worker(id int) {
 		p.mu.Unlock()
 
 		p.logger.Info("Agent processing job", zap.Int("worker_id", id), zap.Int64("article_id", job.ArticleID), zap.String("type", string(job.Type)))
-		
+
 		switch job.Type {
 		case JobTypePipeline:
 			p.processPipeline(job)
@@ -202,7 +202,7 @@ func (p *AgentPool) resolveCredentials(job Job) (string, string) {
 			}
 		}
 	}
-	
+
 	if apiKey == "" {
 		apiKey = cleanAPIKey(os.Getenv("OPENROUTER_API_KEY"))
 	}

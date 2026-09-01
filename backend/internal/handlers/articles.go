@@ -102,8 +102,8 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		return c.JSON(articles)
 	})
 
-	router.Get("/articles/:filename", func(c *fiber.Ctx) error {
-		filename := c.Params("filename")
+	router.Get("/articles/*", func(c *fiber.Ctx) error {
+		filename := c.Params("*")
 		if unescaped, err := url.PathUnescape(filename); err == nil && unescaped != "" {
 			filename = unescaped
 		} else if unescaped, err := url.QueryUnescape(filename); err == nil && unescaped != "" {

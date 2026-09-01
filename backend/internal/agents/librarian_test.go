@@ -173,9 +173,10 @@ DO NOT OVERWRITE THIS TEXT.
 		t.Errorf("expected 1 MOC updated or created, got result: %+v", result)
 	}
 
-	updatedBytes, err := os.ReadFile(mocPath)
+	destMocPath := filepath.Join(articlesDir, "Distributed Systems", "MOC - Distributed Systems.md")
+	updatedBytes, err := os.ReadFile(destMocPath)
 	if err != nil {
-		t.Fatalf("failed to read updated MOC: %v", err)
+		t.Fatalf("failed to read updated MOC at %s: %v", destMocPath, err)
 	}
 	updatedContent := string(updatedBytes)
 
@@ -583,9 +584,15 @@ Custom user research notes that must never be deleted.
 		t.Errorf("expected 1 HTTP call, got %d", atomic.LoadInt32(&httpCalls))
 	}
 
-	updatedBytes, err := os.ReadFile(mocPath)
+	// Verify old root file is removed after migration to topic folder
+	if _, err := os.Stat(mocPath); !os.IsNotExist(err) {
+		t.Errorf("expected old root MOC %s to be removed after migration", mocPath)
+	}
+
+	destMocPath := filepath.Join(articlesDir, "Distributed Systems", "MOC - Distributed Systems.md")
+	updatedBytes, err := os.ReadFile(destMocPath)
 	if err != nil {
-		t.Fatalf("failed to read updated MOC: %v", err)
+		t.Fatalf("failed to read updated MOC at %s: %v", destMocPath, err)
 	}
 	updatedContent := string(updatedBytes)
 
@@ -811,7 +818,7 @@ func TestLibrarian_ArticlesWithPipesInTitle_NeverDuplicate(t *testing.T) {
 		t.Fatalf("expected 1 created MOC, got %d", res1.CreatedMOCs)
 	}
 
-	mocPath := filepath.Join(articlesDir, "MOC - Development.md")
+	mocPath := filepath.Join(articlesDir, "Development", "MOC - Development.md")
 	contentBytes, err := os.ReadFile(mocPath)
 	if err != nil {
 		t.Fatalf("failed to read MOC: %v", err)
@@ -896,15 +903,108 @@ func TestLibrarian_TopicTitlePathTraversal_SanitizedSafely(t *testing.T) {
 
 	// Verify the file was created inside articlesDir safely
 	var createdFiles []string
-	entries, _ := os.ReadDir(articlesDir)
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "MOC - ") {
-			createdFiles = append(createdFiles, e.Name())
+	_ = filepath.Walk(articlesDir, func(path string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() && strings.HasPrefix(info.Name(), "MOC - ") {
+			createdFiles = append(createdFiles, path)
 		}
-	}
+		return nil
+	})
 
 	if len(createdFiles) == 0 {
 		t.Fatalf("expected MOC file created in articlesDir, found none")
+	}
+}
+
+func TestLibrarian_TopicFolderOrganization(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// Seed 5 articles with tag "distributed-systems"
+	for i := 1; i <= 5; i++ {
+		title := fmt.Sprintf("Distributed Node %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent about distributed consensus", title)), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "distributed-systems",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{
+							"topic_title": "Distributed Systems",
+							"executive_summary": "Distributed systems overview.",
+							"sections": [
+								{
+									"title": "Nodes",
+									"items": [
+										{"article_id": 1, "context_note": "Node 1."},
+										{"article_id": 2, "context_note": "Node 2."},
+										{"article_id": 3, "context_note": "Node 3."},
+										{"article_id": 4, "context_note": "Node 4."},
+										{"article_id": 5, "context_note": "Node 5."}
+									]
+								}
+							]
+						}`,
+					},
+				},
+			},
+			"usage": map[string]int{
+				"prompt_tokens":     200,
+				"completion_tokens": 80,
+				"total_tokens":      280,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"openai/gpt-4o","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("librarian run failed: %v", err)
+	}
+
+	if result.CreatedMOCs != 1 {
+		t.Fatalf("expected 1 created MOC, got %d", result.CreatedMOCs)
+	}
+
+	// Asserts articles/Distributed Systems/MOC - Distributed Systems.md exists
+	mocPath := filepath.Join(articlesDir, "Distributed Systems", "MOC - Distributed Systems.md")
+	if _, err := os.Stat(mocPath); os.IsNotExist(err) {
+		t.Fatalf("expected MOC file to exist at %s, but not found", mocPath)
+	}
+
+	// Asserts all 5 member note files exist in articles/Distributed Systems/
+	for i := 1; i <= 5; i++ {
+		memberPath := filepath.Join(articlesDir, "Distributed Systems", fmt.Sprintf("Distributed Node %d.md", i))
+		if _, err := os.Stat(memberPath); os.IsNotExist(err) {
+			t.Errorf("expected member note %d to exist at %s", i, memberPath)
+		}
+	}
+
+	// Asserts DB records for the articles have article path prefix /articles/Distributed Systems/
+	var articles []repository.GormArticle
+	db.Find(&articles, "id IN ?", []int64{1, 2, 3, 4, 5})
+	if len(articles) != 5 {
+		t.Fatalf("expected 5 articles in db, got %d", len(articles))
+	}
+	for _, a := range articles {
+		expectedPrefix := "/articles/Distributed Systems/"
+		if !strings.HasPrefix(a.Article, expectedPrefix) {
+			t.Errorf("article %d path %q does not have prefix %q", a.ID, a.Article, expectedPrefix)
+		}
 	}
 }
 
@@ -1001,6 +1101,3 @@ func TestApplyDeltaPlacements_DuplicatePlacementsDeduplicated(t *testing.T) {
 		t.Errorf("expected [[Note 2]] to appear exactly once, but appeared %d times in:\n%s", count, result)
 	}
 }
-
-
-

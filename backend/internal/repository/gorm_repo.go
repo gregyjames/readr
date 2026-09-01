@@ -75,7 +75,6 @@ func extractCandidateKeywords(title, body string, maxKeywords int) []string {
 	return result
 }
 
-
 type GormArticle struct {
 	gorm.Model
 	ID      int64  `gorm:"primaryKey"`
@@ -174,7 +173,7 @@ func (r *GormRepository) GetAllArticles(ctx context.Context) ([]ArticleRecord, e
 
 func (r *GormRepository) GetAllLinks(ctx context.Context) ([]LinkRecord, error) {
 	var links []GormArticleLink
-	
+
 	// Join with articles to ensure both source and target are NOT deleted
 	err := r.db.WithContext(ctx).
 		Joins("JOIN articles AS source ON source.id = article_links.source_id").
@@ -430,4 +429,3 @@ func (r *GormRepository) GetPipelineDiagnostics(ctx context.Context, limit int) 
 
 	return &summary, metrics, nil
 }
-
