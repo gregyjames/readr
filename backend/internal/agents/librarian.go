@@ -758,6 +758,90 @@ func (r *LibrarianRunner) assembleMOCMarkdown(synthesis *MOCSynthesisResponse, m
 	return sb.String()
 }
 
+// HasCustomUserNotes returns true if the MOC's ## Notes & Synthesis section contains
+// custom user-written text beyond empty whitespace or the default placeholder.
+func HasCustomUserNotes(mocContent string) bool {
+	reNotes := regexp.MustCompile(`(?s)## Notes & Synthesis\s*\n(.*)`)
+	matches := reNotes.FindStringSubmatch(mocContent)
+	if len(matches) < 2 {
+		return false
+	}
+	content := strings.TrimSpace(matches[1])
+	if content == "" {
+		return false
+	}
+
+	// Clean out comments like <!-- Content below this line is preserved ... -->
+	reComments := regexp.MustCompile(`<!--.*?-->`)
+	cleaned := strings.TrimSpace(reComments.ReplaceAllString(content, ""))
+	if cleaned == "" {
+		return false
+	}
+
+	// Check if it's solely the default placeholder text
+	placeholder := "*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*"
+	placeholderClean := strings.Trim(placeholder, "*_ ")
+	trimmedClean := strings.Trim(cleaned, "*_ \n\r\t")
+
+	if trimmedClean == "" || trimmedClean == placeholderClean || strings.EqualFold(trimmedClean, placeholderClean) {
+		return false
+	}
+	return true
+}
+
+// ReconcileMOCLinks scans the curated sections of an MOC (excluding ## Notes & Synthesis)
+// and prunes any bullet lines containing [[wikilinks]] whose targets are no longer in validMemberTitles.
+// Returns the updated markdown and a bool indicating if any lines were pruned.
+func ReconcileMOCLinks(mocContent string, validMemberTitles map[string]bool) (string, bool) {
+	if mocContent == "" || validMemberTitles == nil {
+		return mocContent, false
+	}
+
+	parts := strings.SplitN(mocContent, "## Notes & Synthesis", 2)
+	curatedPart := parts[0]
+	userNotesPart := ""
+	if len(parts) == 2 {
+		userNotesPart = "## Notes & Synthesis" + parts[1]
+	}
+
+	lines := strings.Split(curatedPart, "\n")
+	var newLines []string
+	changed := false
+
+	// Matches [[Target]] or [[Target|Alias]]
+	reWikilink := regexp.MustCompile(`\[\[([^\]\|]+)(?:\|[^\]]+)?\]\]`)
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Only check list item lines that contain a wikilink
+		if strings.HasPrefix(trimmed, "- ") && strings.Contains(line, "[[") {
+			matches := reWikilink.FindAllStringSubmatch(line, -1)
+			if len(matches) > 0 {
+				hasValidLink := false
+				for _, m := range matches {
+					targetTitle := strings.TrimSpace(m[1])
+					if validMemberTitles[targetTitle] || validMemberTitles[strings.ToLower(targetTitle)] {
+						hasValidLink = true
+						break
+					}
+				}
+				if !hasValidLink {
+					// Stale link, prune this line
+					changed = true
+					continue
+				}
+			}
+		}
+		newLines = append(newLines, line)
+	}
+
+	reconciledCurated := strings.Join(newLines, "\n")
+	if userNotesPart != "" {
+		return reconciledCurated + userNotesPart, changed
+	}
+	return reconciledCurated, changed
+}
+
 func extractMOCSections(mocContent string) []string {
 	var sections []string
 	lines := strings.Split(mocContent, "\n")

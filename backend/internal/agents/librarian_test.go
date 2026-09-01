@@ -1101,3 +1101,80 @@ func TestApplyDeltaPlacements_DuplicatePlacementsDeduplicated(t *testing.T) {
 		t.Errorf("expected [[Note 2]] to appear exactly once, but appeared %d times in:\n%s", count, result)
 	}
 }
+
+func TestHasCustomUserNotes(t *testing.T) {
+	// Case 1: Empty or missing section
+	if HasCustomUserNotes("# MOC - Empty\n## Concepts\n- [[A]]") {
+		t.Errorf("expected false for missing Notes & Synthesis")
+	}
+
+	// Case 2: Only default boilerplate placeholder
+	defaultMoc := `# MOC - Default
+## Core Concepts
+- [[Note 1]]
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*
+`
+	if HasCustomUserNotes(defaultMoc) {
+		t.Errorf("expected false for default placeholder text")
+	}
+
+	// Case 3: Custom user written notes
+	customMoc := `# MOC - Custom
+## Core Concepts
+- [[Note 1]]
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*
+
+Here are my custom architecture thoughts that must never be deleted!
+`
+	if !HasCustomUserNotes(customMoc) {
+		t.Errorf("expected true for custom user thoughts")
+	}
+}
+
+func TestReconcileMOCLinks(t *testing.T) {
+	mocContent := `# MOC - Distributed Systems
+
+## Core Concepts
+- [[Active Note]] - Core concept note.
+- [[Deleted Note]] - This note was deleted.
+- [[Re-filed Note|Custom Alias]] - This note was re-filed to another topic.
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+My custom thoughts linking to [[Deleted Note]] which should NOT be touched in user section.
+`
+
+	validMembers := map[string]bool{
+		"Active Note": true,
+		"active note": true,
+	}
+
+	reconciled, changed := ReconcileMOCLinks(mocContent, validMembers)
+	if !changed {
+		t.Fatalf("expected changed=true when pruning stale links")
+	}
+
+	// Active Note should remain in Core Concepts
+	if !strings.Contains(reconciled, "- [[Active Note]] - Core concept note.") {
+		t.Errorf("expected Active Note to be preserved in Core Concepts, got:\n%s", reconciled)
+	}
+
+	// Deleted Note and Re-filed Note must NOT be in Core Concepts
+	if strings.Contains(reconciled, "- [[Deleted Note]]") {
+		t.Errorf("expected Deleted Note to be pruned from Core Concepts")
+	}
+	if strings.Contains(reconciled, "- [[Re-filed Note|Custom Alias]]") {
+		t.Errorf("expected Re-filed Note to be pruned from Core Concepts")
+	}
+
+	// Custom user notes section MUST remain completely untouched (including [[Deleted Note]] in user thoughts)
+	if !strings.Contains(reconciled, "My custom thoughts linking to [[Deleted Note]] which should NOT be touched in user section.") {
+		t.Errorf("user notes section was corrupted:\n%s", reconciled)
+	}
+}
