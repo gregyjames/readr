@@ -1288,3 +1288,124 @@ func TestLibrarian_ReconcilesStaleLinksInExistingMOC(t *testing.T) {
 		t.Errorf("expected stale article_link for target_id 3 to be deleted, got count %d", staleCount)
 	}
 }
+
+func TestLibrarian_PruneEmptyMOC_WhenNoUserNotes(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// 1. Seed an empty MOC with 0 member notes and no custom notes
+	topicFolder := filepath.Join(articlesDir, "Orphaned Topic")
+	_ = os.MkdirAll(topicFolder, 0755)
+	mocPath := filepath.Join(topicFolder, "MOC - Orphaned Topic.md")
+
+	mocContent := `# MOC - Orphaned Topic
+
+## Core Concepts
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*
+`
+	_ = os.WriteFile(mocPath, []byte(mocContent), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      200,
+		Title:   "MOC - Orphaned Topic",
+		Tags:    "moc, orphaned-topic",
+		Article: "/articles/Orphaned Topic/MOC - Orphaned Topic.md",
+	})
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("LLM should not be called when 0 clusters are detected")
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.PrunedMOCs != 1 {
+		t.Errorf("expected 1 MOC pruned, got %d", result.PrunedMOCs)
+	}
+
+	// Verify MOC file is deleted from disk
+	if _, err := os.Stat(mocPath); !os.IsNotExist(err) {
+		t.Errorf("expected MOC file %s to be deleted", mocPath)
+	}
+
+	// Verify topic folder is deleted
+	if _, err := os.Stat(topicFolder); !os.IsNotExist(err) {
+		t.Errorf("expected empty topic folder %s to be pruned", topicFolder)
+	}
+
+	// Verify DB record is deleted
+	var count int64
+	db.Model(&repository.GormArticle{}).Where("id = ?", 200).Count(&count)
+	if count != 0 {
+		t.Errorf("expected MOC DB record to be deleted, got count %d", count)
+	}
+}
+
+func TestLibrarian_RetainEmptyMOC_WhenUserNotesExist(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// 1. Seed an empty MOC with 0 member notes BUT with custom user thoughts
+	topicFolder := filepath.Join(articlesDir, "User Essay Topic")
+	_ = os.MkdirAll(topicFolder, 0755)
+	mocPath := filepath.Join(topicFolder, "MOC - User Essay Topic.md")
+
+	mocContent := `# MOC - User Essay Topic
+
+## Core Concepts
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*
+
+I wrote extensive custom notes and reflections on this topic here! DO NOT DELETE ME!
+`
+	_ = os.WriteFile(mocPath, []byte(mocContent), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      300,
+		Title:   "MOC - User Essay Topic",
+		Tags:    "moc, user-essay-topic",
+		Article: "/articles/User Essay Topic/MOC - User Essay Topic.md",
+	})
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("LLM should not be called when 0 clusters are detected")
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.PrunedMOCs != 0 {
+		t.Errorf("expected 0 MOCs pruned, got %d", result.PrunedMOCs)
+	}
+
+	// Verify MOC file and folder are preserved
+	if _, err := os.Stat(mocPath); err != nil {
+		t.Errorf("expected MOC file %s with user notes to be preserved: %v", mocPath, err)
+	}
+
+	// Verify DB record is preserved
+	var count int64
+	db.Model(&repository.GormArticle{}).Where("id = ?", 300).Count(&count)
+	if count != 1 {
+		t.Errorf("expected MOC DB record to be preserved, got count %d", count)
+	}
+}

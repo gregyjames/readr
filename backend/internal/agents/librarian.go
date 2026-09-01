@@ -91,6 +91,7 @@ type LibrarianRunResult struct {
 	ClustersDetected int      `json:"clusters_detected"`
 	CreatedMOCs      int      `json:"created_mocs"`
 	UpdatedMOCs      int      `json:"updated_mocs"`
+	PrunedMOCs       int      `json:"pruned_mocs,omitempty"`
 	ExecutionTimeMs  int64    `json:"execution_time_ms"`
 	Errors           []string `json:"errors,omitempty"`
 }
@@ -396,6 +397,15 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 		result.CreatedMOCs++
 	}
 
+	pruned, err := r.pruneEmptyMOCs(ctx)
+	if err != nil {
+		r.logger.Error("Failed to prune empty MOCs", zap.Error(err))
+		result.Status = "partial (some clusters failed)"
+		result.Errors = append(result.Errors, fmt.Sprintf("prune empty MOCs: %v", err))
+	} else {
+		result.PrunedMOCs = pruned
+	}
+
 	if err := r.organizer.CleanEmptyFolders(); err != nil {
 		r.logger.Error("Failed to clean empty topic folders", zap.Error(err))
 		result.Status = "partial (some clusters failed)"
@@ -408,7 +418,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	}
 
 	if len(result.Errors) > 0 {
-		if result.CreatedMOCs == 0 && result.UpdatedMOCs == 0 {
+		if result.CreatedMOCs == 0 && result.UpdatedMOCs == 0 && result.PrunedMOCs == 0 {
 			result.Status = "failed"
 		} else {
 			result.Status = "partial (some clusters failed)"
@@ -417,7 +427,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 
 	result.ExecutionTimeMs = time.Since(start).Milliseconds()
 
-	if r.onGraphUpdate != nil && (result.CreatedMOCs > 0 || result.UpdatedMOCs > 0) {
+	if r.onGraphUpdate != nil && (result.CreatedMOCs > 0 || result.UpdatedMOCs > 0 || result.PrunedMOCs > 0) {
 		r.onGraphUpdate()
 	}
 
@@ -428,6 +438,93 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	r.mu.Unlock()
 
 	return result, nil
+}
+
+// pruneEmptyMOCs scans all active MOCs in SQLite. If an MOC has 0 active member notes
+// (both via its primary tag cluster and article_links) and contains no custom user-written
+// thoughts in ## Notes & Synthesis, it deletes the MOC file from disk and deletes the record from SQLite.
+func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
+	if r.db == nil {
+		return 0, nil
+	}
+
+	var mocs []repository.GormArticle
+	if err := r.db.WithContext(ctx).
+		Where("deleted_at IS NULL").
+		Where("title LIKE 'MOC - %' OR title LIKE 'MOC %' OR title LIKE 'MOC:%' OR tags LIKE '%moc%'").
+		Find(&mocs).Error; err != nil {
+		return 0, fmt.Errorf("failed to query MOC articles: %w", err)
+	}
+
+	prunedCount := 0
+	for _, moc := range mocs {
+		// 1. Extract tag from MOC
+		tag := ""
+		tagParts := strings.Split(moc.Tags, ",")
+		for _, tp := range tagParts {
+			cleaned := repository.SanitizeObsidianTag(tp)
+			if cleaned != "" && cleaned != "moc" {
+				tag = cleaned
+				break
+			}
+		}
+		if tag == "" {
+			tag = repository.SanitizeObsidianTag(strings.TrimPrefix(moc.Title, "MOC - "))
+		}
+
+		// 2. Count active non-MOC member notes with this tag or in this folder
+		var memberCount int64
+		if tag != "" {
+			r.db.WithContext(ctx).Model(&repository.GormArticle{}).
+				Where("deleted_at IS NULL AND id != ?", moc.ID).
+				Where("tags LIKE ? OR article LIKE ?", "%"+tag+"%", "%/articles/"+tag+"/%").
+				Count(&memberCount)
+		}
+
+		// Also check article_links
+		var linkCount int64
+		r.db.WithContext(ctx).Table("article_links").
+			Joins("JOIN articles ON articles.id = article_links.target_id").
+			Where("article_links.source_id = ? AND articles.deleted_at IS NULL", moc.ID).
+			Count(&linkCount)
+
+		if memberCount > 0 || linkCount > 0 {
+			continue // MOC is not empty
+		}
+
+		// 3. MOC has 0 member notes. Read file to check for custom user notes in ## Notes & Synthesis
+		relPath := strings.TrimPrefix(moc.Article, "/")
+		absPath := filepath.Join(r.dataDir, relPath)
+		fileBytes, err := os.ReadFile(absPath)
+		if err == nil {
+			if HasCustomUserNotes(string(fileBytes)) {
+				r.logger.Info("Preserving empty MOC containing custom user notes",
+					zap.Int64("id", moc.ID),
+					zap.String("title", moc.Title),
+				)
+				continue
+			}
+		}
+
+		// 4. Safe to prune: remove physical file
+		if err == nil {
+			_ = os.Remove(absPath)
+		}
+
+		// 5. Delete MOC record from SQLite and article_links
+		r.db.WithContext(ctx).Where("source_id = ? OR target_id = ?", moc.ID, moc.ID).Delete(&repository.GormArticleLink{})
+		r.db.WithContext(ctx).Delete(&moc)
+		r.db.WithContext(ctx).Exec("DELETE FROM articles_fts WHERE rowid = ?", moc.ID)
+
+		prunedCount++
+		r.logger.Info("Pruned empty automated MOC with 0 notes",
+			zap.Int64("id", moc.ID),
+			zap.String("title", moc.Title),
+			zap.String("file", absPath),
+		)
+	}
+
+	return prunedCount, nil
 }
 
 func (r *LibrarianRunner) synthesizeCluster(ctx context.Context, cluster ClusterCandidate, apiKey, model, apiURL string) (*MOCSynthesisResponse, error) {
