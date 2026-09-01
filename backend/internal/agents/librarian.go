@@ -236,6 +236,50 @@ func (r *LibrarianRunner) DetectClusters(ctx context.Context, minSize int) ([]Cl
 	return candidates, nil
 }
 
+// DeterminePrimaryTopicFolders determines the single primary topic folder for each article.
+// If an article belongs to multiple active clusters, it selects the most specific cluster
+// (the one with the smallest total article count). If sizes are tied, it picks the cluster
+// matching the earliest tag in the article's tag list.
+func DeterminePrimaryTopicFolders(clusters []ClusterCandidate) map[int64]string {
+	primaryTopics := make(map[int64]string)
+	articleClusterSizes := make(map[int64]int)
+	articleTagIndex := make(map[int64]int)
+
+	for _, cluster := range clusters {
+		clusterSize := len(cluster.Articles)
+		topicFolder := cluster.Tag
+		if cluster.ExistingMOC != nil && cluster.ExistingMOC.Title != "" {
+			cleanTitle := strings.TrimPrefix(cluster.ExistingMOC.Title, "MOC - ")
+			cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
+			cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
+			cleanTitle = strings.TrimSpace(cleanTitle)
+			if cleanTitle != "" {
+				topicFolder = cleanTitle
+			}
+		}
+
+		for _, a := range cluster.Articles {
+			// Find index of this cluster's tag in article tags for tie breaking
+			tagIdx := 999
+			for idx, t := range strings.Split(a.Tags, ",") {
+				if strings.EqualFold(repository.SanitizeObsidianTag(t), repository.SanitizeObsidianTag(cluster.Tag)) {
+					tagIdx = idx
+					break
+				}
+			}
+
+			prevSize, exists := articleClusterSizes[a.ID]
+			if !exists || clusterSize < prevSize || (clusterSize == prevSize && tagIdx < articleTagIndex[a.ID]) {
+				primaryTopics[a.ID] = topicFolder
+				articleClusterSizes[a.ID] = clusterSize
+				articleTagIndex[a.ID] = tagIdx
+			}
+		}
+	}
+
+	return primaryTopics
+}
+
 func (r *LibrarianRunner) RunLibrarian(ctx context.Context, trigger string) (*LibrarianRunResult, error) {
 	return r.RunLibrarianWithURL(ctx, trigger, "https://openrouter.ai/api/v1/chat/completions")
 }
@@ -266,6 +310,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 		result.Status = "skipped (disabled)"
 		return result, nil
 	}
+
 	if apiKey == "" {
 		result.Status = "skipped (no api key)"
 		return result, nil
@@ -281,6 +326,8 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	result.ClustersDetected = len(clusters)
 	allArticles, _ := r.repo.GetAllArticles(ctx)
 	result.ScannedArticles = len(allArticles)
+
+	primaryTopics := DeterminePrimaryTopicFolders(clusters)
 
 	for _, cluster := range clusters {
 		if cluster.ExistingMOC != nil {
@@ -335,29 +382,6 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				continue
 			}
 
-			topicTitle := cluster.Tag
-			if cluster.ExistingMOC.Title != "" {
-				cleanTitle := strings.TrimPrefix(cluster.ExistingMOC.Title, "MOC - ")
-				cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
-				cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
-				cleanTitle = strings.TrimSpace(cleanTitle)
-				if cleanTitle != "" {
-					topicTitle = cleanTitle
-				}
-			}
-			var fileErr error
-			for _, a := range cluster.Articles {
-				if _, err := r.organizer.FileArticle(ctx, a.ID, topicTitle); err != nil {
-					r.logger.Error("Failed to file article into topic folder", zap.Int64("article_id", a.ID), zap.String("topic", topicTitle), zap.Error(err))
-					result.Status = "partial (some clusters failed)"
-					result.Errors = append(result.Errors, fmt.Sprintf("file article %d into %s: %v", a.ID, topicTitle, err))
-					fileErr = err
-				}
-			}
-			if fileErr != nil {
-				continue
-			}
-
 			result.UpdatedMOCs++
 			continue
 		}
@@ -378,23 +402,24 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 		}
 
 		topicTitle := strings.TrimSpace(synthesis.TopicTitle)
-		if topicTitle == "" {
-			topicTitle = cluster.Tag
-		}
-		var fileErr error
-		for _, a := range cluster.Articles {
-			if _, err := r.organizer.FileArticle(ctx, a.ID, topicTitle); err != nil {
-				r.logger.Error("Failed to file article into topic folder", zap.Int64("article_id", a.ID), zap.String("topic", topicTitle), zap.Error(err))
-				result.Status = "partial (some clusters failed)"
-				result.Errors = append(result.Errors, fmt.Sprintf("file article %d into %s: %v", a.ID, topicTitle, err))
-				fileErr = err
+		if topicTitle != "" && topicTitle != cluster.Tag {
+			for _, a := range cluster.Articles {
+				if primaryTopics[a.ID] == cluster.Tag {
+					primaryTopics[a.ID] = topicTitle
+				}
 			}
-		}
-		if fileErr != nil {
-			continue
 		}
 
 		result.CreatedMOCs++
+	}
+
+	// File articles into their deterministic primary topic folders
+	for articleID, topicTitle := range primaryTopics {
+		if _, err := r.organizer.FileArticle(ctx, articleID, topicTitle); err != nil {
+			r.logger.Error("Failed to file article into primary topic folder", zap.Int64("article_id", articleID), zap.String("topic", topicTitle), zap.Error(err))
+			result.Status = "partial (some clusters failed)"
+			result.Errors = append(result.Errors, fmt.Sprintf("file article %d into %s: %v", articleID, topicTitle, err))
+		}
 	}
 
 	pruned, err := r.pruneEmptyMOCs(ctx)

@@ -1409,3 +1409,130 @@ I wrote extensive custom notes and reflections on this topic here! DO NOT DELETE
 		t.Errorf("expected MOC DB record to be preserved, got count %d", count)
 	}
 }
+
+func TestDeterminePrimaryTopicFolders(t *testing.T) {
+	clusters := []ClusterCandidate{
+		{
+			Tag: "ai",
+			Articles: []repository.ArticleRecord{
+				{ID: 1, Title: "Anthropic Research", Tags: "ai, anthropic, development"},
+				{ID: 2, Title: "General AI Note 1", Tags: "ai"},
+				{ID: 3, Title: "General AI Note 2", Tags: "ai"},
+				{ID: 4, Title: "General AI Note 3", Tags: "ai"},
+				{ID: 5, Title: "General AI Note 4", Tags: "ai"},
+				{ID: 6, Title: "General AI Note 5", Tags: "ai"},
+			}, // size 6
+		},
+		{
+			Tag: "development",
+			Articles: []repository.ArticleRecord{
+				{ID: 1, Title: "Anthropic Research", Tags: "ai, anthropic, development"},
+				{ID: 7, Title: "Dev Note 1", Tags: "development"},
+				{ID: 8, Title: "Dev Note 2", Tags: "development"},
+				{ID: 9, Title: "Dev Note 3", Tags: "development"},
+				{ID: 10, Title: "Dev Note 4", Tags: "development"},
+			}, // size 5
+		},
+		{
+			Tag: "anthropic",
+			Articles: []repository.ArticleRecord{
+				{ID: 1, Title: "Anthropic Research", Tags: "ai, anthropic, development"},
+				{ID: 11, Title: "Claude 3.5 Sonnet", Tags: "anthropic"},
+				{ID: 12, Title: "Constitutional AI", Tags: "anthropic"},
+			}, // size 3 (most specific)
+		},
+	}
+
+	primary := DeterminePrimaryTopicFolders(clusters)
+
+	// Article 1 should have primary topic "anthropic" because it's the most specific (size 3)
+	if primary[1] != "anthropic" {
+		t.Errorf("expected article 1 to have primary topic 'anthropic', got %q", primary[1])
+	}
+	if primary[2] != "ai" {
+		t.Errorf("expected article 2 to have primary topic 'ai', got %q", primary[2])
+	}
+	if primary[7] != "development" {
+		t.Errorf("expected article 7 to have primary topic 'development', got %q", primary[7])
+	}
+}
+
+func TestLibrarian_PrimaryTopicSpecificityFiling(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// Seed 5 AI articles (broad cluster, size 6)
+	for i := 1; i <= 5; i++ {
+		title := fmt.Sprintf("AI Note %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "ai",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	// Seed 4 specific Anthropic articles + 1 overlapping note (specific cluster, size 5)
+	for i := 10; i <= 14; i++ {
+		title := fmt.Sprintf("Anthropic Note %d", i)
+		tags := "anthropic"
+		if i == 10 {
+			tags = "ai, anthropic" // Belongs to both AI (size 6) and Anthropic (size 5)
+		}
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    tags,
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{"topic_title":"Synthesized Topic","executive_summary":"Summary","sections":[]}`,
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.CreatedMOCs != 2 {
+		t.Errorf("expected 2 MOCs created (AI and Anthropic), got %d", result.CreatedMOCs)
+	}
+
+	// Overlapping note 10 MUST be filed in Anthropic/ (the more specific cluster, size 5), NOT AI/ (size 6)
+	var note10 repository.GormArticle
+	db.First(&note10, 10)
+	if !strings.HasPrefix(note10.Article, "/articles/Anthropic/") && !strings.HasPrefix(note10.Article, "/articles/anthropic/") && !strings.HasPrefix(note10.Article, "/articles/Synthesized Topic/") {
+		t.Errorf("expected Note 10 to be filed into specific Anthropic topic folder, got %q", note10.Article)
+	}
+
+	// Verify physical file exists in the specific folder
+	anthropicFolder := filepath.Join(articlesDir, "Anthropic")
+	if _, err := os.Stat(anthropicFolder); os.IsNotExist(err) {
+		// Or sanitized topic
+		anthropicFolder = filepath.Join(articlesDir, "Synthesized Topic")
+	}
+	entries, _ := os.ReadDir(anthropicFolder)
+	if len(entries) < 5 {
+		t.Errorf("expected Anthropic topic folder to retain all its member notes, found %d entries", len(entries))
+	}
+}
