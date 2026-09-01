@@ -15,12 +15,41 @@ import (
 	"sync"
 	"time"
 
+	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
+
+type MOCArticleInfo struct {
+	ID       int64
+	Title    string
+	FilePath string
+}
+
+func formatMOCArticleWikilink(info MOCArticleInfo) string {
+	fileBase := ""
+	if info.FilePath != "" {
+		fileBase = strings.TrimSuffix(filepath.Base(info.FilePath), ".md")
+	}
+	if fileBase == "" || fileBase == fmt.Sprint(info.ID) {
+		fileBase = ingest.SanitizeTitleFilename(info.Title, info.ID)
+	}
+
+	cleanTitle := strings.TrimSpace(info.Title)
+	if cleanTitle == "" {
+		cleanTitle = fileBase
+	}
+
+	if fileBase == cleanTitle {
+		return fmt.Sprintf("[[%s]]", fileBase)
+	}
+
+	displayTitle := strings.ReplaceAll(cleanTitle, "|", "—")
+	return fmt.Sprintf("[[%s|%s]]", fileBase, displayTitle)
+}
 
 type MOCItem struct {
 	ArticleID   int64  `json:"article_id"`
@@ -533,12 +562,16 @@ func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate,
 	}
 
 	allArticles, _ := r.repo.GetAllArticles(ctx)
-	articleTitleMap := make(map[int64]string)
+	articleInfoMap := make(map[int64]MOCArticleInfo)
 	for _, a := range allArticles {
-		articleTitleMap[a.ID] = a.Title
+		articleInfoMap[a.ID] = MOCArticleInfo{
+			ID:       a.ID,
+			Title:    a.Title,
+			FilePath: a.FilePath,
+		}
 	}
 
-	newMarkdown := r.assembleMOCMarkdown(synthesis, mocTitle, cluster.Tag, existingBody, articleTitleMap)
+	newMarkdown := r.assembleMOCMarkdown(synthesis, mocTitle, cluster.Tag, existingBody, articleInfoMap)
 
 	// Atomic disk write
 	dir := filepath.Dir(filePath)
@@ -594,7 +627,7 @@ func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate,
 	return nil
 }
 
-func (r *LibrarianRunner) assembleMOCMarkdown(synthesis *MOCSynthesisResponse, mocTitle, tag, existingBody string, articleTitleMap map[int64]string) string {
+func (r *LibrarianRunner) assembleMOCMarkdown(synthesis *MOCSynthesisResponse, mocTitle, tag, existingBody string, articleInfoMap map[int64]MOCArticleInfo) string {
 	userNotesContent := ""
 	if existingBody != "" {
 		reNotes := regexp.MustCompile(`(?s)## Notes & Synthesis\s*\n(.*)`)
@@ -633,15 +666,16 @@ func (r *LibrarianRunner) assembleMOCMarkdown(synthesis *MOCSynthesisResponse, m
 	for _, section := range synthesis.Sections {
 		sb.WriteString(fmt.Sprintf("### %s\n", strings.TrimSpace(section.Title)))
 		for _, item := range section.Items {
-			title, ok := articleTitleMap[item.ArticleID]
+			info, ok := articleInfoMap[item.ArticleID]
 			if !ok {
-				title = fmt.Sprintf("Article %d", item.ArticleID)
+				info = MOCArticleInfo{ID: item.ArticleID, Title: fmt.Sprintf("Article %d", item.ArticleID)}
 			}
+			wikilink := formatMOCArticleWikilink(info)
 			contextNote := strings.TrimSpace(item.ContextNote)
 			if contextNote != "" {
-				sb.WriteString(fmt.Sprintf("- [[%s]] - %s\n", title, contextNote))
+				sb.WriteString(fmt.Sprintf("- %s - %s\n", wikilink, contextNote))
 			} else {
-				sb.WriteString(fmt.Sprintf("- [[%s]]\n", title))
+				sb.WriteString(fmt.Sprintf("- %s\n", wikilink))
 			}
 		}
 		sb.WriteString("\n")
@@ -866,7 +900,7 @@ Instructions:
 	return &deltaResp, nil
 }
 
-func applyDeltaPlacements(existingContent string, placements []MOCDeltaPlacement, articleTitleMap map[int64]string) string {
+func applyDeltaPlacements(existingContent string, placements []MOCDeltaPlacement, articleInfoMap map[int64]MOCArticleInfo) string {
 	if len(placements) == 0 {
 		return existingContent
 	}
@@ -912,15 +946,23 @@ func applyDeltaPlacements(existingContent string, placements []MOCDeltaPlacement
 
 		var itemLines []string
 		for _, item := range g.items {
-			title, ok := articleTitleMap[item.ArticleID]
+			info, ok := articleInfoMap[item.ArticleID]
 			if !ok {
-				title = fmt.Sprintf("Article %d", item.ArticleID)
+				info = MOCArticleInfo{ID: item.ArticleID, Title: fmt.Sprintf("Article %d", item.ArticleID)}
 			}
 
-			// Prevent duplicate additions if title is already referenced anywhere in existing lines
+			wikilink := formatMOCArticleWikilink(info)
+			fileBase := ""
+			if info.FilePath != "" {
+				fileBase = strings.TrimSuffix(filepath.Base(info.FilePath), ".md")
+			}
+
+			// Prevent duplicate additions if title/file is already referenced anywhere in existing lines
 			alreadyPresent := false
 			for _, line := range lines {
-				if strings.Contains(line, fmt.Sprintf("[[%s]]", title)) || (strings.Contains(line, title) && strings.Contains(line, "[[")) {
+				if strings.Contains(line, wikilink) ||
+					(fileBase != "" && (strings.Contains(line, fmt.Sprintf("[[%s]]", fileBase)) || strings.Contains(line, fmt.Sprintf("[[%s|", fileBase)))) ||
+					(info.Title != "" && (strings.Contains(line, fmt.Sprintf("[[%s]]", info.Title)) || strings.Contains(line, fmt.Sprintf("[[%s|", info.Title)))) {
 					alreadyPresent = true
 					break
 				}
@@ -931,9 +973,9 @@ func applyDeltaPlacements(existingContent string, placements []MOCDeltaPlacement
 
 			note := strings.TrimSpace(item.ContextNote)
 			if note != "" {
-				itemLines = append(itemLines, fmt.Sprintf("- [[%s]] - %s", title, note))
+				itemLines = append(itemLines, fmt.Sprintf("- %s - %s", wikilink, note))
 			} else {
-				itemLines = append(itemLines, fmt.Sprintf("- [[%s]]", title))
+				itemLines = append(itemLines, fmt.Sprintf("- %s", wikilink))
 			}
 		}
 
@@ -1013,12 +1055,16 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 	}
 
 	allArticles, _ := r.repo.GetAllArticles(ctx)
-	articleTitleMap := make(map[int64]string)
+	articleInfoMap := make(map[int64]MOCArticleInfo)
 	for _, a := range allArticles {
-		articleTitleMap[a.ID] = a.Title
+		articleInfoMap[a.ID] = MOCArticleInfo{
+			ID:       a.ID,
+			Title:    a.Title,
+			FilePath: a.FilePath,
+		}
 	}
 
-	updatedMarkdown := applyDeltaPlacements(existingContent, deltaResp.Placements, articleTitleMap)
+	updatedMarkdown := applyDeltaPlacements(existingContent, deltaResp.Placements, articleInfoMap)
 
 	// Atomic disk write
 	dir := filepath.Dir(filePath)

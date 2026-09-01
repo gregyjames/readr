@@ -780,12 +780,12 @@ func TestLibrarian_ArticlesWithPipesInTitle_NeverDuplicate(t *testing.T) {
 	}
 	mocContent := string(contentBytes)
 
-	// Verify formatted cleanly without broken double pipe [[title|title]]
+	// Verify formatted cleanly targeting the actual disk filename with clean display alias
 	if strings.Contains(mocContent, "[[How to Optimize NumPy with Cython | Paperspace Blog|") {
 		t.Errorf("found broken double-pipe wikilink in MOC:\n%s", mocContent)
 	}
-	if !strings.Contains(mocContent, "[[How to Optimize NumPy with Cython | Paperspace Blog]]") {
-		t.Errorf("expected clean wikilink [[How to Optimize NumPy with Cython | Paperspace Blog]] in MOC, got:\n%s", mocContent)
+	if !strings.Contains(mocContent, "[[cython|How to Optimize NumPy with Cython — Paperspace Blog]]") {
+		t.Errorf("expected clean wikilink [[cython|How to Optimize NumPy with Cython — Paperspace Blog]] in MOC, got:\n%s", mocContent)
 	}
 
 	// Run 2: Immediate subsequent run MUST zero-token skip (no new calls!)
