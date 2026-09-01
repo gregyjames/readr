@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -689,5 +690,17 @@ func TestPipeline_MOCTagExcludedFromEnricherAndStripped(t *testing.T) {
 	}
 	if len(merged) != 3 {
 		t.Errorf("expected 3 merged tags (existing-tag, golang, distributed-systems), got %d: %v", len(merged), merged)
+	}
+}
+
+func TestMergeArticleTags_SanitizesSpacesForObsidian(t *testing.T) {
+	existingTags := "google, gemini, legal tech"
+	aiTags := []string{"artificial intelligence", "enterprise ai", "cloud-computing"}
+
+	merged := mergeArticleTags(existingTags, aiTags)
+	expected := []string{"google", "gemini", "legal-tech", "artificial-intelligence", "enterprise-ai", "cloud-computing"}
+
+	if !reflect.DeepEqual(merged, expected) {
+		t.Errorf("expected merged tags %v, got %v", expected, merged)
 	}
 }

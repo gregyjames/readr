@@ -99,7 +99,8 @@ func (ing *Ingester) Ingest(ctx context.Context, req IngestRequest) (*IngestedAr
 	}
 
 	// 6. Format Markdown Document (via TemplateRenderer or built-in default fallback)
-	tagsString := strings.Join(req.Tags, ",")
+	sanitizedTags := SanitizeObsidianTags(req.Tags)
+	tagsString := strings.Join(sanitizedTags, ",")
 	savedDate := time.UnixMilli(filenameID).UTC().Format("2006-01-02")
 
 	var markdownDoc string
@@ -115,7 +116,7 @@ func (ing *Ingester) Ingest(ctx context.Context, req IngestRequest) (*IngestedAr
 				URL:         trimmedURL,
 				Domain:      parsedURL.Hostname(),
 				Content:     markdownContent,
-				Tags:        req.Tags,
+				Tags:        sanitizedTags,
 				TagsStr:     tagsString,
 				CoverImage:  coverImagePath,
 				SavedDate:   savedDate,

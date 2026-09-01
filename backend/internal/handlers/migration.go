@@ -9,6 +9,7 @@ import (
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
 	"go.uber.org/zap"
+	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
 
@@ -96,6 +97,69 @@ func MigrateLegacyArticleFilenames(db *gorm.DB, dataDir string, logger *zap.Logg
 			zap.Int64("id", a.ID),
 			zap.String("title", a.Title),
 			zap.String("new_file", targetBase),
+		)
+	}
+
+	return migratedCount, nil
+}
+
+// MigrateLegacyArticleTags scans all articles in SQLite and sanitizes any legacy tags with spaces into Obsidian-compatible kebab-case tags, updating both the database and the markdown files on disk.
+func MigrateLegacyArticleTags(db *gorm.DB, dataDir string, logger *zap.Logger) (int, error) {
+	if db == nil {
+		return 0, nil
+	}
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	var articles []repository.GormArticle
+	if err := db.Where("deleted_at IS NULL AND tags != '' AND tags IS NOT NULL").Find(&articles).Error; err != nil {
+		return 0, fmt.Errorf("failed to fetch articles for tag migration: %w", err)
+	}
+
+	migratedCount := 0
+	for _, a := range articles {
+		sanitizedTags := repository.SanitizeObsidianTags(strings.Split(a.Tags, ","))
+		sanitizedStr := strings.Join(sanitizedTags, ", ")
+
+		if sanitizedStr == a.Tags {
+			continue
+		}
+
+		if err := db.Model(&repository.GormArticle{}).Where("id = ?", a.ID).Update("tags", sanitizedStr).Error; err != nil {
+			logger.Warn("Failed to update sanitized tags in database", zap.Int64("id", a.ID), zap.Error(err))
+			continue
+		}
+
+		// Update markdown frontmatter on disk if file exists
+		if a.Article != "" {
+			filePath := filepath.Join(dataDir, strings.TrimPrefix(a.Article, "/"))
+			if contentBytes, err := os.ReadFile(filePath); err == nil {
+				content := string(contentBytes)
+				if strings.HasPrefix(content, "---\n") {
+					parts := strings.SplitN(content[4:], "\n---\n", 2)
+					if len(parts) == 2 {
+						frontmatterRaw := parts[0]
+						body := parts[1]
+
+						var rawMap map[string]interface{}
+						if err := yaml.Unmarshal([]byte(frontmatterRaw), &rawMap); err == nil && rawMap != nil {
+							rawMap["tags"] = sanitizedTags
+							if newYaml, err := yaml.Marshal(rawMap); err == nil {
+								newDoc := "---\n" + string(newYaml) + "---\n" + body
+								_ = os.WriteFile(filePath, []byte(newDoc), 0644)
+							}
+						}
+					}
+				}
+			}
+		}
+
+		migratedCount++
+		logger.Info("Migrated article tags to Obsidian format",
+			zap.Int64("id", a.ID),
+			zap.String("old_tags", a.Tags),
+			zap.String("new_tags", sanitizedStr),
 		)
 	}
 
