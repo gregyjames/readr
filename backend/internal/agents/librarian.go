@@ -1142,14 +1142,14 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 	}
 
 	targetFilename := fmt.Sprintf("MOC - %s.md", folder)
-	filePath := filepath.Join(r.dataDir, "articles", folder, targetFilename)
+	destinationPath := filepath.Join(r.dataDir, "articles", folder, targetFilename)
 	relArticlePath := fmt.Sprintf("/articles/%s/%s", folder, targetFilename)
 
+	var oldPath string
 	if cluster.ExistingMOC != nil && cluster.ExistingMOC.FilePath != "" {
 		existingPath := filepath.Join(r.dataDir, strings.TrimPrefix(cluster.ExistingMOC.FilePath, "/"))
 		if _, err := os.Stat(existingPath); err == nil {
-			filePath = existingPath
-			relArticlePath = cluster.ExistingMOC.FilePath
+			oldPath = existingPath
 		}
 	}
 
@@ -1165,19 +1165,24 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 
 	updatedMarkdown := applyDeltaPlacements(existingContent, deltaResp.Placements, articleInfoMap)
 
-	// Atomic disk write
-	dir := filepath.Dir(filePath)
+	// Atomic disk write to topic folder destination
+	dir := filepath.Dir(destinationPath)
 	_ = os.MkdirAll(dir, 0755)
-	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(filePath)))
+	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(destinationPath)))
 	if err := os.WriteFile(tmpFile, []byte(updatedMarkdown), 0644); err != nil {
 		return fmt.Errorf("failed to write tmp file: %w", err)
 	}
-	if err := os.Rename(tmpFile, filePath); err != nil {
+	if err := os.Rename(tmpFile, destinationPath); err != nil {
 		_ = os.Remove(tmpFile)
 		return fmt.Errorf("failed to rename tmp file: %w", err)
 	}
 
-	// Update DB record if needed
+	// Remove old file location only after new file is durable at destination
+	if oldPath != "" && oldPath != destinationPath {
+		_ = os.Remove(oldPath)
+	}
+
+	// Update DB record with new topic folder path
 	var mocRecord repository.GormArticle
 	r.db.WithContext(ctx).First(&mocRecord, cluster.ExistingMOC.ID)
 	if mocRecord.ID > 0 {

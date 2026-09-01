@@ -173,9 +173,10 @@ DO NOT OVERWRITE THIS TEXT.
 		t.Errorf("expected 1 MOC updated or created, got result: %+v", result)
 	}
 
-	updatedBytes, err := os.ReadFile(mocPath)
+	destMocPath := filepath.Join(articlesDir, "Distributed Systems", "MOC - Distributed Systems.md")
+	updatedBytes, err := os.ReadFile(destMocPath)
 	if err != nil {
-		t.Fatalf("failed to read updated MOC: %v", err)
+		t.Fatalf("failed to read updated MOC at %s: %v", destMocPath, err)
 	}
 	updatedContent := string(updatedBytes)
 
@@ -583,9 +584,15 @@ Custom user research notes that must never be deleted.
 		t.Errorf("expected 1 HTTP call, got %d", atomic.LoadInt32(&httpCalls))
 	}
 
-	updatedBytes, err := os.ReadFile(mocPath)
+	// Verify old root file is removed after migration to topic folder
+	if _, err := os.Stat(mocPath); !os.IsNotExist(err) {
+		t.Errorf("expected old root MOC %s to be removed after migration", mocPath)
+	}
+
+	destMocPath := filepath.Join(articlesDir, "Distributed Systems", "MOC - Distributed Systems.md")
+	updatedBytes, err := os.ReadFile(destMocPath)
 	if err != nil {
-		t.Fatalf("failed to read updated MOC: %v", err)
+		t.Fatalf("failed to read updated MOC at %s: %v", destMocPath, err)
 	}
 	updatedContent := string(updatedBytes)
 
