@@ -141,10 +141,10 @@ func extractSourceURLFromFrontmatter(frontmatterStr string) string {
 	return ""
 }
 
-func serializeOKFMetadata(frontmatter *OKFFrontmatterResponse, mergedTags []string, sourceURL string) (string, *OKFMetadata, error) {
+func serializeOKFMetadata(frontmatter *OKFFrontmatterResponse, mergedTags []string, sourceURL string, title string) (string, *OKFMetadata, error) {
 	metadata := OKFMetadata{
 		Type:        frontmatter.Type,
-		Title:       frontmatter.Title,
+		Title:       strings.TrimSpace(title),
 		Description: frontmatter.Description,
 		Source:      strings.TrimSpace(sourceURL),
 		Tags:        mergedTags,

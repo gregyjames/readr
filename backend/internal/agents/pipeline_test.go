@@ -887,4 +887,8 @@ Architecture content here.`
 	if !strings.Contains(updatedContent, "source: https://example.com/go-microservices") {
 		t.Errorf("expected updated frontmatter to contain 'source: https://example.com/go-microservices', got:\n%s", updatedContent)
 	}
+
+	if !strings.Contains(updatedContent, "title: Go Microservices") {
+		t.Errorf("expected updated frontmatter to contain 'title: Go Microservices', got:\n%s", updatedContent)
+	}
 }

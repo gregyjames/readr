@@ -88,6 +88,10 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		filePath = filepath.Join(p.dataDirectory, "articles", fmt.Sprintf("%d.md", job.ArticleID))
 	}
 
+	if articleTitle == "" && filePath != "" {
+		articleTitle = strings.TrimSuffix(filepath.Base(filePath), ".md")
+	}
+
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
 		p.logger.Error("Pipeline could not read file", zap.Error(err), zap.Int64("article_id", job.ArticleID), zap.String("path", filePath))
@@ -360,7 +364,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		}
 		mergedTags := mergeArticleTags(existingTagsStr, pipelineResp.Frontmatter.Tags)
 
-		yamlHeader, metadata, err := serializeOKFMetadata(pipelineResp.Frontmatter, mergedTags, sourceURL)
+		yamlHeader, metadata, err := serializeOKFMetadata(pipelineResp.Frontmatter, mergedTags, sourceURL, articleTitle)
 		if err != nil {
 			p.logger.Error("Pipeline failed to serialize YAML frontmatter", zap.Error(err))
 			return

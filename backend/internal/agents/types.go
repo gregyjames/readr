@@ -21,7 +21,6 @@ type OKFGeneratedInfo struct {
 
 type OKFFrontmatterResponse struct {
 	Type        string   `json:"type"`
-	Title       string   `json:"title"`
 	Description string   `json:"description"`
 	Tags        []string `json:"tags"`
 }
