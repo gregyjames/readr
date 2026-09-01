@@ -801,5 +801,74 @@ func TestLibrarian_ArticlesWithPipesInTitle_NeverDuplicate(t *testing.T) {
 	}
 }
 
+func TestLibrarian_TopicTitlePathTraversal_SanitizedSafely(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	for i := 1; i <= 5; i++ {
+		title := fmt.Sprintf("Security Note %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "security",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{"topic_title":"../../etc/passwd","executive_summary":"Traversal test summary","sections":[{"title":"Core","items":[{"article_id":1,"context_note":"Note 1."},{"article_id":2,"context_note":"Note 2."},{"article_id":3,"context_note":"Note 3."},{"article_id":4,"context_note":"Note 4."},{"article_id":5,"context_note":"Note 5."}]}]}`,
+					},
+				},
+			},
+			"usage": map[string]int{
+				"prompt_tokens":     150,
+				"completion_tokens": 50,
+				"total_tokens":      200,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"openai/gpt-4o","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	if result.CreatedMOCs != 1 {
+		t.Fatalf("expected 1 created MOC, got %d", result.CreatedMOCs)
+	}
+
+	// Verify no file was created outside articlesDir
+	parentDir := filepath.Dir(articlesDir)
+	if _, err := os.Stat(filepath.Join(parentDir, "passwd.md")); err == nil {
+		t.Errorf("path traversal vulnerability: file created in parent directory!")
+	}
+
+	// Verify the file was created inside articlesDir safely
+	var createdFiles []string
+	entries, _ := os.ReadDir(articlesDir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "MOC - ") {
+			createdFiles = append(createdFiles, e.Name())
+		}
+	}
+
+	if len(createdFiles) == 0 {
+		t.Fatalf("expected MOC file created in articlesDir, found none")
+	}
+}
+
 
 

@@ -544,20 +544,40 @@ func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate,
 		topicTitle = strings.Title(strings.ReplaceAll(cluster.Tag, "-", " "))
 	}
 
-	mocTitle := fmt.Sprintf("MOC - %s", topicTitle)
+	sanitizedTopic := strings.TrimSuffix(ingest.SanitizeTitleFilename(topicTitle, 0), ".md")
+	if sanitizedTopic == "" || sanitizedTopic == "Article" {
+		fallback := strings.Title(strings.ReplaceAll(cluster.Tag, "-", " "))
+		sanitizedTopic = strings.TrimSuffix(ingest.SanitizeTitleFilename(fallback, 0), ".md")
+	}
+	if sanitizedTopic == "" || sanitizedTopic == "Article" {
+		sanitizedTopic = "Topic"
+	}
+
+	mocTitle := fmt.Sprintf("MOC - %s", sanitizedTopic)
 	articlesDir := filepath.Join(r.dataDir, "articles")
 	_ = os.MkdirAll(articlesDir, 0755)
 
 	targetFilename := fmt.Sprintf("%s.md", mocTitle)
 	filePath := filepath.Join(articlesDir, targetFilename)
 
+	// Ensure target path is safely contained within articlesDir
+	rel, err := filepath.Rel(articlesDir, filePath)
+	if err != nil || strings.HasPrefix(rel, "..") || strings.Contains(rel, "/") || strings.Contains(rel, "\\") {
+		cleanTag := strings.TrimSuffix(ingest.SanitizeTitleFilename(cluster.Tag, 0), ".md")
+		targetFilename = fmt.Sprintf("MOC - %s.md", cleanTag)
+		filePath = filepath.Join(articlesDir, targetFilename)
+	}
+
 	existingBody := ""
 	if cluster.ExistingMOC != nil && cluster.ExistingMOC.FilePath != "" {
 		existingPath := filepath.Join(r.dataDir, strings.TrimPrefix(cluster.ExistingMOC.FilePath, "/"))
-		if bytes, err := os.ReadFile(existingPath); err == nil {
-			existingBody = string(bytes)
-			filePath = existingPath
-			targetFilename = filepath.Base(existingPath)
+		rel, err := filepath.Rel(articlesDir, existingPath)
+		if err == nil && !strings.HasPrefix(rel, "..") {
+			if bytes, err := os.ReadFile(existingPath); err == nil {
+				existingBody = string(bytes)
+				filePath = existingPath
+				targetFilename = filepath.Base(existingPath)
+			}
 		}
 	}
 
@@ -1050,8 +1070,11 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 
 	if cluster.ExistingMOC.FilePath != "" {
 		existingPath := filepath.Join(r.dataDir, strings.TrimPrefix(cluster.ExistingMOC.FilePath, "/"))
-		filePath = existingPath
-		targetFilename = filepath.Base(existingPath)
+		rel, err := filepath.Rel(articlesDir, existingPath)
+		if err == nil && !strings.HasPrefix(rel, "..") {
+			filePath = existingPath
+			targetFilename = filepath.Base(existingPath)
+		}
 	}
 
 	allArticles, _ := r.repo.GetAllArticles(ctx)
