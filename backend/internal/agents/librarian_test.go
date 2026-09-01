@@ -1410,50 +1410,84 @@ I wrote extensive custom notes and reflections on this topic here! DO NOT DELETE
 	}
 }
 
+func TestTitleContainsTopic(t *testing.T) {
+	tests := []struct {
+		title    string
+		topic    string
+		expected bool
+	}{
+		{"Google employees are testing Gemini", "google", true},
+		{"Google employees are testing Gemini", "GOOGLE", true},
+		{"Google employees are testing Gemini", " google ", true},
+		{"Google employees are testing Gemini", "anthropic", false},
+		{"An Anthropic researcher gave a talk", "anthropic", true},
+		{"Sony sues Anthropic over copyrights", "Anthropic", true},
+		{"Claiming insurance in Paris", "ai", false},  // "ai" in "claiming" should NOT match
+		{"Frontier AI Safety Initiative", "ai", true}, // whole word "AI" should match
+		{"Raft Distributed Systems Architecture", "distributed-systems", true},
+		{"Raft Distributed Systems Architecture", " distributed_systems ", true},
+	}
+
+	for _, tt := range tests {
+		got := titleContainsTopic(tt.title, tt.topic)
+		if got != tt.expected {
+			t.Errorf("titleContainsTopic(%q, %q) = %v, expected %v", tt.title, tt.topic, got, tt.expected)
+		}
+	}
+}
+
 func TestDeterminePrimaryTopicFolders(t *testing.T) {
 	clusters := []ClusterCandidate{
 		{
-			Tag: "ai",
+			Tag: "google",
 			Articles: []repository.ArticleRecord{
-				{ID: 1, Title: "Anthropic Research", Tags: "ai, anthropic, development"},
-				{ID: 2, Title: "General AI Note 1", Tags: "ai"},
-				{ID: 3, Title: "General AI Note 2", Tags: "ai"},
-				{ID: 4, Title: "General AI Note 3", Tags: "ai"},
-				{ID: 5, Title: "General AI Note 4", Tags: "ai"},
-				{ID: 6, Title: "General AI Note 5", Tags: "ai"},
-			}, // size 6
-		},
-		{
-			Tag: "development",
-			Articles: []repository.ArticleRecord{
-				{ID: 1, Title: "Anthropic Research", Tags: "ai, anthropic, development"},
-				{ID: 7, Title: "Dev Note 1", Tags: "development"},
-				{ID: 8, Title: "Dev Note 2", Tags: "development"},
-				{ID: 9, Title: "Dev Note 3", Tags: "development"},
-				{ID: 10, Title: "Dev Note 4", Tags: "development"},
-			}, // size 5
+				{ID: 101, Title: "Google employees are already testing the next Gemini Flash AI model", Tags: "ai, google, anthropic, business"},
+				{ID: 102, Title: "Google Workspace Overview", Tags: "google"},
+				{ID: 103, Title: "Google Search Engine", Tags: "google"},
+				{ID: 104, Title: "Google Cloud Platform", Tags: "google"},
+				{ID: 105, Title: "Google Pixel Review", Tags: "google"},
+				{ID: 106, Title: "Google Maps Tips", Tags: "google"},
+				{ID: 107, Title: "Google Android 15", Tags: "google"},
+			}, // size 7 (large cluster)
 		},
 		{
 			Tag: "anthropic",
 			Articles: []repository.ArticleRecord{
-				{ID: 1, Title: "Anthropic Research", Tags: "ai, anthropic, development"},
-				{ID: 11, Title: "Claude 3.5 Sonnet", Tags: "anthropic"},
-				{ID: 12, Title: "Constitutional AI", Tags: "anthropic"},
-			}, // size 3 (most specific)
+				{ID: 101, Title: "Google employees are already testing the next Gemini Flash AI model", Tags: "ai, google, anthropic, business"},
+				{ID: 201, Title: "An Anthropic researcher gave us a peek at self-improving AI", Tags: "ai, anthropic, development"},
+				{ID: 202, Title: "Claude 3.5 Sonnet Release", Tags: "anthropic"},
+			}, // size 3 (small cluster)
+		},
+		{
+			Tag: "ai",
+			Articles: []repository.ArticleRecord{
+				{ID: 101, Title: "Google employees are already testing the next Gemini Flash AI model", Tags: "ai, google, anthropic, business"},
+				{ID: 201, Title: "An Anthropic researcher gave us a peek at self-improving AI", Tags: "ai, anthropic, development"},
+				{ID: 301, Title: "General AI Note 1", Tags: "ai"},
+				{ID: 302, Title: "General AI Note 2", Tags: "ai"},
+				{ID: 303, Title: "General AI Note 3", Tags: "ai"},
+				{ID: 304, Title: "General AI Note 4", Tags: "ai"},
+				{ID: 305, Title: "General AI Note 5", Tags: "ai"},
+				{ID: 306, Title: "General AI Note 6", Tags: "ai"},
+			}, // size 8 (largest cluster)
 		},
 	}
 
 	primary := DeterminePrimaryTopicFolders(clusters)
 
-	// Article 1 should have primary topic "anthropic" because it's the most specific (size 3)
-	if primary[1] != "anthropic" {
-		t.Errorf("expected article 1 to have primary topic 'anthropic', got %q", primary[1])
+	// Article 101 has "Google" in the title -> MUST be filed into "google", despite anthropic cluster being smaller (3 vs 7)
+	if primary[101] != "google" {
+		t.Errorf("expected article 101 with 'Google' in title to have primary topic 'google', got %q", primary[101])
 	}
-	if primary[2] != "ai" {
-		t.Errorf("expected article 2 to have primary topic 'ai', got %q", primary[2])
+
+	// Article 201 has "Anthropic" in the title -> MUST be filed into "anthropic"
+	if primary[201] != "anthropic" {
+		t.Errorf("expected article 201 with 'Anthropic' in title to have primary topic 'anthropic', got %q", primary[201])
 	}
-	if primary[7] != "development" {
-		t.Errorf("expected article 7 to have primary topic 'development', got %q", primary[7])
+
+	// Article 301 has no title match -> files into 'ai'
+	if primary[301] != "ai" {
+		t.Errorf("expected article 301 to have primary topic 'ai', got %q", primary[301])
 	}
 }
 

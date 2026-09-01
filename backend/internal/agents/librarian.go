@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
@@ -236,14 +237,45 @@ func (r *LibrarianRunner) DetectClusters(ctx context.Context, minSize int) ([]Cl
 	return candidates, nil
 }
 
+// titleContainsTopic checks if an article's title contains the topic/tag name (case-insensitive and trimmed).
+// For multi-word topics ("distributed systems"), checks substring match.
+// For single-word topics ("google", "ai"), checks whole word boundaries to prevent false matches.
+func titleContainsTopic(title, topic string) bool {
+	cleanTitle := strings.ToLower(strings.TrimSpace(title))
+	cleanTopic := strings.ToLower(strings.TrimSpace(topic))
+	if cleanTitle == "" || cleanTopic == "" {
+		return false
+	}
+	cleanTopic = strings.ReplaceAll(cleanTopic, "-", " ")
+	cleanTopic = strings.ReplaceAll(cleanTopic, "_", " ")
+	cleanTitle = strings.ReplaceAll(cleanTitle, "-", " ")
+	cleanTitle = strings.ReplaceAll(cleanTitle, "_", " ")
+
+	if strings.Contains(cleanTopic, " ") {
+		return strings.Contains(cleanTitle, cleanTopic)
+	}
+
+	words := strings.FieldsFunc(cleanTitle, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+	for _, w := range words {
+		if w == cleanTopic {
+			return true
+		}
+	}
+	return false
+}
+
 // DeterminePrimaryTopicFolders determines the single primary topic folder for each article.
-// If an article belongs to multiple active clusters, it selects the most specific cluster
-// (the one with the smallest total article count). If sizes are tied, it picks the cluster
-// matching the earliest tag in the article's tag list.
+// Resolution Priority:
+// 1. Title Keyword Match (Highest): If the article title explicitly mentions the topic/tag name.
+// 2. Tag Position Priority (Medium): Tags placed earlier in frontmatter (first-tagged = primary intent).
+// 3. Cluster Specificity Fallback (Lowest): Most specific cluster (smallest article count).
 func DeterminePrimaryTopicFolders(clusters []ClusterCandidate) map[int64]string {
 	primaryTopics := make(map[int64]string)
-	articleClusterSizes := make(map[int64]int)
+	articleBestTitleMatch := make(map[int64]bool)
 	articleTagIndex := make(map[int64]int)
+	articleClusterSizes := make(map[int64]int)
 
 	for _, cluster := range clusters {
 		clusterSize := len(cluster.Articles)
@@ -259,20 +291,43 @@ func DeterminePrimaryTopicFolders(clusters []ClusterCandidate) map[int64]string 
 		}
 
 		for _, a := range cluster.Articles {
-			// Find index of this cluster's tag in article tags for tie breaking
+			hasTitleMatch := titleContainsTopic(a.Title, cluster.Tag) || (topicFolder != "" && titleContainsTopic(a.Title, topicFolder))
+
+			// Find position of this cluster's tag in article frontmatter
 			tagIdx := 999
 			for idx, t := range strings.Split(a.Tags, ",") {
-				if strings.EqualFold(repository.SanitizeObsidianTag(t), repository.SanitizeObsidianTag(cluster.Tag)) {
+				sanitized := repository.SanitizeObsidianTag(strings.TrimSpace(t))
+				if strings.EqualFold(sanitized, repository.SanitizeObsidianTag(cluster.Tag)) || (topicFolder != "" && strings.EqualFold(sanitized, repository.SanitizeObsidianTag(topicFolder))) {
 					tagIdx = idx
 					break
 				}
 			}
 
-			prevSize, exists := articleClusterSizes[a.ID]
-			if !exists || clusterSize < prevSize || (clusterSize == prevSize && tagIdx < articleTagIndex[a.ID]) {
+			prevTitleMatch, exists := articleBestTitleMatch[a.ID]
+			isBetter := false
+
+			if !exists {
+				isBetter = true
+			} else if hasTitleMatch && !prevTitleMatch {
+				// 1. Title match takes highest priority
+				isBetter = true
+			} else if hasTitleMatch == prevTitleMatch {
+				// 2. More specific cluster (smaller size) takes priority over broad clusters
+				if clusterSize < articleClusterSizes[a.ID] {
+					isBetter = true
+				} else if clusterSize == articleClusterSizes[a.ID] {
+					// 3. Tag position in frontmatter breaks ties
+					if tagIdx < articleTagIndex[a.ID] {
+						isBetter = true
+					}
+				}
+			}
+
+			if isBetter {
 				primaryTopics[a.ID] = topicFolder
-				articleClusterSizes[a.ID] = clusterSize
+				articleBestTitleMatch[a.ID] = hasTitleMatch
 				articleTagIndex[a.ID] = tagIdx
+				articleClusterSizes[a.ID] = clusterSize
 			}
 		}
 	}
