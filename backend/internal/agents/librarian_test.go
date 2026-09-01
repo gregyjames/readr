@@ -1570,3 +1570,114 @@ func TestLibrarian_PrimaryTopicSpecificityFiling(t *testing.T) {
 		t.Errorf("expected Anthropic topic folder to retain all its member notes, found %d entries", len(entries))
 	}
 }
+
+func TestLibrarian_PrunesSecondaryCompetitorLinksFromMOC(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// 1. Existing MOC - Anthropic containing a Google note and Anthropic notes
+	anthropicFolder := filepath.Join(articlesDir, "Anthropic")
+	_ = os.MkdirAll(anthropicFolder, 0755)
+	mocPath := filepath.Join(anthropicFolder, "MOC - Anthropic.md")
+
+	mocBody := `# MOC - Anthropic
+
+## Core Concepts
+- [[An Anthropic researcher gave us a peek at self-improving AI]] - Frontier research.
+- [[Claude 3.5 Sonnet Release]] - Major model release.
+- [[Google employees are already testing the next Gemini Flash AI model]] - Competitor model.
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*
+`
+	_ = os.WriteFile(mocPath, []byte(mocBody), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      500,
+		Title:   "MOC - Anthropic",
+		Tags:    "moc, anthropic",
+		Article: "/articles/Anthropic/MOC - Anthropic.md",
+	})
+
+	// 5 Anthropic articles
+	for i := 1; i <= 5; i++ {
+		title := fmt.Sprintf("Anthropic Core Note %d", i)
+		if i == 1 {
+			title = "An Anthropic researcher gave us a peek at self-improving AI"
+		} else if i == 2 {
+			title = "Claude 3.5 Sonnet Release"
+		}
+		filePath := filepath.Join(anthropicFolder, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "anthropic",
+			Article: fmt.Sprintf("/articles/Anthropic/%s.md", title),
+		})
+	}
+
+	// 5 Google articles (including the one with secondary anthropic tag)
+	googleFolder := filepath.Join(articlesDir, "Google")
+	_ = os.MkdirAll(googleFolder, 0755)
+	for i := 10; i <= 14; i++ {
+		title := fmt.Sprintf("Google Note %d", i)
+		tags := "google"
+		if i == 10 {
+			title = "Google employees are already testing the next Gemini Flash AI model"
+			tags = "ai, google, anthropic, business" // has secondary anthropic tag!
+		}
+		filePath := filepath.Join(googleFolder, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    tags,
+			Article: fmt.Sprintf("/articles/Google/%s.md", title),
+		})
+	}
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{"topic_title":"Google","executive_summary":"Summary","sections":[]}`,
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.UpdatedMOCs < 1 {
+		t.Errorf("expected MOC - Anthropic to be updated/reconciled, got %+v", result)
+	}
+
+	updatedBytes, err := os.ReadFile(mocPath)
+	if err != nil {
+		t.Fatalf("failed to read MOC: %v", err)
+	}
+	updatedContent := string(updatedBytes)
+
+	// Google employees note MUST be pruned from MOC - Anthropic!
+	if strings.Contains(updatedContent, "[[Google employees are already testing the next Gemini Flash AI model]]") {
+		t.Errorf("expected Google note to be pruned from MOC - Anthropic, got:\n%s", updatedContent)
+	}
+
+	// Anthropic notes must remain
+	if !strings.Contains(updatedContent, "[[An Anthropic researcher gave us a peek at self-improving AI]]") {
+		t.Errorf("expected Anthropic note to remain in MOC - Anthropic")
+	}
+}

@@ -384,6 +384,30 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 
 	primaryTopics := DeterminePrimaryTopicFolders(clusters)
 
+	// Filter each cluster candidate list so an MOC only manages articles whose primary topic belongs to this cluster
+	for i := range clusters {
+		clusterTopic := clusters[i].Tag
+		if clusters[i].ExistingMOC != nil && clusters[i].ExistingMOC.Title != "" {
+			cleanTitle := strings.TrimPrefix(clusters[i].ExistingMOC.Title, "MOC - ")
+			cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
+			cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
+			cleanTitle = strings.TrimSpace(cleanTitle)
+			if cleanTitle != "" {
+				clusterTopic = cleanTitle
+			}
+		}
+
+		var primaryArticles []repository.ArticleRecord
+		for _, a := range clusters[i].Articles {
+			primary := primaryTopics[a.ID]
+			if strings.EqualFold(repository.SanitizeObsidianTag(primary), repository.SanitizeObsidianTag(clusterTopic)) ||
+				strings.EqualFold(repository.SanitizeObsidianTag(primary), repository.SanitizeObsidianTag(clusters[i].Tag)) {
+				primaryArticles = append(primaryArticles, a)
+			}
+		}
+		clusters[i].Articles = primaryArticles
+	}
+
 	for _, cluster := range clusters {
 		if cluster.ExistingMOC != nil {
 			unlinked, existingContent, err := r.getUnlinkedArticles(cluster)
