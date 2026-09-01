@@ -103,7 +103,7 @@ func (s *DiskStorage) saveAtomically(dir, filename, tmpSuffix string, data []byt
 func (s *DiskStorage) SaveMarkdown(filenameID int64, content []byte) (string, error) {
 	articlesDir := filepath.Join(s.baseDir, "articles")
 	filename := fmt.Sprintf("%d.md", filenameID)
-	
+
 	if err := s.saveAtomically(articlesDir, filename, ".tmp", content, "markdown"); err != nil {
 		return "", err
 	}
@@ -137,7 +137,7 @@ func (s *DiskStorage) SaveMarkdownByTitle(title string, fallbackID int64, conten
 
 func (s *DiskStorage) SaveImage(filenameID int64, filename string, data []byte) (string, error) {
 	imagesDir := s.GetImagesDir(filenameID)
-	
+
 	if err := s.saveAtomically(imagesDir, filename, ".tmp", data, "image"); err != nil {
 		return "", err
 	}

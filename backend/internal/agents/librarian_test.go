@@ -1094,6 +1094,3 @@ func TestApplyDeltaPlacements_DuplicatePlacementsDeduplicated(t *testing.T) {
 		t.Errorf("expected [[Note 2]] to appear exactly once, but appeared %d times in:\n%s", count, result)
 	}
 }
-
-
-

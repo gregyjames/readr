@@ -96,13 +96,13 @@ type LibrarianRunResult struct {
 }
 
 type LibrarianStatus struct {
-	Enabled         bool       `json:"enabled"`
-	Cron            string     `json:"cron"`
-	MinClusterSize  int        `json:"min_cluster_size"`
-	LastRun         *time.Time `json:"last_run,omitempty"`
-	NextRun         *time.Time `json:"next_run,omitempty"`
-	IsRunning       bool       `json:"is_running"`
-	LastResult      *LibrarianRunResult `json:"last_result,omitempty"`
+	Enabled        bool                `json:"enabled"`
+	Cron           string              `json:"cron"`
+	MinClusterSize int                 `json:"min_cluster_size"`
+	LastRun        *time.Time          `json:"last_run,omitempty"`
+	NextRun        *time.Time          `json:"next_run,omitempty"`
+	IsRunning      bool                `json:"is_running"`
+	LastResult     *LibrarianRunResult `json:"last_result,omitempty"`
 }
 
 type LibrarianRunner struct {
@@ -247,7 +247,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	}
 	r.isRunning = true
 	r.mu.Unlock()
-	
+
 	defer func() {
 		r.mu.Lock()
 		r.isRunning = false
@@ -479,17 +479,17 @@ Instructions:
 	if err != nil {
 		if r.repo != nil {
 			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
-				ArticleID:    0,
-				ArticleTitle: fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
-				Model:        model,
-				Status:       "failed",
-				DurationMs:   time.Since(startTime).Milliseconds(),
-				RetryCount:   0,
-				PromptTokens: len(prompt) / 4,
+				ArticleID:        0,
+				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
+				Model:            model,
+				Status:           "failed",
+				DurationMs:       time.Since(startTime).Milliseconds(),
+				RetryCount:       0,
+				PromptTokens:     len(prompt) / 4,
 				CompletionTokens: 0,
-				TotalTokens:  len(prompt) / 4,
-				ErrorMessage: err.Error(),
-				CreatedAt:    startTime,
+				TotalTokens:      len(prompt) / 4,
+				ErrorMessage:     err.Error(),
+				CreatedAt:        startTime,
 			})
 		}
 		return nil, fmt.Errorf("openrouter request failed: %w", err)
@@ -501,17 +501,17 @@ Instructions:
 		errMsg := fmt.Sprintf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
 		if r.repo != nil {
 			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
-				ArticleID:    0,
-				ArticleTitle: fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
-				Model:        model,
-				Status:       "failed",
-				DurationMs:   time.Since(startTime).Milliseconds(),
-				RetryCount:   0,
-				PromptTokens: len(prompt) / 4,
+				ArticleID:        0,
+				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
+				Model:            model,
+				Status:           "failed",
+				DurationMs:       time.Since(startTime).Milliseconds(),
+				RetryCount:       0,
+				PromptTokens:     len(prompt) / 4,
 				CompletionTokens: 0,
-				TotalTokens:  len(prompt) / 4,
-				ErrorMessage: errMsg,
-				CreatedAt:    startTime,
+				TotalTokens:      len(prompt) / 4,
+				ErrorMessage:     errMsg,
+				CreatedAt:        startTime,
 			})
 		}
 		return nil, fmt.Errorf("%s", errMsg)
