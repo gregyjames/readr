@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"example.com/backend/internal/repository"
@@ -25,7 +26,7 @@ func setupTestDBAndOrganizer(t *testing.T) (*gorm.DB, *VaultOrganizer, string) {
 	if err != nil {
 		t.Fatalf("failed to initialize gorm: %v", err)
 	}
-	if err := db.AutoMigrate(&repository.GormArticle{}); err != nil {
+	if err := db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}); err != nil {
 		t.Fatalf("failed to automigrate: %v", err)
 	}
 
@@ -212,5 +213,44 @@ func TestVaultOrganizer_CleanEmptyFolders(t *testing.T) {
 	// Non-empty dir should still exist
 	if _, err := os.Stat(nonEmptyDir); err != nil {
 		t.Errorf("expected %s to exist: %v", nonEmptyDir, err)
+	}
+}
+
+func TestVaultOrganizer_UpdateMasterIndex(t *testing.T) {
+	db, organizer, dataDir := setupTestDBAndOrganizer(t)
+	ctx := context.Background()
+
+	// Seed 2 MOCs and some member links
+	mocs := []repository.GormArticle{
+		{ID: 101, Title: "MOC - Artificial Intelligence", Article: "/articles/Artificial Intelligence/MOC - Artificial Intelligence.md", Tags: "moc, ai"},
+		{ID: 102, Title: "MOC - Distributed Systems", Article: "/articles/Distributed Systems/MOC - Distributed Systems.md", Tags: "moc, distributed-systems"},
+	}
+	for _, m := range mocs {
+		db.Create(&m)
+	}
+
+	db.Create(&repository.GormArticleLink{ID: 1, SourceID: 101, TargetID: 1})
+	db.Create(&repository.GormArticleLink{ID: 2, SourceID: 101, TargetID: 2})
+	db.Create(&repository.GormArticleLink{ID: 3, SourceID: 102, TargetID: 3})
+
+	if err := organizer.UpdateMasterIndex(ctx); err != nil {
+		t.Fatalf("UpdateMasterIndex failed: %v", err)
+	}
+
+	indexPath := filepath.Join(dataDir, "articles", "index.md")
+	contentBytes, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("failed to read index.md: %v", err)
+	}
+	content := string(contentBytes)
+
+	if !strings.Contains(content, "# Vault Index") {
+		t.Errorf("expected '# Vault Index' header in index.md")
+	}
+	if !strings.Contains(content, "[[MOC - Artificial Intelligence]] — 2 notes") {
+		t.Errorf("expected '[[MOC - Artificial Intelligence]] — 2 notes' in index.md, got:\n%s", content)
+	}
+	if !strings.Contains(content, "[[MOC - Distributed Systems]] — 1 notes") {
+		t.Errorf("expected '[[MOC - Distributed Systems]] — 1 notes' in index.md, got:\n%s", content)
 	}
 }

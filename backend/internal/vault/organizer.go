@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
@@ -123,5 +124,70 @@ func (o *VaultOrganizer) CleanEmptyFolders() error {
 			}
 		}
 	}
+	return nil
+}
+
+// UpdateMasterIndex writes a master index at data/articles/index.md listing all active Maps of Content.
+func (o *VaultOrganizer) UpdateMasterIndex(ctx context.Context) error {
+	var mocs []repository.GormArticle
+	if err := o.db.WithContext(ctx).
+		Where("deleted_at IS NULL").
+		Where("title LIKE 'MOC - %' OR title LIKE 'MOC %' OR title LIKE 'MOC:%' OR tags LIKE '%moc%'").
+		Order("title ASC").
+		Find(&mocs).Error; err != nil {
+		return fmt.Errorf("failed to query MOC articles: %w", err)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("---\n")
+	sb.WriteString("type: Index\n")
+	sb.WriteString("title: Vault Index\n")
+	sb.WriteString("generated:\n")
+	sb.WriteString("  by: agent/readr-librarian\n")
+	sb.WriteString(fmt.Sprintf("  at: %s\n", time.Now().UTC().Format(time.RFC3339)))
+	sb.WriteString("---\n\n")
+	sb.WriteString("# Vault Index\n\n")
+	sb.WriteString("Master index of all Maps of Content (MOCs) across the knowledge vault.\n\n")
+	sb.WriteString("## Maps of Content\n\n")
+
+	if len(mocs) == 0 {
+		sb.WriteString("*No Maps of Content generated yet.*\n")
+	} else {
+		for _, moc := range mocs {
+			title := moc.Title
+			fileBase := strings.TrimSuffix(filepath.Base(moc.Article), ".md")
+			linkTitle := title
+			if fileBase != "" && fileBase != "." {
+				linkTitle = fileBase
+			}
+
+			// Count member links if possible
+			var memberCount int64
+			o.db.Table("article_links").Where("source_id = ?", moc.ID).Count(&memberCount)
+
+			if memberCount > 0 {
+				sb.WriteString(fmt.Sprintf("- [[%s]] — %d notes\n", linkTitle, memberCount))
+			} else {
+				sb.WriteString(fmt.Sprintf("- [[%s]]\n", linkTitle))
+			}
+		}
+	}
+
+	sb.WriteString("\n---\n*Automatically maintained by Readr Librarian.*\n")
+
+	articlesDir := filepath.Join(o.dataDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0755)
+	indexPath := filepath.Join(articlesDir, "index.md")
+	tmpPath := filepath.Join(articlesDir, "index.md.tmp")
+
+	if err := os.WriteFile(tmpPath, []byte(sb.String()), 0644); err != nil {
+		return fmt.Errorf("failed to write index.md tmp file: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, indexPath); err != nil {
+		return fmt.Errorf("failed to replace index.md: %w", err)
+	}
+
+	o.logger.Info("Updated master vault index", zap.String("path", indexPath), zap.Int("moc_count", len(mocs)))
 	return nil
 }

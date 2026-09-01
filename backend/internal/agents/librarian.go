@@ -355,6 +355,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	}
 
 	_ = r.organizer.CleanEmptyFolders()
+	_ = r.organizer.UpdateMasterIndex(ctx)
 
 	if len(result.Errors) > 0 {
 		if result.CreatedMOCs == 0 && result.UpdatedMOCs == 0 {
