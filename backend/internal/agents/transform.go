@@ -119,12 +119,34 @@ func mergeArticleTags(existingTags string, aiTags []string) []string {
 	return repository.SanitizeObsidianTags(allRaw)
 }
 
-func serializeOKFMetadata(frontmatter *OKFFrontmatterResponse, mergedTags []string) (string, *OKFMetadata, error) {
+func extractSourceURLFromFrontmatter(frontmatterStr string) string {
+	if strings.TrimSpace(frontmatterStr) == "" {
+		return ""
+	}
+	cleanYAML := strings.TrimPrefix(frontmatterStr, "---\n")
+	cleanYAML = strings.TrimSuffix(cleanYAML, "---\n")
+	cleanYAML = strings.TrimSuffix(cleanYAML, "---")
+	var rawMap map[string]interface{}
+	if err := yaml.Unmarshal([]byte(cleanYAML), &rawMap); err == nil && rawMap != nil {
+		if s, ok := rawMap["source"].(string); ok && strings.TrimSpace(s) != "" {
+			return strings.TrimSpace(s)
+		}
+		if u, ok := rawMap["url"].(string); ok && strings.TrimSpace(u) != "" {
+			return strings.TrimSpace(u)
+		}
+		if r, ok := rawMap["resource"].(string); ok && strings.TrimSpace(r) != "" {
+			return strings.TrimSpace(r)
+		}
+	}
+	return ""
+}
+
+func serializeOKFMetadata(frontmatter *OKFFrontmatterResponse, mergedTags []string, sourceURL string) (string, *OKFMetadata, error) {
 	metadata := OKFMetadata{
 		Type:        frontmatter.Type,
 		Title:       frontmatter.Title,
 		Description: frontmatter.Description,
-		Resource:    frontmatter.Resource,
+		Source:      strings.TrimSpace(sourceURL),
 		Tags:        mergedTags,
 		Generated: OKFGeneratedInfo{
 			By: "agent/readr-pipeline",

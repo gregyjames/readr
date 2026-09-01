@@ -106,9 +106,15 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		}
 	}
 
+	sourceURL := extractSourceURLFromFrontmatter(frontmatter)
+	if sourceURL == "" && articleRecord != nil {
+		sourceURL = articleRecord.SourceURL
+	}
+
 	p.logger.Info("Starting unified agent pipeline",
 		zap.Int64("article_id", job.ArticleID),
 		zap.String("title", articleTitle),
+		zap.String("source_url", sourceURL),
 		zap.Bool("summarizer", job.Settings.Summarizer),
 		zap.Bool("enricher", job.Settings.Enricher),
 		zap.Bool("linker", job.Settings.Linker),
@@ -354,7 +360,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		}
 		mergedTags := mergeArticleTags(existingTagsStr, pipelineResp.Frontmatter.Tags)
 
-		yamlHeader, metadata, err := serializeOKFMetadata(pipelineResp.Frontmatter, mergedTags)
+		yamlHeader, metadata, err := serializeOKFMetadata(pipelineResp.Frontmatter, mergedTags, sourceURL)
 		if err != nil {
 			p.logger.Error("Pipeline failed to serialize YAML frontmatter", zap.Error(err))
 			return

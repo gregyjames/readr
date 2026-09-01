@@ -63,7 +63,7 @@ func TestProcessPipeline_AllEnabled(t *testing.T) {
 
 	// Create source article in DB, FTS, and file
 	sourcePath := filepath.Join(articlesDir, "401.md")
-	initialContent := "---\ntitle: Old Title\n---\n\nCloud computing relies heavily on Kubernetes Guide for container orchestration."
+	initialContent := "---\ntitle: Old Title\nsource: https://example.com/cloud\n---\n\nCloud computing relies heavily on Kubernetes Guide for container orchestration."
 	if err := os.WriteFile(sourcePath, []byte(initialContent), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,6 @@ func TestProcessPipeline_AllEnabled(t *testing.T) {
 								"type": "Reference Article",
 								"title": "Cloud Native Overview",
 								"description": "A guide to modern cloud computing architecture.",
-								"resource": "https://example.com/cloud",
 								"tags": ["Cloud", "Kubernetes", "DevOps"]
 							},
 							"links_to_inject": [
@@ -217,8 +216,8 @@ func TestProcessPipeline_AllEnabled(t *testing.T) {
 	if parsed.Description != "A guide to modern cloud computing architecture." {
 		t.Errorf("expected description, got %q", parsed.Description)
 	}
-	if parsed.Resource != "https://example.com/cloud" {
-		t.Errorf("expected resource, got %q", parsed.Resource)
+	if parsed.Source != "https://example.com/cloud" {
+		t.Errorf("expected source, got %q", parsed.Source)
 	}
 	expectedTags := []string{"cloud", "kubernetes", "devops"}
 	if len(parsed.Tags) != len(expectedTags) {
@@ -425,7 +424,6 @@ func TestProcessPipeline_EnricherAndLinkerOnly(t *testing.T) {
 								"type": "Tutorial",
 								"title": "Go Guide",
 								"description": "A tutorial for Go fundamentals.",
-								"resource": "",
 								"tags": ["Golang", "Basics"]
 							},
 							"links_to_inject": [
@@ -738,7 +736,7 @@ func TestProcessPipeline_InjectsRelevantTagsOnly(t *testing.T) {
 			"choices": []map[string]interface{}{
 				{
 					"message": map[string]interface{}{
-						"content": `{"frontmatter":{"type":"Reference","title":"Paxos Algorithm","description":"Paxos summary","resource":"","tags":["consensus","distributed-systems"]}}`,
+						"content": `{"frontmatter":{"type":"Reference","title":"Paxos Algorithm","description":"Paxos summary","tags":["consensus","distributed-systems"]}}`,
 					},
 				},
 			},
@@ -798,7 +796,7 @@ func TestProcessPipeline_OmitsTagsSectionWhenNoCandidatesMatch(t *testing.T) {
 			"choices": []map[string]interface{}{
 				{
 					"message": map[string]interface{}{
-						"content": `{"frontmatter":{"type":"Essay","title":"Quantum Entanglement","description":"Physics overview","resource":"","tags":["quantum-physics"]}}`,
+						"content": `{"frontmatter":{"type":"Essay","title":"Quantum Entanglement","description":"Physics overview","tags":["quantum-physics"]}}`,
 					},
 				},
 			},
@@ -824,5 +822,69 @@ func TestProcessPipeline_OmitsTagsSectionWhenNoCandidatesMatch(t *testing.T) {
 	// Verify no relevant vault tags section is injected when 0 candidates match
 	if strings.Contains(promptReceived, "Relevant Vault Tags:") || strings.Contains(promptReceived, "Existing Vault Tags:") {
 		t.Errorf("expected NO vault tags section in prompt for novel topic, got:\n%s", promptReceived)
+	}
+}
+
+func TestProcessPipeline_PreservesUserProvidedSourceURLInFrontmatter(t *testing.T) {
+	tempDir, db, repo := setupTestPipelineEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+	articleFile := filepath.Join(articlesDir, "Go Microservices.md")
+
+	initialMarkdown := `---
+title: "Go Microservices"
+source: "https://example.com/go-microservices"
+tags: [golang]
+cover: ""
+saved: 2026-09-01
+---
+
+# Go Microservices
+Architecture content here.`
+
+	_ = os.WriteFile(articleFile, []byte(initialMarkdown), 0644)
+	db.Create(&repository.GormArticle{
+		ID:      701,
+		Title:   "Go Microservices",
+		Article: "/articles/Go Microservices.md",
+		Tags:    "golang",
+	})
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]interface{}{
+						"content": `{"frontmatter":{"type":"Reference Article","title":"Go Microservices Architecture","description":"Guide to Go microservices","tags":["golang","microservices"]}}`,
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	pool := &AgentPool{
+		logger:        zap.NewNop(),
+		db:            db,
+		repo:          repo,
+		dataDirectory: tempDir,
+	}
+	job := Job{
+		ArticleID: 701,
+		Type:      JobTypePipeline,
+		Settings:  PipelineSettings{Enricher: true},
+	}
+
+	pool.processPipelineWithURL(job, mockServer.URL)
+
+	// Verify output markdown file preserved the user's source URL in YAML frontmatter
+	updatedBytes, err := os.ReadFile(articleFile)
+	if err != nil {
+		t.Fatalf("failed to read updated file: %v", err)
+	}
+	updatedContent := string(updatedBytes)
+
+	if !strings.Contains(updatedContent, "source: https://example.com/go-microservices") {
+		t.Errorf("expected updated frontmatter to contain 'source: https://example.com/go-microservices', got:\n%s", updatedContent)
 	}
 }

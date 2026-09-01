@@ -32,9 +32,6 @@ func buildPipelineSchema(settings PipelineSettings) (map[string]jsonSchemaField,
 				"description": {
 					Type: "string",
 				},
-				"resource": {
-					Type: "string",
-				},
 				"tags": {
 					Type: "array",
 					Items: &jsonSchemaField{
@@ -42,7 +39,7 @@ func buildPipelineSchema(settings PipelineSettings) (map[string]jsonSchemaField,
 					},
 				},
 			},
-			Required:             []string{"type", "title", "description", "resource", "tags"},
+			Required:             []string{"type", "title", "description", "tags"},
 			AdditionalProperties: false,
 		}
 		required = append(required, "frontmatter")
