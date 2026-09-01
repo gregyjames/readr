@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -146,16 +147,8 @@ DO NOT OVERWRITE THIS TEXT.
 				{
 					"message": map[string]string{
 						"content": `{
-							"topic_title": "Distributed Systems",
-							"executive_summary": "Updated executive overview of distributed consensus.",
-							"sections": [
-								{
-									"title": "Consensus & Protocols",
-									"items": [
-										{"article_id": 1, "context_note": "Primary leader election protocol."},
-										{"article_id": 2, "context_note": "Secondary node replication."}
-									]
-								}
+							"placements": [
+								{"article_id": 2, "target_section": "Consensus", "context_note": "Secondary node replication."}
 							]
 						}`,
 					},
@@ -401,4 +394,183 @@ Overview of distributed systems.
 		t.Errorf("expected 0 HTTP calls, got %d", httpCalls)
 	}
 }
+
+func TestLibrarian_DeltaClassification_OnlySendsNewNotes(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	existingMOCContent := `---
+type: moc
+title: MOC - Distributed Systems
+tags:
+  - moc
+  - distributed-systems
+---
+
+# MOC - Distributed Systems
+
+## Executive Overview
+Overview of distributed systems.
+
+## Core Concepts
+- [[Distributed Node 1|Distributed Node 1]] — Node 1 description
+- [[Distributed Node 2|Distributed Node 2]] — Node 2 description
+
+## Infrastructure
+- [[Distributed Node 3|Distributed Node 3]] — Node 3 description
+- [[Distributed Node 4|Distributed Node 4]] — Node 4 description
+- [[Distributed Node 5|Distributed Node 5]] — Node 5 description
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+Custom user research notes that must never be deleted.
+`
+	mocPath := filepath.Join(articlesDir, "MOC - Distributed Systems.md")
+	_ = os.WriteFile(mocPath, []byte(existingMOCContent), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      100,
+		Title:   "MOC - Distributed Systems",
+		Tags:    "moc, distributed-systems",
+		Article: "/articles/MOC - Distributed Systems.md",
+	})
+
+	for i := 1; i <= 5; i++ {
+		title := fmt.Sprintf("Distributed Node %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "distributed-systems",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	// Add 1 new article (ID 6, Title: "Raft Consensus Protocol", Tags: "distributed-systems")
+	filePath6 := filepath.Join(articlesDir, "Raft Consensus Protocol.md")
+	_ = os.WriteFile(filePath6, []byte("# Raft Consensus Protocol\nContent"), 0644)
+	db.Create(&repository.GormArticle{
+		ID:      6,
+		Title:   "Raft Consensus Protocol",
+		Tags:    "distributed-systems",
+		Article: "/articles/Raft Consensus Protocol.md",
+	})
+
+	httpCalls := 0
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpCalls++
+		var reqBody struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+			ResponseFormat struct {
+				Type       string `json:"type"`
+				JSONSchema struct {
+					Name string `json:"name"`
+				} `json:"json_schema"`
+			} `json:"response_format"`
+		}
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read request body: %v", err)
+		}
+		if err := json.Unmarshal(bodyBytes, &reqBody); err != nil {
+			t.Fatalf("failed to unmarshal request body: %v", err)
+		}
+
+		if reqBody.ResponseFormat.JSONSchema.Name != "moc_delta_placement" {
+			t.Errorf("expected schema name 'moc_delta_placement', got %q", reqBody.ResponseFormat.JSONSchema.Name)
+		}
+
+		if len(reqBody.Messages) == 0 {
+			t.Fatalf("expected at least 1 message in prompt")
+		}
+		promptContent := reqBody.Messages[0].Content
+
+		// Request prompt contains "Raft Consensus Protocol" (ID 6).
+		if !strings.Contains(promptContent, "Raft Consensus Protocol") {
+			t.Errorf("expected prompt to contain 'Raft Consensus Protocol', got: %s", promptContent)
+		}
+
+		// Request prompt does NOT contain full candidate list of existing nodes 1-5.
+		for i := 1; i <= 5; i++ {
+			nodeTitle := fmt.Sprintf("Distributed Node %d", i)
+			if strings.Contains(promptContent, nodeTitle) {
+				t.Errorf("expected prompt NOT to contain existing node %q, but found in prompt: %s", nodeTitle, promptContent)
+			}
+		}
+
+		// Request prompt contains existing section names: "Core Concepts", "Infrastructure".
+		if !strings.Contains(promptContent, "Core Concepts") {
+			t.Errorf("expected prompt to contain section 'Core Concepts', got: %s", promptContent)
+		}
+		if !strings.Contains(promptContent, "Infrastructure") {
+			t.Errorf("expected prompt to contain section 'Infrastructure', got: %s", promptContent)
+		}
+
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{"placements": [{"article_id": 6, "target_section": "Core Concepts", "context_note": "Raft consensus implementation."}]}`,
+					},
+				},
+			},
+			"usage": map[string]int{
+				"prompt_tokens":     150,
+				"completion_tokens": 40,
+				"total_tokens":      190,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.UpdatedMOCs != 1 {
+		t.Errorf("expected 1 UpdatedMOC, got %d (result: %+v)", result.UpdatedMOCs, result)
+	}
+	if httpCalls != 1 {
+		t.Errorf("expected 1 HTTP call, got %d", httpCalls)
+	}
+
+	updatedBytes, err := os.ReadFile(mocPath)
+	if err != nil {
+		t.Fatalf("failed to read updated MOC: %v", err)
+	}
+	updatedContent := string(updatedBytes)
+
+	// Verify inserting - [[Raft Consensus Protocol]] - Raft consensus implementation. under ## Core Concepts
+	if !strings.Contains(updatedContent, "- [[Raft Consensus Protocol]] - Raft consensus implementation.") {
+		t.Errorf("expected updated MOC to contain '- [[Raft Consensus Protocol]] - Raft consensus implementation.', got:\n%s", updatedContent)
+	}
+
+	coreConceptsIdx := strings.Index(updatedContent, "## Core Concepts")
+	infraIdx := strings.Index(updatedContent, "## Infrastructure")
+	raftIdx := strings.Index(updatedContent, "[[Raft Consensus Protocol]]")
+
+	if coreConceptsIdx == -1 || infraIdx == -1 || raftIdx == -1 {
+		t.Fatalf("missing sections in updated MOC:\n%s", updatedContent)
+	}
+	if raftIdx < coreConceptsIdx || raftIdx > infraIdx {
+		t.Errorf("expected Raft Consensus Protocol to be between ## Core Concepts and ## Infrastructure")
+	}
+
+	// Verify user notes in ## Notes & Synthesis remain intact
+	if !strings.Contains(updatedContent, "Custom user research notes that must never be deleted.") {
+		t.Errorf("expected user notes in ## Notes & Synthesis to remain intact, got:\n%s", updatedContent)
+	}
+}
+
 

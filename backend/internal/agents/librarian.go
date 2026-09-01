@@ -38,6 +38,16 @@ type MOCSynthesisResponse struct {
 	Sections         []MOCSection `json:"sections"`
 }
 
+type MOCDeltaPlacement struct {
+	ArticleID     int64  `json:"article_id"`
+	TargetSection string `json:"target_section"`
+	ContextNote   string `json:"context_note"`
+}
+
+type MOCDeltaResponse struct {
+	Placements []MOCDeltaPlacement `json:"placements"`
+}
+
 type ClusterCandidate struct {
 	Tag         string
 	Articles    []repository.ArticleRecord
@@ -205,7 +215,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	}
 	r.isRunning = true
 	r.mu.Unlock()
-
+	
 	defer func() {
 		r.mu.Lock()
 		r.isRunning = false
@@ -241,7 +251,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 
 	for _, cluster := range clusters {
 		if cluster.ExistingMOC != nil {
-			unlinked, _, err := r.getUnlinkedArticles(cluster)
+			unlinked, existingContent, err := r.getUnlinkedArticles(cluster)
 			if err != nil {
 				r.logger.Error("Failed to check unlinked articles for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
 				result.Errors = append(result.Errors, fmt.Sprintf("unlinked %s: %v", cluster.Tag, err))
@@ -251,6 +261,22 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				r.logger.Info(fmt.Sprintf("MOC cluster %s is up-to-date (0 new notes), skipping LLM call", cluster.Tag), zap.String("tag", cluster.Tag))
 				continue
 			}
+
+			deltaResp, err := r.synthesizeDeltaCluster(ctx, cluster, unlinked, existingContent, apiKey, model, apiURL)
+			if err != nil {
+				r.logger.Error("Failed to synthesize delta MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
+				result.Errors = append(result.Errors, fmt.Sprintf("tag %s: %v", cluster.Tag, err))
+				continue
+			}
+
+			if err := r.saveDeltaMOC(ctx, cluster, deltaResp, existingContent); err != nil {
+				r.logger.Error("Failed to save delta MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
+				result.Errors = append(result.Errors, fmt.Sprintf("save delta %s: %v", cluster.Tag, err))
+				continue
+			}
+
+			result.UpdatedMOCs++
+			continue
 		}
 
 		synthesis, err := r.synthesizeCluster(ctx, cluster, apiKey, model, apiURL)
@@ -266,11 +292,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 			continue
 		}
 
-		if cluster.ExistingMOC != nil {
-			result.UpdatedMOCs++
-		} else {
-			result.CreatedMOCs++
-		}
+		result.CreatedMOCs++
 	}
 
 	result.ExecutionTimeMs = time.Since(start).Milliseconds()
@@ -629,6 +651,395 @@ func (r *LibrarianRunner) assembleMOCMarkdown(synthesis *MOCSynthesisResponse, m
 	sb.WriteString(userNotesContent + "\n")
 
 	return sb.String()
+}
+
+func extractMOCSections(mocContent string) []string {
+	var sections []string
+	lines := strings.Split(mocContent, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") {
+			sec := strings.TrimSpace(strings.TrimPrefix(trimmed, "## "))
+			if sec != "" && !strings.EqualFold(sec, "Notes & Synthesis") && !strings.EqualFold(sec, "Executive Overview") && !strings.EqualFold(sec, "Curated Index") {
+				sections = append(sections, sec)
+			}
+		} else if strings.HasPrefix(trimmed, "### ") {
+			sec := strings.TrimSpace(strings.TrimPrefix(trimmed, "### "))
+			if sec != "" && !strings.EqualFold(sec, "Notes & Synthesis") && !strings.EqualFold(sec, "Executive Overview") && !strings.EqualFold(sec, "Curated Index") {
+				sections = append(sections, sec)
+			}
+		}
+	}
+	return sections
+}
+
+func (r *LibrarianRunner) synthesizeDeltaCluster(ctx context.Context, cluster ClusterCandidate, unlinked []repository.ArticleRecord, existingContent string, apiKey, model, apiURL string) (*MOCDeltaResponse, error) {
+	sections := extractMOCSections(existingContent)
+	var sectionsList strings.Builder
+	for _, sec := range sections {
+		sectionsList.WriteString(fmt.Sprintf("- %s\n", sec))
+	}
+
+	var newArticlesList strings.Builder
+	for _, a := range unlinked {
+		newArticlesList.WriteString(fmt.Sprintf("- ID: %d, Title: %s\n", a.ID, a.Title))
+	}
+
+	prompt := fmt.Sprintf(`You are a Knowledge Base Librarian categorizing new notes into an existing Map of Content (MOC) for topic: "%s".
+
+Existing MOC Sections:
+%s
+New Articles to Place:
+%s
+Instructions:
+1. For each new article, select the most appropriate existing section from the list above.
+2. Provide a 1-sentence contextual summary (context_note) explaining how it fits into that section.
+3. Output strictly adhering to the JSON schema. Use professional plain text without emojis.`, cluster.Tag, sectionsList.String(), newArticlesList.String())
+
+	schema := map[string]interface{}{
+		"type": "json_schema",
+		"json_schema": map[string]interface{}{
+			"name":   "moc_delta_placement",
+			"strict": true,
+			"schema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"placements": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"article_id": map[string]interface{}{
+									"type": "integer",
+								},
+								"target_section": map[string]interface{}{
+									"type": "string",
+								},
+								"context_note": map[string]interface{}{
+									"type": "string",
+								},
+							},
+							"required":             []string{"article_id", "target_section", "context_note"},
+							"additionalProperties": false,
+						},
+					},
+				},
+				"required":             []string{"placements"},
+				"additionalProperties": false,
+			},
+		},
+	}
+
+	reqBody := map[string]interface{}{
+		"model": model,
+		"messages": []map[string]string{
+			{
+				"role":    "user",
+				"content": prompt,
+			},
+		},
+		"response_format": schema,
+		"temperature":     0.2,
+	}
+
+	reqBytes, _ := json.Marshal(reqBody)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(reqBytes))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("HTTP-Referer", "https://readr.app")
+	httpReq.Header.Set("X-Title", "Readr Librarian MOC Synthesizer")
+
+	startTime := time.Now()
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		if r.repo != nil {
+			mocID := int64(0)
+			if cluster.ExistingMOC != nil {
+				mocID = cluster.ExistingMOC.ID
+			}
+			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
+				ArticleID:        mocID,
+				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
+				Model:            model,
+				Status:           "failed",
+				DurationMs:       time.Since(startTime).Milliseconds(),
+				RetryCount:       0,
+				PromptTokens:     len(prompt) / 4,
+				CompletionTokens: 0,
+				TotalTokens:      len(prompt) / 4,
+				ErrorMessage:     err.Error(),
+				CreatedAt:        startTime,
+			})
+		}
+		return nil, fmt.Errorf("openrouter request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		errMsg := fmt.Sprintf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		if r.repo != nil {
+			mocID := int64(0)
+			if cluster.ExistingMOC != nil {
+				mocID = cluster.ExistingMOC.ID
+			}
+			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
+				ArticleID:        mocID,
+				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
+				Model:            model,
+				Status:           "failed",
+				DurationMs:       time.Since(startTime).Milliseconds(),
+				RetryCount:       0,
+				PromptTokens:     len(prompt) / 4,
+				CompletionTokens: 0,
+				TotalTokens:      len(prompt) / 4,
+				ErrorMessage:     errMsg,
+				CreatedAt:        startTime,
+			})
+		}
+		return nil, fmt.Errorf("%s", errMsg)
+	}
+
+	var chatResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage *struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil || len(chatResp.Choices) == 0 {
+		return nil, fmt.Errorf("failed to parse openrouter response: %w", err)
+	}
+
+	rawContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	var deltaResp MOCDeltaResponse
+	if err := json.Unmarshal([]byte(rawContent), &deltaResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal structured delta JSON: %w (raw: %s)", err, rawContent)
+	}
+
+	promptTokens := 0
+	completionTokens := 0
+	totalTokens := 0
+	if chatResp.Usage != nil {
+		promptTokens = chatResp.Usage.PromptTokens
+		completionTokens = chatResp.Usage.CompletionTokens
+		totalTokens = chatResp.Usage.TotalTokens
+		if totalTokens == 0 {
+			totalTokens = promptTokens + completionTokens
+		}
+	} else {
+		promptTokens = len(prompt) / 4
+		completionTokens = len(rawContent) / 4
+		totalTokens = promptTokens + completionTokens
+	}
+
+	mocID := int64(0)
+	if cluster.ExistingMOC != nil {
+		mocID = cluster.ExistingMOC.ID
+	}
+
+	if r.repo != nil {
+		_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
+			ArticleID:        mocID,
+			ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
+			Model:            model,
+			Status:           "success",
+			DurationMs:       time.Since(startTime).Milliseconds(),
+			RetryCount:       0,
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      totalTokens,
+			CreatedAt:        startTime,
+		})
+	}
+
+	return &deltaResp, nil
+}
+
+func applyDeltaPlacements(existingContent string, placements []MOCDeltaPlacement, articleTitleMap map[int64]string) string {
+	if len(placements) == 0 {
+		return existingContent
+	}
+
+	type sectionPlacements struct {
+		section string
+		items   []MOCDeltaPlacement
+	}
+	var grouped []sectionPlacements
+	sectionIdx := make(map[string]int)
+
+	for _, p := range placements {
+		sec := strings.TrimSpace(p.TargetSection)
+		if sec == "" {
+			sec = "Uncategorized"
+		}
+		normSec := strings.ToLower(sec)
+		if idx, exists := sectionIdx[normSec]; exists {
+			grouped[idx].items = append(grouped[idx].items, p)
+		} else {
+			sectionIdx[normSec] = len(grouped)
+			grouped = append(grouped, sectionPlacements{
+				section: sec,
+				items:   []MOCDeltaPlacement{p},
+			})
+		}
+	}
+
+	lines := strings.Split(existingContent, "\n")
+
+	for _, g := range grouped {
+		headerIdx := -1
+		for i, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "#") {
+				headerText := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+				if strings.EqualFold(headerText, g.section) {
+					headerIdx = i
+					break
+				}
+			}
+		}
+
+		var itemLines []string
+		for _, item := range g.items {
+			title, ok := articleTitleMap[item.ArticleID]
+			if !ok {
+				title = fmt.Sprintf("Article %d", item.ArticleID)
+			}
+			note := strings.TrimSpace(item.ContextNote)
+			if note != "" {
+				itemLines = append(itemLines, fmt.Sprintf("- [[%s]] - %s", title, note))
+			} else {
+				itemLines = append(itemLines, fmt.Sprintf("- [[%s]]", title))
+			}
+		}
+
+		if headerIdx != -1 {
+			nextHeaderIdx := len(lines)
+			for i := headerIdx + 1; i < len(lines); i++ {
+				trimmed := strings.TrimSpace(lines[i])
+				if strings.HasPrefix(trimmed, "#") {
+					nextHeaderIdx = i
+					break
+				}
+			}
+
+			insertIdx := nextHeaderIdx
+			for insertIdx > headerIdx+1 && strings.TrimSpace(lines[insertIdx-1]) == "" {
+				insertIdx--
+			}
+
+			newLines := make([]string, 0, len(lines)+len(itemLines))
+			newLines = append(newLines, lines[:insertIdx]...)
+			newLines = append(newLines, itemLines...)
+			newLines = append(newLines, lines[insertIdx:]...)
+			lines = newLines
+		} else {
+			notesIdx := -1
+			for i, line := range lines {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "#") {
+					headerText := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+					if strings.EqualFold(headerText, "Notes & Synthesis") {
+						notesIdx = i
+						break
+					}
+				}
+			}
+
+			var newSectionLines []string
+			newSectionLines = append(newSectionLines, fmt.Sprintf("## %s", g.section))
+			newSectionLines = append(newSectionLines, itemLines...)
+			newSectionLines = append(newSectionLines, "")
+
+			if notesIdx != -1 {
+				newLines := make([]string, 0, len(lines)+len(newSectionLines))
+				newLines = append(newLines, lines[:notesIdx]...)
+				newLines = append(newLines, newSectionLines...)
+				newLines = append(newLines, lines[notesIdx:]...)
+				lines = newLines
+			} else {
+				lines = append(lines, "")
+				lines = append(lines, newSectionLines...)
+			}
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandidate, deltaResp *MOCDeltaResponse, existingContent string) error {
+	mocTitle := cluster.ExistingMOC.Title
+	if mocTitle == "" {
+		mocTitle = fmt.Sprintf("MOC - %s", strings.Title(strings.ReplaceAll(cluster.Tag, "-", " ")))
+	}
+	articlesDir := filepath.Join(r.dataDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0755)
+
+	targetFilename := fmt.Sprintf("%s.md", mocTitle)
+	filePath := filepath.Join(articlesDir, targetFilename)
+
+	if cluster.ExistingMOC.FilePath != "" {
+		existingPath := filepath.Join(r.dataDir, strings.TrimPrefix(cluster.ExistingMOC.FilePath, "/"))
+		filePath = existingPath
+		targetFilename = filepath.Base(existingPath)
+	}
+
+	allArticles, _ := r.repo.GetAllArticles(ctx)
+	articleTitleMap := make(map[int64]string)
+	for _, a := range allArticles {
+		articleTitleMap[a.ID] = a.Title
+	}
+
+	updatedMarkdown := applyDeltaPlacements(existingContent, deltaResp.Placements, articleTitleMap)
+
+	// Atomic disk write
+	dir := filepath.Dir(filePath)
+	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(filePath)))
+	if err := os.WriteFile(tmpFile, []byte(updatedMarkdown), 0644); err != nil {
+		return fmt.Errorf("failed to write tmp file: %w", err)
+	}
+	if err := os.Rename(tmpFile, filePath); err != nil {
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("failed to rename tmp file: %w", err)
+	}
+
+	// Update DB record if needed
+	var mocRecord repository.GormArticle
+	r.db.WithContext(ctx).First(&mocRecord, cluster.ExistingMOC.ID)
+	if mocRecord.ID > 0 {
+		mocRecord.Article = fmt.Sprintf("/articles/%s", targetFilename)
+		r.db.WithContext(ctx).Save(&mocRecord)
+	}
+
+	// Update article_links
+	for _, p := range deltaResp.Placements {
+		if p.ArticleID > 0 && p.ArticleID != cluster.ExistingMOC.ID {
+			var count int64
+			r.db.WithContext(ctx).Model(&repository.GormArticleLink{}).
+				Where("source_id = ? AND target_id = ?", cluster.ExistingMOC.ID, p.ArticleID).
+				Count(&count)
+			if count == 0 {
+				link := repository.GormArticleLink{
+					SourceID: cluster.ExistingMOC.ID,
+					TargetID: p.ArticleID,
+				}
+				r.db.WithContext(ctx).Create(&link)
+			}
+		}
+	}
+
+	return nil
 }
 
 var reMOCWikilink = regexp.MustCompile(`\[\[([^\]|]+)(?:\|[^\]]*)?\]\]`)
