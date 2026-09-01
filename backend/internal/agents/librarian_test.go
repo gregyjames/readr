@@ -573,4 +573,142 @@ Custom user research notes that must never be deleted.
 	}
 }
 
+func TestLibrarian_DeltaTelemetry_RecordsAccurateTokens(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	existingMOCContent := `---
+type: moc
+title: MOC - Distributed Systems
+tags:
+  - moc
+  - distributed-systems
+---
+
+# MOC - Distributed Systems
+
+## Executive Overview
+Overview of distributed systems.
+
+## Core Concepts
+- [[Distributed Node 1|Distributed Node 1]] — Node 1 description
+- [[Distributed Node 2|Distributed Node 2]] — Node 2 description
+
+## Infrastructure
+- [[Distributed Node 3|Distributed Node 3]] — Node 3 description
+- [[Distributed Node 4|Distributed Node 4]] — Node 4 description
+- [[Distributed Node 5|Distributed Node 5]] — Node 5 description
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+`
+	mocPath := filepath.Join(articlesDir, "MOC - Distributed Systems.md")
+	_ = os.WriteFile(mocPath, []byte(existingMOCContent), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      100,
+		Title:   "MOC - Distributed Systems",
+		Tags:    "moc, distributed-systems",
+		Article: "/articles/MOC - Distributed Systems.md",
+	})
+
+	// 5 existing articles (ID 1-5)
+	for i := 1; i <= 5; i++ {
+		title := fmt.Sprintf("Distributed Node %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "distributed-systems",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	// 2 new articles (ID 6, 7)
+	for i := 6; i <= 7; i++ {
+		title := fmt.Sprintf("Distributed Node %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nNew node content", title)), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "distributed-systems",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(10 * time.Millisecond)
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{"placements": [{"article_id": 6, "target_section": "Core Concepts", "context_note": "Node 6 description."}, {"article_id": 7, "target_section": "Infrastructure", "context_note": "Node 7 description."}]}`,
+					},
+				},
+			},
+			"usage": map[string]int{
+				"prompt_tokens":     180,
+				"completion_tokens": 65,
+				"total_tokens":      245,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"openai/gpt-4o-mini","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error running librarian: %v", err)
+	}
+
+	if result.UpdatedMOCs != 1 {
+		t.Fatalf("expected 1 updated MOC, got %d", result.UpdatedMOCs)
+	}
+
+	summary, recent, err := repo.GetPipelineDiagnostics(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("unexpected diagnostics error: %v", err)
+	}
+
+	if summary.TotalRuns != 1 {
+		t.Errorf("expected 1 total run, got %d", summary.TotalRuns)
+	}
+	if summary.TotalTokensUsed != 245 {
+		t.Errorf("expected 245 total tokens used, got %d", summary.TotalTokensUsed)
+	}
+
+	if len(recent) != 1 {
+		t.Fatalf("expected 1 recent pipeline metric, got %d", len(recent))
+	}
+
+	metric := recent[0]
+	if metric.Status != "success" {
+		t.Errorf("expected metric Status 'success', got %q", metric.Status)
+	}
+	if metric.PromptTokens != 180 {
+		t.Errorf("expected PromptTokens 180, got %d", metric.PromptTokens)
+	}
+	if metric.CompletionTokens != 65 {
+		t.Errorf("expected CompletionTokens 65, got %d", metric.CompletionTokens)
+	}
+	if metric.TotalTokens != 245 {
+		t.Errorf("expected TotalTokens 245, got %d", metric.TotalTokens)
+	}
+	if !strings.HasPrefix(metric.ArticleTitle, "[Librarian] MOC - ") {
+		t.Errorf("expected ArticleTitle to start with '[Librarian] MOC - ', got %q", metric.ArticleTitle)
+	}
+	if metric.DurationMs <= 0 {
+		t.Errorf("expected DurationMs > 0, got %d", metric.DurationMs)
+	}
+}
+
+
 
