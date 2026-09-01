@@ -253,6 +253,18 @@ func TestVaultOrganizer_UpdateMasterIndex(t *testing.T) {
 	if !strings.Contains(content, "[[MOC - Distributed Systems]] — 1 notes") {
 		t.Errorf("expected '[[MOC - Distributed Systems]] — 1 notes' in index.md, got:\n%s", content)
 	}
+
+	// Repeated run with unchanged MOCs must produce byte-for-byte identical content
+	if err := organizer.UpdateMasterIndex(ctx); err != nil {
+		t.Fatalf("second UpdateMasterIndex failed: %v", err)
+	}
+	contentBytes2, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("failed to read index.md on second pass: %v", err)
+	}
+	if string(contentBytes) != string(contentBytes2) {
+		t.Errorf("expected deterministic index.md across repeated runs, but content differed:\nPass 1:\n%s\nPass 2:\n%s", content, string(contentBytes2))
+	}
 }
 
 func TestVaultOrganizer_FileArticle_RollbackOnDBError(t *testing.T) {

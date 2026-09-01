@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
@@ -151,7 +150,6 @@ func (o *VaultOrganizer) UpdateMasterIndex(ctx context.Context) error {
 	sb.WriteString("title: Vault Index\n")
 	sb.WriteString("generated:\n")
 	sb.WriteString("  by: agent/readr-librarian\n")
-	sb.WriteString(fmt.Sprintf("  at: %s\n", time.Now().UTC().Format(time.RFC3339)))
 	sb.WriteString("---\n\n")
 	sb.WriteString("# Vault Index\n\n")
 	sb.WriteString("Master index of all Maps of Content (MOCs) across the knowledge vault.\n\n")
@@ -185,9 +183,15 @@ func (o *VaultOrganizer) UpdateMasterIndex(ctx context.Context) error {
 	articlesDir := filepath.Join(o.dataDir, "articles")
 	_ = os.MkdirAll(articlesDir, 0755)
 	indexPath := filepath.Join(articlesDir, "index.md")
-	tmpPath := filepath.Join(articlesDir, "index.md.tmp")
+	newContent := sb.String()
 
-	if err := os.WriteFile(tmpPath, []byte(sb.String()), 0644); err != nil {
+	// If existing index is identical, skip rewrite
+	if existingBytes, err := os.ReadFile(indexPath); err == nil && string(existingBytes) == newContent {
+		return nil
+	}
+
+	tmpPath := filepath.Join(articlesDir, "index.md.tmp")
+	if err := os.WriteFile(tmpPath, []byte(newContent), 0644); err != nil {
 		return fmt.Errorf("failed to write index.md tmp file: %w", err)
 	}
 
