@@ -15,12 +15,41 @@ import (
 	"sync"
 	"time"
 
+	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
+
+type MOCArticleInfo struct {
+	ID       int64
+	Title    string
+	FilePath string
+}
+
+func formatMOCArticleWikilink(info MOCArticleInfo) string {
+	fileBase := ""
+	if info.FilePath != "" {
+		fileBase = strings.TrimSuffix(filepath.Base(info.FilePath), ".md")
+	}
+	if fileBase == "" || fileBase == fmt.Sprint(info.ID) {
+		fileBase = ingest.SanitizeTitleFilename(info.Title, info.ID)
+	}
+
+	cleanTitle := strings.TrimSpace(info.Title)
+	if cleanTitle == "" {
+		cleanTitle = fileBase
+	}
+
+	if fileBase == cleanTitle {
+		return fmt.Sprintf("[[%s]]", fileBase)
+	}
+
+	displayTitle := strings.ReplaceAll(cleanTitle, "|", "—")
+	return fmt.Sprintf("[[%s|%s]]", fileBase, displayTitle)
+}
 
 type MOCItem struct {
 	ArticleID   int64  `json:"article_id"`
@@ -254,6 +283,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 			unlinked, existingContent, err := r.getUnlinkedArticles(cluster)
 			if err != nil {
 				r.logger.Error("Failed to check unlinked articles for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
+				result.Status = "partial (some clusters failed)"
 				result.Errors = append(result.Errors, fmt.Sprintf("unlinked %s: %v", cluster.Tag, err))
 				continue
 			}
@@ -265,12 +295,14 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 			deltaResp, err := r.synthesizeDeltaCluster(ctx, cluster, unlinked, existingContent, apiKey, model, apiURL)
 			if err != nil {
 				r.logger.Error("Failed to synthesize delta MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
+				result.Status = "partial (some clusters failed)"
 				result.Errors = append(result.Errors, fmt.Sprintf("tag %s: %v", cluster.Tag, err))
 				continue
 			}
 
 			if err := r.saveDeltaMOC(ctx, cluster, deltaResp, existingContent); err != nil {
 				r.logger.Error("Failed to save delta MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
+				result.Status = "partial (some clusters failed)"
 				result.Errors = append(result.Errors, fmt.Sprintf("save delta %s: %v", cluster.Tag, err))
 				continue
 			}
@@ -282,17 +314,27 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 		synthesis, err := r.synthesizeCluster(ctx, cluster, apiKey, model, apiURL)
 		if err != nil {
 			r.logger.Error("Failed to synthesize MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
+			result.Status = "partial (some clusters failed)"
 			result.Errors = append(result.Errors, fmt.Sprintf("tag %s: %v", cluster.Tag, err))
 			continue
 		}
 
 		if err := r.saveMOC(ctx, cluster, synthesis); err != nil {
 			r.logger.Error("Failed to save MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
+			result.Status = "partial (some clusters failed)"
 			result.Errors = append(result.Errors, fmt.Sprintf("save %s: %v", cluster.Tag, err))
 			continue
 		}
 
 		result.CreatedMOCs++
+	}
+
+	if len(result.Errors) > 0 {
+		if result.CreatedMOCs == 0 && result.UpdatedMOCs == 0 {
+			result.Status = "failed"
+		} else {
+			result.Status = "partial (some clusters failed)"
+		}
 	}
 
 	result.ExecutionTimeMs = time.Since(start).Milliseconds()
@@ -460,8 +502,11 @@ Instructions:
 		} `json:"usage"`
 	}
 
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil || len(chatResp.Choices) == 0 {
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
 		return nil, fmt.Errorf("failed to parse openrouter response: %w", err)
+	}
+	if len(chatResp.Choices) == 0 {
+		return nil, fmt.Errorf("openrouter returned empty choices list")
 	}
 
 	rawContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
@@ -515,30 +560,54 @@ func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate,
 		topicTitle = strings.Title(strings.ReplaceAll(cluster.Tag, "-", " "))
 	}
 
-	mocTitle := fmt.Sprintf("MOC - %s", topicTitle)
+	sanitizedTopic := strings.TrimSuffix(ingest.SanitizeTitleFilename(topicTitle, 0), ".md")
+	if sanitizedTopic == "" || sanitizedTopic == "Article" {
+		fallback := strings.Title(strings.ReplaceAll(cluster.Tag, "-", " "))
+		sanitizedTopic = strings.TrimSuffix(ingest.SanitizeTitleFilename(fallback, 0), ".md")
+	}
+	if sanitizedTopic == "" || sanitizedTopic == "Article" {
+		sanitizedTopic = "Topic"
+	}
+
+	mocTitle := fmt.Sprintf("MOC - %s", sanitizedTopic)
 	articlesDir := filepath.Join(r.dataDir, "articles")
 	_ = os.MkdirAll(articlesDir, 0755)
 
 	targetFilename := fmt.Sprintf("%s.md", mocTitle)
 	filePath := filepath.Join(articlesDir, targetFilename)
 
+	// Ensure target path is safely contained within articlesDir
+	rel, err := filepath.Rel(articlesDir, filePath)
+	if err != nil || strings.HasPrefix(rel, "..") || strings.Contains(rel, "/") || strings.Contains(rel, "\\") {
+		cleanTag := strings.TrimSuffix(ingest.SanitizeTitleFilename(cluster.Tag, 0), ".md")
+		targetFilename = fmt.Sprintf("MOC - %s.md", cleanTag)
+		filePath = filepath.Join(articlesDir, targetFilename)
+	}
+
 	existingBody := ""
 	if cluster.ExistingMOC != nil && cluster.ExistingMOC.FilePath != "" {
 		existingPath := filepath.Join(r.dataDir, strings.TrimPrefix(cluster.ExistingMOC.FilePath, "/"))
-		if bytes, err := os.ReadFile(existingPath); err == nil {
-			existingBody = string(bytes)
-			filePath = existingPath
-			targetFilename = filepath.Base(existingPath)
+		rel, err := filepath.Rel(articlesDir, existingPath)
+		if err == nil && !strings.HasPrefix(rel, "..") {
+			if bytes, err := os.ReadFile(existingPath); err == nil {
+				existingBody = string(bytes)
+				filePath = existingPath
+				targetFilename = filepath.Base(existingPath)
+			}
 		}
 	}
 
 	allArticles, _ := r.repo.GetAllArticles(ctx)
-	articleTitleMap := make(map[int64]string)
+	articleInfoMap := make(map[int64]MOCArticleInfo)
 	for _, a := range allArticles {
-		articleTitleMap[a.ID] = a.Title
+		articleInfoMap[a.ID] = MOCArticleInfo{
+			ID:       a.ID,
+			Title:    a.Title,
+			FilePath: a.FilePath,
+		}
 	}
 
-	newMarkdown := r.assembleMOCMarkdown(synthesis, mocTitle, cluster.Tag, existingBody, articleTitleMap)
+	newMarkdown := r.assembleMOCMarkdown(synthesis, mocTitle, cluster.Tag, existingBody, articleInfoMap)
 
 	// Atomic disk write
 	dir := filepath.Dir(filePath)
@@ -594,7 +663,7 @@ func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate,
 	return nil
 }
 
-func (r *LibrarianRunner) assembleMOCMarkdown(synthesis *MOCSynthesisResponse, mocTitle, tag, existingBody string, articleTitleMap map[int64]string) string {
+func (r *LibrarianRunner) assembleMOCMarkdown(synthesis *MOCSynthesisResponse, mocTitle, tag, existingBody string, articleInfoMap map[int64]MOCArticleInfo) string {
 	userNotesContent := ""
 	if existingBody != "" {
 		reNotes := regexp.MustCompile(`(?s)## Notes & Synthesis\s*\n(.*)`)
@@ -633,15 +702,16 @@ func (r *LibrarianRunner) assembleMOCMarkdown(synthesis *MOCSynthesisResponse, m
 	for _, section := range synthesis.Sections {
 		sb.WriteString(fmt.Sprintf("### %s\n", strings.TrimSpace(section.Title)))
 		for _, item := range section.Items {
-			title, ok := articleTitleMap[item.ArticleID]
+			info, ok := articleInfoMap[item.ArticleID]
 			if !ok {
-				title = fmt.Sprintf("Article %d", item.ArticleID)
+				info = MOCArticleInfo{ID: item.ArticleID, Title: fmt.Sprintf("Article %d", item.ArticleID)}
 			}
+			wikilink := formatMOCArticleWikilink(info)
 			contextNote := strings.TrimSpace(item.ContextNote)
 			if contextNote != "" {
-				sb.WriteString(fmt.Sprintf("- [[%s|%s]] — %s\n", title, title, contextNote))
+				sb.WriteString(fmt.Sprintf("- %s - %s\n", wikilink, contextNote))
 			} else {
-				sb.WriteString(fmt.Sprintf("- [[%s|%s]]\n", title, title))
+				sb.WriteString(fmt.Sprintf("- %s\n", wikilink))
 			}
 		}
 		sb.WriteString("\n")
@@ -817,8 +887,11 @@ Instructions:
 		} `json:"usage"`
 	}
 
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil || len(chatResp.Choices) == 0 {
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
 		return nil, fmt.Errorf("failed to parse openrouter response: %w", err)
+	}
+	if len(chatResp.Choices) == 0 {
+		return nil, fmt.Errorf("openrouter returned empty choices list")
 	}
 
 	rawContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
@@ -866,7 +939,7 @@ Instructions:
 	return &deltaResp, nil
 }
 
-func applyDeltaPlacements(existingContent string, placements []MOCDeltaPlacement, articleTitleMap map[int64]string) string {
+func applyDeltaPlacements(existingContent string, placements []MOCDeltaPlacement, articleInfoMap map[int64]MOCArticleInfo) string {
 	if len(placements) == 0 {
 		return existingContent
 	}
@@ -896,6 +969,8 @@ func applyDeltaPlacements(existingContent string, placements []MOCDeltaPlacement
 	}
 
 	lines := strings.Split(existingContent, "\n")
+	scheduledArticles := make(map[int64]bool)
+	scheduledWikilinks := make(map[string]bool)
 
 	for _, g := range grouped {
 		headerIdx := -1
@@ -912,16 +987,52 @@ func applyDeltaPlacements(existingContent string, placements []MOCDeltaPlacement
 
 		var itemLines []string
 		for _, item := range g.items {
-			title, ok := articleTitleMap[item.ArticleID]
-			if !ok {
-				title = fmt.Sprintf("Article %d", item.ArticleID)
+			if scheduledArticles[item.ArticleID] {
+				continue
 			}
+
+			info, ok := articleInfoMap[item.ArticleID]
+			if !ok {
+				info = MOCArticleInfo{ID: item.ArticleID, Title: fmt.Sprintf("Article %d", item.ArticleID)}
+			}
+
+			wikilink := formatMOCArticleWikilink(info)
+			if scheduledWikilinks[wikilink] {
+				continue
+			}
+
+			fileBase := ""
+			if info.FilePath != "" {
+				fileBase = strings.TrimSuffix(filepath.Base(info.FilePath), ".md")
+			}
+
+			// Prevent duplicate additions if title/file is already referenced anywhere in existing lines
+			alreadyPresent := false
+			for _, line := range lines {
+				if strings.Contains(line, wikilink) ||
+					(fileBase != "" && (strings.Contains(line, fmt.Sprintf("[[%s]]", fileBase)) || strings.Contains(line, fmt.Sprintf("[[%s|", fileBase)))) ||
+					(info.Title != "" && (strings.Contains(line, fmt.Sprintf("[[%s]]", info.Title)) || strings.Contains(line, fmt.Sprintf("[[%s|", info.Title)))) {
+					alreadyPresent = true
+					break
+				}
+			}
+			if alreadyPresent {
+				continue
+			}
+
+			scheduledArticles[item.ArticleID] = true
+			scheduledWikilinks[wikilink] = true
+
 			note := strings.TrimSpace(item.ContextNote)
 			if note != "" {
-				itemLines = append(itemLines, fmt.Sprintf("- [[%s]] - %s", title, note))
+				itemLines = append(itemLines, fmt.Sprintf("- %s - %s", wikilink, note))
 			} else {
-				itemLines = append(itemLines, fmt.Sprintf("- [[%s]]", title))
+				itemLines = append(itemLines, fmt.Sprintf("- %s", wikilink))
 			}
+		}
+
+		if len(itemLines) == 0 {
+			continue
 		}
 
 		if headerIdx != -1 {
@@ -991,17 +1102,24 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 
 	if cluster.ExistingMOC.FilePath != "" {
 		existingPath := filepath.Join(r.dataDir, strings.TrimPrefix(cluster.ExistingMOC.FilePath, "/"))
-		filePath = existingPath
-		targetFilename = filepath.Base(existingPath)
+		rel, err := filepath.Rel(articlesDir, existingPath)
+		if err == nil && !strings.HasPrefix(rel, "..") {
+			filePath = existingPath
+			targetFilename = filepath.Base(existingPath)
+		}
 	}
 
 	allArticles, _ := r.repo.GetAllArticles(ctx)
-	articleTitleMap := make(map[int64]string)
+	articleInfoMap := make(map[int64]MOCArticleInfo)
 	for _, a := range allArticles {
-		articleTitleMap[a.ID] = a.Title
+		articleInfoMap[a.ID] = MOCArticleInfo{
+			ID:       a.ID,
+			Title:    a.Title,
+			FilePath: a.FilePath,
+		}
 	}
 
-	updatedMarkdown := applyDeltaPlacements(existingContent, deltaResp.Placements, articleTitleMap)
+	updatedMarkdown := applyDeltaPlacements(existingContent, deltaResp.Placements, articleInfoMap)
 
 	// Atomic disk write
 	dir := filepath.Dir(filePath)
@@ -1042,17 +1160,29 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 	return nil
 }
 
-var reMOCWikilink = regexp.MustCompile(`\[\[([^\]|]+)(?:\|[^\]]*)?\]\]`)
+var reMOCWikilink = regexp.MustCompile(`\[\[([^[\]\n]+?)\]\]`)
 
 func extractLinkedArticlesFromMOC(mocContent string) map[string]bool {
 	linked := make(map[string]bool)
 	matches := reMOCWikilink.FindAllStringSubmatch(mocContent, -1)
 	for _, m := range matches {
 		if len(m) > 1 {
-			target := strings.TrimSpace(m[1])
-			if target != "" {
-				linked[target] = true
-				linked[strings.ToLower(target)] = true
+			raw := strings.TrimSpace(m[1])
+			if raw == "" {
+				continue
+			}
+			// 1. Mark the entire raw string inside [[...]] as linked (preserves literal pipe-containing titles)
+			linked[raw] = true
+			linked[strings.ToLower(raw)] = true
+
+			// 2. If it is a pipe-delimited [[Target|Alias]], index only the target component
+			if strings.Contains(raw, "|") {
+				parts := strings.Split(raw, "|")
+				target := strings.TrimSpace(parts[0])
+				if target != "" {
+					linked[target] = true
+					linked[strings.ToLower(target)] = true
+				}
 			}
 		}
 	}
@@ -1166,6 +1296,12 @@ func NewLibrarianCronManager(runner *LibrarianRunner, logger *zap.Logger) *Libra
 func (m *LibrarianCronManager) Start(cronExpr string, enabled bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.cron != nil {
+		m.cron.Stop()
+	}
+	m.cron = cron.New()
+	m.entryID = 0
 
 	if !enabled {
 		m.logger.Info("Librarian background cron disabled in settings")

@@ -320,6 +320,7 @@ onMounted(() => {
     if (network) {
       const isDark = document.documentElement.classList.contains('dark')
       network.setOptions(getOptions(isDark))
+      network.setData(getFilteredData())
     }
   })
 

@@ -1032,14 +1032,45 @@ const executeLibrarian = async () => {
 
       <!-- Result Banner -->
       <div v-if="librarianResult" class="p-4 rounded-2xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/60 dark:border-amber-800/40 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-3">
-        <svg class="w-5 h-5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <svg v-if="librarianResult.status === 'success'" class="w-5 h-5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
+        <svg v-else class="w-5 h-5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
         <div class="space-y-1">
-          <p class="font-semibold">Librarian Execution Complete</p>
-          <p>
-            Scanned <strong>{{ librarianResult.scanned_articles }}</strong> articles across <strong>{{ librarianResult.clusters_detected }}</strong> clusters • Created <strong>{{ librarianResult.created_mocs }}</strong> new MOCs • Updated <strong>{{ librarianResult.updated_mocs }}</strong> existing MOCs in <strong>{{ librarianResult.execution_time_ms }}ms</strong>.
-          </p>
+          <template v-if="librarianResult.status === 'success'">
+            <p class="font-semibold">Librarian Execution Complete</p>
+            <p>
+              Scanned <strong>{{ librarianResult.scanned_articles }}</strong> articles across <strong>{{ librarianResult.clusters_detected }}</strong> clusters • Created <strong>{{ librarianResult.created_mocs }}</strong> new MOCs • Updated <strong>{{ librarianResult.updated_mocs }}</strong> existing MOCs in <strong>{{ librarianResult.execution_time_ms }}ms</strong>.
+            </p>
+          </template>
+          <template v-else-if="librarianResult.status === 'skipped (no api key)'">
+            <p class="font-semibold">Librarian Skipped</p>
+            <p>No OpenRouter API key configured. Please add an API key in General Settings to enable MOC synthesis.</p>
+          </template>
+          <template v-else-if="librarianResult.status === 'skipped (disabled)'">
+            <p class="font-semibold">Librarian Skipped</p>
+            <p>Librarian agent is currently disabled in settings.</p>
+          </template>
+          <template v-else-if="librarianResult.status.startsWith('skipped')">
+            <p class="font-semibold">Librarian Skipped ({{ librarianResult.status }})</p>
+            <p>
+              Scanned <strong>{{ librarianResult.scanned_articles }}</strong> articles across <strong>{{ librarianResult.clusters_detected }}</strong> clusters • All MOCs are up to date.
+            </p>
+          </template>
+          <template v-else-if="librarianResult.status.includes('partial')">
+            <p class="font-semibold">Librarian Execution Partial</p>
+            <p>
+              Scanned <strong>{{ librarianResult.scanned_articles }}</strong> articles • Created <strong>{{ librarianResult.created_mocs }}</strong> MOCs • Updated <strong>{{ librarianResult.updated_mocs }}</strong> MOCs with some cluster errors in <strong>{{ librarianResult.execution_time_ms }}ms</strong>.
+            </p>
+          </template>
+          <template v-else>
+            <p class="font-semibold">Librarian Status: {{ librarianResult.status }}</p>
+            <p>
+              Scanned <strong>{{ librarianResult.scanned_articles }}</strong> articles across <strong>{{ librarianResult.clusters_detected }}</strong> clusters in <strong>{{ librarianResult.execution_time_ms }}ms</strong>.
+            </p>
+          </template>
         </div>
       </div>
 

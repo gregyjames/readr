@@ -153,7 +153,7 @@ func RegisterSettings(router fiber.Router, h *HandlerContext) {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid JSON"})
 		}
 
-		_, err := h.SettingsStore.Update(func(current *ServerSettings) error {
+		updated, err := h.SettingsStore.Update(func(current *ServerSettings) error {
 			current.APIKey = req.APIKey
 			if req.Model != "" {
 				current.Model = req.Model
@@ -182,6 +182,16 @@ func RegisterSettings(router fiber.Router, h *HandlerContext) {
 
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to save settings"})
+		}
+
+		if h.LibrarianCron != nil {
+			if err := h.LibrarianCron.Start(updated.LibrarianCron, updated.LibrarianEnabled); err != nil && h.Logger != nil {
+				h.Logger.Error("Failed to reconfigure Librarian cron scheduler",
+					zap.String("cron", updated.LibrarianCron),
+					zap.Bool("enabled", updated.LibrarianEnabled),
+					zap.Error(err),
+				)
+			}
 		}
 
 		return c.JSON(fiber.Map{"status": "success"})

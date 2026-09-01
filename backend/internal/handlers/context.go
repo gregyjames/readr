@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"example.com/backend/internal/agents"
 	"example.com/backend/internal/chat"
 	"example.com/backend/internal/graph"
 	"example.com/backend/internal/ingest"
@@ -85,4 +86,5 @@ type HandlerContext struct {
 	TemplateRenderer ingest.TemplateRenderer
 	EventHub         *EventHub
 	ArticleFetcher   *ArticleFileFetcher
+	LibrarianCron    *agents.LibrarianCronManager
 }

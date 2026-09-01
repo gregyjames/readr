@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"example.com/backend/internal/agents"
@@ -82,5 +83,31 @@ func TestLibrarianEndpoints_StatusAndRun(t *testing.T) {
 	_ = json.NewDecoder(respRun.Body).Decode(&runResult)
 	if runResult.Status == "" {
 		t.Errorf("expected runResult.Status to be non-empty")
+	}
+}
+
+func TestSettingsUpdate_ReconfiguresLibrarianCron(t *testing.T) {
+	app, hCtx, runner := setupTestLibrarianHandler(t)
+	cronManager := agents.NewLibrarianCronManager(runner, zap.NewNop())
+	hCtx.LibrarianCron = cronManager
+	_ = cronManager.Start("0 0 * * *", true)
+
+	RegisterSettings(app, hCtx)
+
+	// Update settings with a new valid cron schedule: "0 12 * * *"
+	reqBody := `{"librarian_enabled":true,"librarian_cron":"0 12 * * *"}`
+	req := httptest.NewRequest("POST", "/settings", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatalf("POST /settings failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 OK, got %d", resp.StatusCode)
+	}
+
+	next := cronManager.GetNextRun()
+	if next == nil {
+		t.Fatalf("expected active next run after reconfiguring cron, got nil")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -168,7 +169,7 @@ DO NOT OVERWRITE THIS TEXT.
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.UpdatedMOCs != 1 && result.CreatedMOCs != 1 {
+	if result.UpdatedMOCs != 1 || result.CreatedMOCs != 0 {
 		t.Errorf("expected 1 MOC updated or created, got result: %+v", result)
 	}
 
@@ -194,6 +195,21 @@ DO NOT OVERWRITE THIS TEXT.
 
 func TestLibrarian_ThreadSafeExecution(t *testing.T) {
 	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// Create 5 articles sharing tag "concurrency" so DetectClusters finds an active cluster
+	for i := 1; i <= 5; i++ {
+		title := fmt.Sprintf("Concurrency Note %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "concurrency",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
 
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)
@@ -201,9 +217,14 @@ func TestLibrarian_ThreadSafeExecution(t *testing.T) {
 			"choices": []map[string]interface{}{
 				{
 					"message": map[string]string{
-						"content": `{"topic_title":"Test","executive_summary":"Summary","sections":[]}`,
+						"content": `{"topic_title":"Concurrency","executive_summary":"Summary","sections":[]}`,
 					},
 				},
+			},
+			"usage": map[string]int{
+				"prompt_tokens":     100,
+				"completion_tokens": 50,
+				"total_tokens":      150,
 			},
 		}
 		_ = json.NewEncoder(w).Encode(res)
@@ -216,7 +237,9 @@ func TestLibrarian_ThreadSafeExecution(t *testing.T) {
 	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
 
 	var wg sync.WaitGroup
-	errCount := 0
+	successCount := 0
+	alreadyRunningCount := 0
+	var otherErrors []error
 	var mu sync.Mutex
 
 	for i := 0; i < 3; i++ {
@@ -224,18 +247,28 @@ func TestLibrarian_ThreadSafeExecution(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, err := runner.RunLibrarianWithURL(context.Background(), "concurrent", mockServer.URL)
-			if err != nil && strings.Contains(err.Error(), "already running") {
-				mu.Lock()
-				errCount++
-				mu.Unlock()
+			mu.Lock()
+			defer mu.Unlock()
+			if err == nil {
+				successCount++
+			} else if strings.Contains(err.Error(), "already running") {
+				alreadyRunningCount++
+			} else {
+				otherErrors = append(otherErrors, err)
 			}
 		}()
 	}
 
 	wg.Wait()
 
-	if errCount == 0 {
-		t.Log("Note: Concurrent executions were fast, but thread-safety was respected")
+	if len(otherErrors) > 0 {
+		t.Fatalf("unexpected errors during concurrent runs: %v", otherErrors)
+	}
+	if successCount != 1 {
+		t.Errorf("expected exactly 1 execution to succeed, got %d", successCount)
+	}
+	if alreadyRunningCount != 2 {
+		t.Errorf("expected 2 executions to fail with 'already running', got %d", alreadyRunningCount)
 	}
 }
 
@@ -365,10 +398,12 @@ Overview of distributed systems.
 		})
 	}
 
-	httpCalls := 0
+	var httpCalls int32
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		httpCalls++
-		t.Fatalf("HTTP server should not be called for up-to-date MOC")
+		atomic.AddInt32(&httpCalls, 1)
+		t.Errorf("HTTP server should not be called for up-to-date MOC")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"should not be called"}`))
 	}))
 	defer mockServer.Close()
 
@@ -390,8 +425,8 @@ Overview of distributed systems.
 	if len(result.Errors) != 0 {
 		t.Errorf("expected 0 Errors, got %v", result.Errors)
 	}
-	if httpCalls != 0 {
-		t.Errorf("expected 0 HTTP calls, got %d", httpCalls)
+	if atomic.LoadInt32(&httpCalls) != 0 {
+		t.Errorf("expected 0 HTTP calls, got %d", atomic.LoadInt32(&httpCalls))
 	}
 }
 
@@ -458,9 +493,9 @@ Custom user research notes that must never be deleted.
 		Article: "/articles/Raft Consensus Protocol.md",
 	})
 
-	httpCalls := 0
+	var httpCalls int32
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		httpCalls++
+		atomic.AddInt32(&httpCalls, 1)
 		var reqBody struct {
 			Messages []struct {
 				Role    string `json:"role"`
@@ -475,10 +510,12 @@ Custom user research notes that must never be deleted.
 		}
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
-			t.Fatalf("failed to read request body: %v", err)
+			t.Errorf("failed to read request body: %v", err)
+			return
 		}
 		if err := json.Unmarshal(bodyBytes, &reqBody); err != nil {
-			t.Fatalf("failed to unmarshal request body: %v", err)
+			t.Errorf("failed to unmarshal request body: %v", err)
+			return
 		}
 
 		if reqBody.ResponseFormat.JSONSchema.Name != "moc_delta_placement" {
@@ -486,7 +523,8 @@ Custom user research notes that must never be deleted.
 		}
 
 		if len(reqBody.Messages) == 0 {
-			t.Fatalf("expected at least 1 message in prompt")
+			t.Errorf("expected at least 1 message in prompt")
+			return
 		}
 		promptContent := reqBody.Messages[0].Content
 
@@ -541,8 +579,8 @@ Custom user research notes that must never be deleted.
 	if result.UpdatedMOCs != 1 {
 		t.Errorf("expected 1 UpdatedMOC, got %d (result: %+v)", result.UpdatedMOCs, result)
 	}
-	if httpCalls != 1 {
-		t.Errorf("expected 1 HTTP call, got %d", httpCalls)
+	if atomic.LoadInt32(&httpCalls) != 1 {
+		t.Errorf("expected 1 HTTP call, got %d", atomic.LoadInt32(&httpCalls))
 	}
 
 	updatedBytes, err := os.ReadFile(mocPath)
@@ -707,6 +745,260 @@ Overview of distributed systems.
 	}
 	if metric.DurationMs <= 0 {
 		t.Errorf("expected DurationMs > 0, got %d", metric.DurationMs)
+	}
+}
+
+func TestLibrarian_ArticlesWithPipesInTitle_NeverDuplicate(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// Create 5 articles including one with a pipe in the title
+	for i := 1; i <= 4; i++ {
+		title := fmt.Sprintf("Development Note %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "development",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	pipeTitle := "How to Optimize NumPy with Cython | Paperspace Blog"
+	filePath := filepath.Join(articlesDir, "cython.md")
+	_ = os.WriteFile(filePath, []byte("# Cython Guide\nContent"), 0644)
+	db.Create(&repository.GormArticle{
+		ID:      5,
+		Title:   pipeTitle,
+		Tags:    "development",
+		Article: "/articles/cython.md",
+	})
+
+	callCount := 0
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{"topic_title":"Development","executive_summary":"Development tools summary","sections":[{"title":"Core Tools","items":[{"article_id":5,"context_note":"NumPy and Cython optimization techniques."},{"article_id":1,"context_note":"Dev note 1."},{"article_id":2,"context_note":"Dev note 2."},{"article_id":3,"context_note":"Dev note 3."},{"article_id":4,"context_note":"Dev note 4."}]}]}`,
+					},
+				},
+			},
+			"usage": map[string]int{
+				"prompt_tokens":     300,
+				"completion_tokens": 100,
+				"total_tokens":      400,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"openai/gpt-4o","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+
+	// Run 1: Synthesizes initial MOC
+	res1, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("first run failed: %v", err)
+	}
+	if res1.CreatedMOCs != 1 {
+		t.Fatalf("expected 1 created MOC, got %d", res1.CreatedMOCs)
+	}
+
+	mocPath := filepath.Join(articlesDir, "MOC - Development.md")
+	contentBytes, err := os.ReadFile(mocPath)
+	if err != nil {
+		t.Fatalf("failed to read MOC: %v", err)
+	}
+	mocContent := string(contentBytes)
+
+	// Verify formatted cleanly targeting the actual disk filename with clean display alias
+	if strings.Contains(mocContent, "[[How to Optimize NumPy with Cython | Paperspace Blog|") {
+		t.Errorf("found broken double-pipe wikilink in MOC:\n%s", mocContent)
+	}
+	if !strings.Contains(mocContent, "[[cython|How to Optimize NumPy with Cython — Paperspace Blog]]") {
+		t.Errorf("expected clean wikilink [[cython|How to Optimize NumPy with Cython — Paperspace Blog]] in MOC, got:\n%s", mocContent)
+	}
+
+	// Run 2: Immediate subsequent run MUST zero-token skip (no new calls!)
+	res2, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("second run failed: %v", err)
+	}
+	if res2.CreatedMOCs != 0 || res2.UpdatedMOCs != 0 {
+		t.Errorf("expected 0 created/updated on second run, got created=%d, updated=%d", res2.CreatedMOCs, res2.UpdatedMOCs)
+	}
+	if callCount != 1 {
+		t.Errorf("expected exactly 1 LLM call across both runs, got %d", callCount)
+	}
+}
+
+func TestLibrarian_TopicTitlePathTraversal_SanitizedSafely(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	for i := 1; i <= 5; i++ {
+		title := fmt.Sprintf("Security Note %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "security",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{"topic_title":"../../etc/passwd","executive_summary":"Traversal test summary","sections":[{"title":"Core","items":[{"article_id":1,"context_note":"Note 1."},{"article_id":2,"context_note":"Note 2."},{"article_id":3,"context_note":"Note 3."},{"article_id":4,"context_note":"Note 4."},{"article_id":5,"context_note":"Note 5."}]}]}`,
+					},
+				},
+			},
+			"usage": map[string]int{
+				"prompt_tokens":     150,
+				"completion_tokens": 50,
+				"total_tokens":      200,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"openai/gpt-4o","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	if result.CreatedMOCs != 1 {
+		t.Fatalf("expected 1 created MOC, got %d", result.CreatedMOCs)
+	}
+
+	// Verify no file was created outside articlesDir
+	parentDir := filepath.Dir(articlesDir)
+	if _, err := os.Stat(filepath.Join(parentDir, "passwd.md")); err == nil {
+		t.Errorf("path traversal vulnerability: file created in parent directory!")
+	}
+
+	// Verify the file was created inside articlesDir safely
+	var createdFiles []string
+	entries, _ := os.ReadDir(articlesDir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "MOC - ") {
+			createdFiles = append(createdFiles, e.Name())
+		}
+	}
+
+	if len(createdFiles) == 0 {
+		t.Fatalf("expected MOC file created in articlesDir, found none")
+	}
+}
+
+func TestLibrarian_ClusterFailure_SetsDegradedStatus(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	for i := 1; i <= 5; i++ {
+		title := fmt.Sprintf("Fail Note %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte("# Content"), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "failure-test",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"simulated OpenRouter 500 error"}`))
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"openai/gpt-4o","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("run failed with unexpected error: %v", err)
+	}
+
+	if result.Status != "failed" {
+		t.Errorf("expected status 'failed', got %q", result.Status)
+	}
+	if len(result.Errors) == 0 {
+		t.Errorf("expected recorded errors in result.Errors, got 0")
+	}
+}
+
+func TestExtractLinkedArticlesFromMOC_AliasNotIndexedAsTarget(t *testing.T) {
+	mocContent := `# MOC
+- [[Real Target Note|Alias Label]] - Context
+- [[Literal Title | With Pipe]] - Context
+- [[Standard Note]] - Context
+`
+	linked := extractLinkedArticlesFromMOC(mocContent)
+
+	// Target components must be indexed
+	if !linked["Real Target Note"] || !linked["real target note"] {
+		t.Errorf("expected 'Real Target Note' to be indexed in linked")
+	}
+	if !linked["Standard Note"] || !linked["standard note"] {
+		t.Errorf("expected 'Standard Note' to be indexed in linked")
+	}
+	if !linked["Literal Title | With Pipe"] || !linked["literal title | with pipe"] {
+		t.Errorf("expected full literal title to be indexed in linked")
+	}
+	if !linked["Literal Title"] {
+		t.Errorf("expected first part of literal title to be indexed in linked")
+	}
+
+	// Alias label must NOT be indexed as a target
+	if linked["Alias Label"] || linked["alias label"] {
+		t.Errorf("expected display alias 'Alias Label' NOT to be indexed as a target")
+	}
+}
+
+func TestApplyDeltaPlacements_DuplicatePlacementsDeduplicated(t *testing.T) {
+	existingContent := `# MOC - Test
+
+## Core Concepts
+- [[Note 1]] - Existing note.
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+`
+	placements := []MOCDeltaPlacement{
+		{ArticleID: 2, TargetSection: "Core Concepts", ContextNote: "First occurrence."},
+		{ArticleID: 2, TargetSection: "Core Concepts", ContextNote: "Duplicate occurrence."},
+		{ArticleID: 2, TargetSection: "Other Section", ContextNote: "Duplicate across sections."},
+	}
+	articleInfoMap := map[int64]MOCArticleInfo{
+		2: {ID: 2, Title: "Note 2", FilePath: "/articles/Note 2.md"},
+	}
+
+	result := applyDeltaPlacements(existingContent, placements, articleInfoMap)
+
+	count := strings.Count(result, "[[Note 2]]")
+	if count != 1 {
+		t.Errorf("expected [[Note 2]] to appear exactly once, but appeared %d times in:\n%s", count, result)
 	}
 }
 

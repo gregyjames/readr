@@ -3,11 +3,27 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 var (
 	ErrNotFound = errors.New("record not found")
 )
+
+// IsMOCArticle returns true if the article is a Map of Content (MOC) hub note.
+func IsMOCArticle(title, tags string) bool {
+	lowerTitle := strings.ToLower(title)
+	if strings.HasPrefix(lowerTitle, "moc - ") || strings.HasPrefix(lowerTitle, "moc:") || strings.HasPrefix(lowerTitle, "moc ") || strings.EqualFold(title, "moc") {
+		return true
+	}
+	tagList := strings.Split(tags, ",")
+	for _, t := range tagList {
+		if strings.TrimSpace(strings.ToLower(t)) == "moc" {
+			return true
+		}
+	}
+	return false
+}
 
 type ArticleRecord struct {
 	ID        int64  `json:"id"`
