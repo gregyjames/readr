@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
@@ -91,6 +92,7 @@ type LibrarianRunResult struct {
 	ClustersDetected int      `json:"clusters_detected"`
 	CreatedMOCs      int      `json:"created_mocs"`
 	UpdatedMOCs      int      `json:"updated_mocs"`
+	PrunedMOCs       int      `json:"pruned_mocs"`
 	ExecutionTimeMs  int64    `json:"execution_time_ms"`
 	Errors           []string `json:"errors,omitempty"`
 }
@@ -235,6 +237,104 @@ func (r *LibrarianRunner) DetectClusters(ctx context.Context, minSize int) ([]Cl
 	return candidates, nil
 }
 
+// titleContainsTopic checks if an article's title contains the topic/tag name (case-insensitive and trimmed).
+// For multi-word topics ("distributed systems"), checks substring match.
+// For single-word topics ("google", "ai"), checks whole word boundaries to prevent false matches.
+func titleContainsTopic(title, topic string) bool {
+	cleanTitle := strings.ToLower(strings.TrimSpace(title))
+	cleanTopic := strings.ToLower(strings.TrimSpace(topic))
+	if cleanTitle == "" || cleanTopic == "" {
+		return false
+	}
+	cleanTopic = strings.ReplaceAll(cleanTopic, "-", " ")
+	cleanTopic = strings.ReplaceAll(cleanTopic, "_", " ")
+	cleanTitle = strings.ReplaceAll(cleanTitle, "-", " ")
+	cleanTitle = strings.ReplaceAll(cleanTitle, "_", " ")
+
+	if strings.Contains(cleanTopic, " ") {
+		return strings.Contains(cleanTitle, cleanTopic)
+	}
+
+	words := strings.FieldsFunc(cleanTitle, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+	for _, w := range words {
+		if w == cleanTopic {
+			return true
+		}
+	}
+	return false
+}
+
+// DeterminePrimaryTopicFolders determines the single primary topic folder for each article.
+// Resolution Priority:
+// 1. Title Keyword Match (Highest): If the article title explicitly mentions the topic/tag name.
+// 2. Tag Position Priority (Medium): Tags placed earlier in frontmatter (first-tagged = primary intent).
+// 3. Cluster Specificity Fallback (Lowest): Most specific cluster (smallest article count).
+func DeterminePrimaryTopicFolders(clusters []ClusterCandidate) map[int64]string {
+	primaryTopics := make(map[int64]string)
+	articleBestTitleMatch := make(map[int64]bool)
+	articleTagIndex := make(map[int64]int)
+	articleClusterSizes := make(map[int64]int)
+
+	for _, cluster := range clusters {
+		clusterSize := len(cluster.Articles)
+		topicFolder := cluster.Tag
+		if cluster.ExistingMOC != nil && cluster.ExistingMOC.Title != "" {
+			cleanTitle := strings.TrimPrefix(cluster.ExistingMOC.Title, "MOC - ")
+			cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
+			cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
+			cleanTitle = strings.TrimSpace(cleanTitle)
+			if cleanTitle != "" {
+				topicFolder = cleanTitle
+			}
+		}
+
+		for _, a := range cluster.Articles {
+			hasTitleMatch := titleContainsTopic(a.Title, cluster.Tag) || (topicFolder != "" && titleContainsTopic(a.Title, topicFolder))
+
+			// Find position of this cluster's tag in article frontmatter
+			tagIdx := 999
+			for idx, t := range strings.Split(a.Tags, ",") {
+				sanitized := repository.SanitizeObsidianTag(strings.TrimSpace(t))
+				if strings.EqualFold(sanitized, repository.SanitizeObsidianTag(cluster.Tag)) || (topicFolder != "" && strings.EqualFold(sanitized, repository.SanitizeObsidianTag(topicFolder))) {
+					tagIdx = idx
+					break
+				}
+			}
+
+			prevTitleMatch, exists := articleBestTitleMatch[a.ID]
+			isBetter := false
+
+			if !exists {
+				isBetter = true
+			} else if hasTitleMatch && !prevTitleMatch {
+				// 1. Title match takes highest priority
+				isBetter = true
+			} else if hasTitleMatch == prevTitleMatch {
+				// 2. More specific cluster (smaller size) takes priority over broad clusters
+				if clusterSize < articleClusterSizes[a.ID] {
+					isBetter = true
+				} else if clusterSize == articleClusterSizes[a.ID] {
+					// 3. Tag position in frontmatter breaks ties
+					if tagIdx < articleTagIndex[a.ID] {
+						isBetter = true
+					}
+				}
+			}
+
+			if isBetter {
+				primaryTopics[a.ID] = topicFolder
+				articleBestTitleMatch[a.ID] = hasTitleMatch
+				articleTagIndex[a.ID] = tagIdx
+				articleClusterSizes[a.ID] = clusterSize
+			}
+		}
+	}
+
+	return primaryTopics
+}
+
 func (r *LibrarianRunner) RunLibrarian(ctx context.Context, trigger string) (*LibrarianRunResult, error) {
 	return r.RunLibrarianWithURL(ctx, trigger, "https://openrouter.ai/api/v1/chat/completions")
 }
@@ -265,6 +365,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 		result.Status = "skipped (disabled)"
 		return result, nil
 	}
+
 	if apiKey == "" {
 		result.Status = "skipped (no api key)"
 		return result, nil
@@ -281,6 +382,40 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	allArticles, _ := r.repo.GetAllArticles(ctx)
 	result.ScannedArticles = len(allArticles)
 
+	primaryTopics := DeterminePrimaryTopicFolders(clusters)
+
+	// Filter each cluster candidate list so an MOC only manages articles whose primary topic belongs to this cluster
+	var validClusters []ClusterCandidate
+	for i := range clusters {
+		clusterTopic := clusters[i].Tag
+		if clusters[i].ExistingMOC != nil && clusters[i].ExistingMOC.Title != "" {
+			cleanTitle := strings.TrimPrefix(clusters[i].ExistingMOC.Title, "MOC - ")
+			cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
+			cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
+			cleanTitle = strings.TrimSpace(cleanTitle)
+			if cleanTitle != "" {
+				clusterTopic = cleanTitle
+			}
+		}
+
+		var primaryArticles []repository.ArticleRecord
+		for _, a := range clusters[i].Articles {
+			primary := primaryTopics[a.ID]
+			if strings.EqualFold(repository.SanitizeObsidianTag(primary), repository.SanitizeObsidianTag(clusterTopic)) ||
+				strings.EqualFold(repository.SanitizeObsidianTag(primary), repository.SanitizeObsidianTag(clusters[i].Tag)) {
+				primaryArticles = append(primaryArticles, a)
+			}
+		}
+		clusters[i].Articles = primaryArticles
+
+		// Only retain clusters that meet minSize threshold (or are existing MOCs undergoing link reconciliation)
+		if len(clusters[i].Articles) >= minSize || clusters[i].ExistingMOC != nil {
+			validClusters = append(validClusters, clusters[i])
+		}
+	}
+	clusters = validClusters
+	result.ClustersDetected = len(clusters)
+
 	for _, cluster := range clusters {
 		if cluster.ExistingMOC != nil {
 			unlinked, existingContent, err := r.getUnlinkedArticles(cluster)
@@ -290,12 +425,36 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				result.Errors = append(result.Errors, fmt.Sprintf("unlinked %s: %v", cluster.Tag, err))
 				continue
 			}
+
+			// Reconcile existing MOC markdown against currently active member notes
+			activeMemberTitles := make(map[string]bool)
+			for _, a := range cluster.Articles {
+				activeMemberTitles[a.Title] = true
+				activeMemberTitles[strings.ToLower(a.Title)] = true
+				if a.FilePath != "" {
+					base := strings.TrimSuffix(filepath.Base(a.FilePath), ".md")
+					activeMemberTitles[base] = true
+					activeMemberTitles[strings.ToLower(base)] = true
+				}
+			}
+			reconciledContent, linksPruned := ReconcileMOCLinks(existingContent, activeMemberTitles)
+
 			if len(unlinked) == 0 {
-				r.logger.Info(fmt.Sprintf("MOC cluster %s is up-to-date (0 new notes), skipping LLM call", cluster.Tag), zap.String("tag", cluster.Tag))
+				if linksPruned {
+					if err := r.saveReconciledMOC(ctx, cluster, reconciledContent); err != nil {
+						r.logger.Error("Failed to save reconciled MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
+						result.Status = "partial (some clusters failed)"
+						result.Errors = append(result.Errors, fmt.Sprintf("save reconciled %s: %v", cluster.Tag, err))
+					} else {
+						result.UpdatedMOCs++
+					}
+				} else {
+					r.logger.Info(fmt.Sprintf("MOC cluster %s is up-to-date (0 new notes), skipping LLM call", cluster.Tag), zap.String("tag", cluster.Tag))
+				}
 				continue
 			}
 
-			deltaResp, err := r.synthesizeDeltaCluster(ctx, cluster, unlinked, existingContent, apiKey, model, apiURL)
+			deltaResp, err := r.synthesizeDeltaCluster(ctx, cluster, unlinked, reconciledContent, apiKey, model, apiURL)
 			if err != nil {
 				r.logger.Error("Failed to synthesize delta MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
 				result.Status = "partial (some clusters failed)"
@@ -303,33 +462,10 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				continue
 			}
 
-			if err := r.saveDeltaMOC(ctx, cluster, deltaResp, existingContent); err != nil {
+			if err := r.saveDeltaMOC(ctx, cluster, deltaResp, reconciledContent); err != nil {
 				r.logger.Error("Failed to save delta MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
 				result.Status = "partial (some clusters failed)"
 				result.Errors = append(result.Errors, fmt.Sprintf("save delta %s: %v", cluster.Tag, err))
-				continue
-			}
-
-			topicTitle := cluster.Tag
-			if cluster.ExistingMOC.Title != "" {
-				cleanTitle := strings.TrimPrefix(cluster.ExistingMOC.Title, "MOC - ")
-				cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
-				cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
-				cleanTitle = strings.TrimSpace(cleanTitle)
-				if cleanTitle != "" {
-					topicTitle = cleanTitle
-				}
-			}
-			var fileErr error
-			for _, a := range cluster.Articles {
-				if _, err := r.organizer.FileArticle(ctx, a.ID, topicTitle); err != nil {
-					r.logger.Error("Failed to file article into topic folder", zap.Int64("article_id", a.ID), zap.String("topic", topicTitle), zap.Error(err))
-					result.Status = "partial (some clusters failed)"
-					result.Errors = append(result.Errors, fmt.Sprintf("file article %d into %s: %v", a.ID, topicTitle, err))
-					fileErr = err
-				}
-			}
-			if fileErr != nil {
 				continue
 			}
 
@@ -353,23 +489,33 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 		}
 
 		topicTitle := strings.TrimSpace(synthesis.TopicTitle)
-		if topicTitle == "" {
-			topicTitle = cluster.Tag
-		}
-		var fileErr error
-		for _, a := range cluster.Articles {
-			if _, err := r.organizer.FileArticle(ctx, a.ID, topicTitle); err != nil {
-				r.logger.Error("Failed to file article into topic folder", zap.Int64("article_id", a.ID), zap.String("topic", topicTitle), zap.Error(err))
-				result.Status = "partial (some clusters failed)"
-				result.Errors = append(result.Errors, fmt.Sprintf("file article %d into %s: %v", a.ID, topicTitle, err))
-				fileErr = err
+		if topicTitle != "" && topicTitle != cluster.Tag {
+			for _, a := range cluster.Articles {
+				if primaryTopics[a.ID] == cluster.Tag {
+					primaryTopics[a.ID] = topicTitle
+				}
 			}
-		}
-		if fileErr != nil {
-			continue
 		}
 
 		result.CreatedMOCs++
+	}
+
+	// File articles into their deterministic primary topic folders
+	for articleID, topicTitle := range primaryTopics {
+		if _, err := r.organizer.FileArticle(ctx, articleID, topicTitle); err != nil {
+			r.logger.Error("Failed to file article into primary topic folder", zap.Int64("article_id", articleID), zap.String("topic", topicTitle), zap.Error(err))
+			result.Status = "partial (some clusters failed)"
+			result.Errors = append(result.Errors, fmt.Sprintf("file article %d into %s: %v", articleID, topicTitle, err))
+		}
+	}
+
+	pruned, err := r.pruneEmptyMOCs(ctx)
+	if err != nil {
+		r.logger.Error("Failed to prune empty MOCs", zap.Error(err))
+		result.Status = "partial (some clusters failed)"
+		result.Errors = append(result.Errors, fmt.Sprintf("prune empty MOCs: %v", err))
+	} else {
+		result.PrunedMOCs = pruned
 	}
 
 	if err := r.organizer.CleanEmptyFolders(); err != nil {
@@ -384,7 +530,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	}
 
 	if len(result.Errors) > 0 {
-		if result.CreatedMOCs == 0 && result.UpdatedMOCs == 0 {
+		if result.CreatedMOCs == 0 && result.UpdatedMOCs == 0 && result.PrunedMOCs == 0 {
 			result.Status = "failed"
 		} else {
 			result.Status = "partial (some clusters failed)"
@@ -393,7 +539,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 
 	result.ExecutionTimeMs = time.Since(start).Milliseconds()
 
-	if r.onGraphUpdate != nil && (result.CreatedMOCs > 0 || result.UpdatedMOCs > 0) {
+	if r.onGraphUpdate != nil && (result.CreatedMOCs > 0 || result.UpdatedMOCs > 0 || result.PrunedMOCs > 0) {
 		r.onGraphUpdate()
 	}
 
@@ -404,6 +550,117 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	r.mu.Unlock()
 
 	return result, nil
+}
+
+// pruneEmptyMOCs scans all active MOCs in SQLite. If an MOC has 0 active member notes
+// (both via its primary tag cluster and article_links) and contains no custom user-written
+// thoughts in ## Notes & Synthesis, it deletes the MOC file from disk and deletes the record from SQLite.
+func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
+	if r.db == nil {
+		return 0, nil
+	}
+
+	var mocs []repository.GormArticle
+	if err := r.db.WithContext(ctx).
+		Where("deleted_at IS NULL").
+		Where("title LIKE 'MOC - %' OR title LIKE 'MOC %' OR title LIKE 'MOC:%' OR tags LIKE '%moc%'").
+		Find(&mocs).Error; err != nil {
+		return 0, fmt.Errorf("failed to query MOC articles: %w", err)
+	}
+
+	prunedCount := 0
+	for _, moc := range mocs {
+		if !repository.IsMOCArticle(moc.Title, moc.Tags) {
+			continue
+		}
+
+		// 1. Extract tag from MOC
+		tag := ""
+		tagParts := strings.Split(moc.Tags, ",")
+		for _, tp := range tagParts {
+			cleaned := repository.SanitizeObsidianTag(tp)
+			if cleaned != "" && cleaned != "moc" {
+				tag = cleaned
+				break
+			}
+		}
+		if tag == "" {
+			tag = repository.SanitizeObsidianTag(strings.TrimPrefix(moc.Title, "MOC - "))
+		}
+
+		// 2. Count active non-MOC member notes with this tag or in this folder
+		var memberCount int64
+		if tag != "" {
+			if err := r.db.WithContext(ctx).Model(&repository.GormArticle{}).
+				Where("deleted_at IS NULL AND id != ?", moc.ID).
+				Where("tags LIKE ? OR article LIKE ?", "%"+tag+"%", "%/articles/"+tag+"/%").
+				Count(&memberCount).Error; err != nil {
+				r.logger.Error("Failed to count member notes for MOC pruning", zap.Int64("id", moc.ID), zap.Error(err))
+				continue
+			}
+		}
+
+		// Also check article_links
+		var linkCount int64
+		if err := r.db.WithContext(ctx).Table("article_links").
+			Joins("JOIN articles ON articles.id = article_links.target_id").
+			Where("article_links.source_id = ? AND articles.deleted_at IS NULL", moc.ID).
+			Count(&linkCount).Error; err != nil {
+			r.logger.Error("Failed to count article links for MOC pruning", zap.Int64("id", moc.ID), zap.Error(err))
+			continue
+		}
+
+		if memberCount > 0 || linkCount > 0 {
+			continue // MOC is not empty
+		}
+
+		// 3. MOC has 0 member notes. Read file to check for custom user notes in ## Notes & Synthesis
+		relPath := strings.TrimPrefix(moc.Article, "/")
+		absPath := filepath.Join(r.dataDir, relPath)
+		fileBytes, err := os.ReadFile(absPath)
+		if err == nil {
+			if HasCustomUserNotes(string(fileBytes)) {
+				r.logger.Info("Preserving empty MOC containing custom user notes",
+					zap.Int64("id", moc.ID),
+					zap.String("title", moc.Title),
+				)
+				continue
+			}
+		}
+
+		// 4. Delete MOC record from SQLite and article_links in transaction
+		txErr := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Where("source_id = ? OR target_id = ?", moc.ID, moc.ID).Delete(&repository.GormArticleLink{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Delete(&moc).Error; err != nil {
+				return err
+			}
+			_ = tx.Exec("DELETE FROM articles_fts WHERE rowid = ?", moc.ID).Error
+			return nil
+		})
+		if txErr != nil {
+			r.logger.Error("Failed to delete empty MOC from database",
+				zap.Int64("id", moc.ID),
+				zap.Error(txErr),
+			)
+			continue
+		}
+
+		// 5. Remove physical file from disk
+		if absPath != "" {
+			_ = os.Remove(absPath)
+		}
+
+		prunedCount++
+		r.logger.Info("Pruned empty automated MOC with 0 notes",
+			zap.Int64("id", moc.ID),
+			zap.String("title", moc.Title),
+			zap.String("file", absPath),
+		)
+	}
+
+	return prunedCount, nil
 }
 
 func (r *LibrarianRunner) synthesizeCluster(ctx context.Context, cluster ClusterCandidate, apiKey, model, apiURL string) (*MOCSynthesisResponse, error) {
@@ -756,6 +1013,90 @@ func (r *LibrarianRunner) assembleMOCMarkdown(synthesis *MOCSynthesisResponse, m
 	sb.WriteString(userNotesContent + "\n")
 
 	return sb.String()
+}
+
+// HasCustomUserNotes returns true if the MOC's ## Notes & Synthesis section contains
+// custom user-written text beyond empty whitespace or the default placeholder.
+func HasCustomUserNotes(mocContent string) bool {
+	reNotes := regexp.MustCompile(`(?s)## Notes & Synthesis\s*\n(.*)`)
+	matches := reNotes.FindStringSubmatch(mocContent)
+	if len(matches) < 2 {
+		return false
+	}
+	content := strings.TrimSpace(matches[1])
+	if content == "" {
+		return false
+	}
+
+	// Clean out comments like <!-- Content below this line is preserved ... -->
+	reComments := regexp.MustCompile(`<!--.*?-->`)
+	cleaned := strings.TrimSpace(reComments.ReplaceAllString(content, ""))
+	if cleaned == "" {
+		return false
+	}
+
+	// Check if it's solely the default placeholder text
+	placeholder := "*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*"
+	placeholderClean := strings.Trim(placeholder, "*_ ")
+	trimmedClean := strings.Trim(cleaned, "*_ \n\r\t")
+
+	if trimmedClean == "" || trimmedClean == placeholderClean || strings.EqualFold(trimmedClean, placeholderClean) {
+		return false
+	}
+	return true
+}
+
+// ReconcileMOCLinks scans the curated sections of an MOC (excluding ## Notes & Synthesis)
+// and prunes any bullet lines containing [[wikilinks]] whose targets are no longer in validMemberTitles.
+// Returns the updated markdown and a bool indicating if any lines were pruned.
+func ReconcileMOCLinks(mocContent string, validMemberTitles map[string]bool) (string, bool) {
+	if mocContent == "" || validMemberTitles == nil {
+		return mocContent, false
+	}
+
+	parts := strings.SplitN(mocContent, "## Notes & Synthesis", 2)
+	curatedPart := parts[0]
+	userNotesPart := ""
+	if len(parts) == 2 {
+		userNotesPart = "## Notes & Synthesis" + parts[1]
+	}
+
+	lines := strings.Split(curatedPart, "\n")
+	var newLines []string
+	changed := false
+
+	// Matches [[Target]] or [[Target|Alias]]
+	reWikilink := regexp.MustCompile(`\[\[([^\]\|]+)(?:\|[^\]]+)?\]\]`)
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Only check list item lines that contain a wikilink
+		if strings.HasPrefix(trimmed, "- ") && strings.Contains(line, "[[") {
+			matches := reWikilink.FindAllStringSubmatch(line, -1)
+			if len(matches) > 0 {
+				hasValidLink := false
+				for _, m := range matches {
+					targetTitle := strings.TrimSpace(m[1])
+					if validMemberTitles[targetTitle] || validMemberTitles[strings.ToLower(targetTitle)] {
+						hasValidLink = true
+						break
+					}
+				}
+				if !hasValidLink {
+					// Stale link, prune this line
+					changed = true
+					continue
+				}
+			}
+		}
+		newLines = append(newLines, line)
+	}
+
+	reconciledCurated := strings.Join(newLines, "\n")
+	if userNotesPart != "" {
+		return reconciledCurated + userNotesPart, changed
+	}
+	return reconciledCurated, changed
 }
 
 func extractMOCSections(mocContent string) []string {
@@ -1190,7 +1531,25 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 		r.db.WithContext(ctx).Save(&mocRecord)
 	}
 
-	// Update article_links
+	// Synchronize article_links: delete any targets that are no longer cluster members
+	validIDs := make(map[int64]bool)
+	for _, a := range cluster.Articles {
+		validIDs[a.ID] = true
+	}
+	for _, p := range deltaResp.Placements {
+		if p.ArticleID > 0 {
+			validIDs[p.ArticleID] = true
+		}
+	}
+	var existingLinks []repository.GormArticleLink
+	r.db.WithContext(ctx).Where("source_id = ?", cluster.ExistingMOC.ID).Find(&existingLinks)
+	for _, el := range existingLinks {
+		if !validIDs[el.TargetID] {
+			r.db.WithContext(ctx).Delete(&el)
+		}
+	}
+
+	// Add new article_links
 	for _, p := range deltaResp.Placements {
 		if p.ArticleID > 0 && p.ArticleID != cluster.ExistingMOC.ID {
 			var count int64
@@ -1204,6 +1563,72 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 				}
 				r.db.WithContext(ctx).Create(&link)
 			}
+		}
+	}
+
+	return nil
+}
+
+func (r *LibrarianRunner) saveReconciledMOC(ctx context.Context, cluster ClusterCandidate, reconciledContent string) error {
+	topicTitle := cluster.Tag
+	if cluster.ExistingMOC != nil && cluster.ExistingMOC.Title != "" {
+		cleanTitle := strings.TrimPrefix(cluster.ExistingMOC.Title, "MOC - ")
+		cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
+		cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
+		cleanTitle = strings.TrimSpace(cleanTitle)
+		if cleanTitle != "" {
+			topicTitle = cleanTitle
+		}
+	}
+
+	folder, err := r.organizer.EnsureTopicFolder(topicTitle)
+	if err != nil {
+		return fmt.Errorf("failed to ensure topic folder: %w", err)
+	}
+
+	targetFilename := fmt.Sprintf("MOC - %s.md", folder)
+	destinationPath := filepath.Join(r.dataDir, "articles", folder, targetFilename)
+	relArticlePath := fmt.Sprintf("/articles/%s/%s", folder, targetFilename)
+
+	var oldPath string
+	if cluster.ExistingMOC != nil && cluster.ExistingMOC.FilePath != "" {
+		existingPath := filepath.Join(r.dataDir, strings.TrimPrefix(cluster.ExistingMOC.FilePath, "/"))
+		if _, err := os.Stat(existingPath); err == nil {
+			oldPath = existingPath
+		}
+	}
+
+	dir := filepath.Dir(destinationPath)
+	_ = os.MkdirAll(dir, 0755)
+	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(destinationPath)))
+	if err := os.WriteFile(tmpFile, []byte(reconciledContent), 0644); err != nil {
+		return fmt.Errorf("failed to write tmp file: %w", err)
+	}
+	if err := os.Rename(tmpFile, destinationPath); err != nil {
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("failed to rename tmp file: %w", err)
+	}
+
+	if oldPath != "" && oldPath != destinationPath {
+		_ = os.Remove(oldPath)
+	}
+
+	var mocRecord repository.GormArticle
+	r.db.WithContext(ctx).First(&mocRecord, cluster.ExistingMOC.ID)
+	if mocRecord.ID > 0 {
+		mocRecord.Article = relArticlePath
+		r.db.WithContext(ctx).Save(&mocRecord)
+	}
+
+	validIDs := make(map[int64]bool)
+	for _, a := range cluster.Articles {
+		validIDs[a.ID] = true
+	}
+	var existingLinks []repository.GormArticleLink
+	r.db.WithContext(ctx).Where("source_id = ?", cluster.ExistingMOC.ID).Find(&existingLinks)
+	for _, el := range existingLinks {
+		if !validIDs[el.TargetID] {
+			r.db.WithContext(ctx).Delete(&el)
 		}
 	}
 

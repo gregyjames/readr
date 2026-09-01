@@ -1101,3 +1101,692 @@ func TestApplyDeltaPlacements_DuplicatePlacementsDeduplicated(t *testing.T) {
 		t.Errorf("expected [[Note 2]] to appear exactly once, but appeared %d times in:\n%s", count, result)
 	}
 }
+
+func TestHasCustomUserNotes(t *testing.T) {
+	// Case 1: Empty or missing section
+	if HasCustomUserNotes("# MOC - Empty\n## Concepts\n- [[A]]") {
+		t.Errorf("expected false for missing Notes & Synthesis")
+	}
+
+	// Case 2: Only default boilerplate placeholder
+	defaultMoc := `# MOC - Default
+## Core Concepts
+- [[Note 1]]
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*
+`
+	if HasCustomUserNotes(defaultMoc) {
+		t.Errorf("expected false for default placeholder text")
+	}
+
+	// Case 3: Custom user written notes
+	customMoc := `# MOC - Custom
+## Core Concepts
+- [[Note 1]]
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*
+
+Here are my custom architecture thoughts that must never be deleted!
+`
+	if !HasCustomUserNotes(customMoc) {
+		t.Errorf("expected true for custom user thoughts")
+	}
+}
+
+func TestReconcileMOCLinks(t *testing.T) {
+	mocContent := `# MOC - Distributed Systems
+
+## Core Concepts
+- [[Active Note]] - Core concept note.
+- [[Deleted Note]] - This note was deleted.
+- [[Re-filed Note|Custom Alias]] - This note was re-filed to another topic.
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+My custom thoughts linking to [[Deleted Note]] which should NOT be touched in user section.
+`
+
+	validMembers := map[string]bool{
+		"Active Note": true,
+		"active note": true,
+	}
+
+	reconciled, changed := ReconcileMOCLinks(mocContent, validMembers)
+	if !changed {
+		t.Fatalf("expected changed=true when pruning stale links")
+	}
+
+	// Active Note should remain in Core Concepts
+	if !strings.Contains(reconciled, "- [[Active Note]] - Core concept note.") {
+		t.Errorf("expected Active Note to be preserved in Core Concepts, got:\n%s", reconciled)
+	}
+
+	// Deleted Note and Re-filed Note must NOT be in Core Concepts
+	if strings.Contains(reconciled, "- [[Deleted Note]]") {
+		t.Errorf("expected Deleted Note to be pruned from Core Concepts")
+	}
+	if strings.Contains(reconciled, "- [[Re-filed Note|Custom Alias]]") {
+		t.Errorf("expected Re-filed Note to be pruned from Core Concepts")
+	}
+
+	// Custom user notes section MUST remain completely untouched (including [[Deleted Note]] in user thoughts)
+	if !strings.Contains(reconciled, "My custom thoughts linking to [[Deleted Note]] which should NOT be touched in user section.") {
+		t.Errorf("user notes section was corrupted:\n%s", reconciled)
+	}
+}
+
+func TestLibrarian_ReconcilesStaleLinksInExistingMOC(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// 1. Create existing MOC in topic folder with links to Note 1, Note 2, and Note 3 (which was deleted/re-filed)
+	topicFolder := filepath.Join(articlesDir, "Distributed Systems")
+	_ = os.MkdirAll(topicFolder, 0755)
+	mocPath := filepath.Join(topicFolder, "MOC - Distributed Systems.md")
+
+	existingMocBody := `# MOC - Distributed Systems
+
+## Core Concepts
+- [[Active Note 1]] - Active member 1.
+- [[Active Note 2]] - Active member 2.
+- [[Deleted Note 3]] - This note was deleted from the vault.
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*
+`
+	_ = os.WriteFile(mocPath, []byte(existingMocBody), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      100,
+		Title:   "MOC - Distributed Systems",
+		Tags:    "moc, distributed-systems",
+		Article: "/articles/Distributed Systems/MOC - Distributed Systems.md",
+	})
+
+	// Active cluster members: 5 notes (Note 1, 2, 4, 5, 6), Note 3 is absent/deleted
+	for i := 1; i <= 6; i++ {
+		if i == 3 {
+			continue // Deleted Note 3
+		}
+		title := fmt.Sprintf("Active Note %d", i)
+		filePath := filepath.Join(topicFolder, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "distributed-systems",
+			Article: fmt.Sprintf("/articles/Distributed Systems/%s.md", title),
+		})
+	}
+
+	// Seed legacy article_links
+	db.Create(&repository.GormArticleLink{ID: 1, SourceID: 100, TargetID: 1})
+	db.Create(&repository.GormArticleLink{ID: 2, SourceID: 100, TargetID: 2})
+	db.Create(&repository.GormArticleLink{ID: 3, SourceID: 100, TargetID: 3}) // Stale link
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{
+							"placements": [
+								{"article_id": 4, "target_section": "Core Concepts", "context_note": "Placed note 4."},
+								{"article_id": 5, "target_section": "Core Concepts", "context_note": "Placed note 5."},
+								{"article_id": 6, "target_section": "Core Concepts", "context_note": "Placed note 6."}
+							]
+						}`,
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.UpdatedMOCs != 1 {
+		t.Errorf("expected 1 MOC updated, got %+v", result)
+	}
+
+	updatedBytes, err := os.ReadFile(mocPath)
+	if err != nil {
+		t.Fatalf("failed to read updated MOC: %v", err)
+	}
+	updatedContent := string(updatedBytes)
+
+	// Deleted Note 3 must be pruned
+	if strings.Contains(updatedContent, "[[Deleted Note 3]]") {
+		t.Errorf("expected Deleted Note 3 to be pruned from MOC markdown, got:\n%s", updatedContent)
+	}
+
+	// Active Note 1, 2, 4, 5, 6 must all be present
+	for _, expectedNote := range []string{"Active Note 1", "Active Note 2", "Active Note 4", "Active Note 5", "Active Note 6"} {
+		if !strings.Contains(updatedContent, fmt.Sprintf("[[%s]]", expectedNote)) {
+			t.Errorf("expected %s to be present in MOC markdown", expectedNote)
+		}
+	}
+
+	// In article_links, TargetID 3 must be deleted
+	var staleCount int64
+	db.Model(&repository.GormArticleLink{}).Where("source_id = ? AND target_id = ?", 100, 3).Count(&staleCount)
+	if staleCount != 0 {
+		t.Errorf("expected stale article_link for target_id 3 to be deleted, got count %d", staleCount)
+	}
+}
+
+func TestLibrarian_PruneEmptyMOC_WhenNoUserNotes(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// 1. Seed an empty MOC with 0 member notes and no custom notes
+	topicFolder := filepath.Join(articlesDir, "Orphaned Topic")
+	_ = os.MkdirAll(topicFolder, 0755)
+	mocPath := filepath.Join(topicFolder, "MOC - Orphaned Topic.md")
+
+	mocContent := `# MOC - Orphaned Topic
+
+## Core Concepts
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*
+`
+	_ = os.WriteFile(mocPath, []byte(mocContent), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      200,
+		Title:   "MOC - Orphaned Topic",
+		Tags:    "moc, orphaned-topic",
+		Article: "/articles/Orphaned Topic/MOC - Orphaned Topic.md",
+	})
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("LLM should not be called when 0 clusters are detected")
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.PrunedMOCs != 1 {
+		t.Errorf("expected 1 MOC pruned, got %d", result.PrunedMOCs)
+	}
+
+	// Verify MOC file is deleted from disk
+	if _, err := os.Stat(mocPath); !os.IsNotExist(err) {
+		t.Errorf("expected MOC file %s to be deleted", mocPath)
+	}
+
+	// Verify topic folder is deleted
+	if _, err := os.Stat(topicFolder); !os.IsNotExist(err) {
+		t.Errorf("expected empty topic folder %s to be pruned", topicFolder)
+	}
+
+	// Verify DB record is deleted
+	var count int64
+	db.Model(&repository.GormArticle{}).Where("id = ?", 200).Count(&count)
+	if count != 0 {
+		t.Errorf("expected MOC DB record to be deleted, got count %d", count)
+	}
+}
+
+func TestLibrarian_RetainEmptyMOC_WhenUserNotesExist(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// 1. Seed an empty MOC with 0 member notes BUT with custom user thoughts
+	topicFolder := filepath.Join(articlesDir, "User Essay Topic")
+	_ = os.MkdirAll(topicFolder, 0755)
+	mocPath := filepath.Join(topicFolder, "MOC - User Essay Topic.md")
+
+	mocContent := `# MOC - User Essay Topic
+
+## Core Concepts
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*
+
+I wrote extensive custom notes and reflections on this topic here! DO NOT DELETE ME!
+`
+	_ = os.WriteFile(mocPath, []byte(mocContent), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      300,
+		Title:   "MOC - User Essay Topic",
+		Tags:    "moc, user-essay-topic",
+		Article: "/articles/User Essay Topic/MOC - User Essay Topic.md",
+	})
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("LLM should not be called when 0 clusters are detected")
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.PrunedMOCs != 0 {
+		t.Errorf("expected 0 MOCs pruned, got %d", result.PrunedMOCs)
+	}
+
+	// Verify MOC file and folder are preserved
+	if _, err := os.Stat(mocPath); err != nil {
+		t.Errorf("expected MOC file %s with user notes to be preserved: %v", mocPath, err)
+	}
+
+	// Verify DB record is preserved
+	var count int64
+	db.Model(&repository.GormArticle{}).Where("id = ?", 300).Count(&count)
+	if count != 1 {
+		t.Errorf("expected MOC DB record to be preserved, got count %d", count)
+	}
+}
+
+func TestTitleContainsTopic(t *testing.T) {
+	tests := []struct {
+		title    string
+		topic    string
+		expected bool
+	}{
+		{"Google employees are testing Gemini", "google", true},
+		{"Google employees are testing Gemini", "GOOGLE", true},
+		{"Google employees are testing Gemini", " google ", true},
+		{"Google employees are testing Gemini", "anthropic", false},
+		{"An Anthropic researcher gave a talk", "anthropic", true},
+		{"Sony sues Anthropic over copyrights", "Anthropic", true},
+		{"Claiming insurance in Paris", "ai", false},  // "ai" in "claiming" should NOT match
+		{"Frontier AI Safety Initiative", "ai", true}, // whole word "AI" should match
+		{"Raft Distributed Systems Architecture", "distributed-systems", true},
+		{"Raft Distributed Systems Architecture", " distributed_systems ", true},
+	}
+
+	for _, tt := range tests {
+		got := titleContainsTopic(tt.title, tt.topic)
+		if got != tt.expected {
+			t.Errorf("titleContainsTopic(%q, %q) = %v, expected %v", tt.title, tt.topic, got, tt.expected)
+		}
+	}
+}
+
+func TestDeterminePrimaryTopicFolders(t *testing.T) {
+	clusters := []ClusterCandidate{
+		{
+			Tag: "google",
+			Articles: []repository.ArticleRecord{
+				{ID: 101, Title: "Google employees are already testing the next Gemini Flash AI model", Tags: "ai, google, anthropic, business"},
+				{ID: 102, Title: "Google Workspace Overview", Tags: "google"},
+				{ID: 103, Title: "Google Search Engine", Tags: "google"},
+				{ID: 104, Title: "Google Cloud Platform", Tags: "google"},
+				{ID: 105, Title: "Google Pixel Review", Tags: "google"},
+				{ID: 106, Title: "Google Maps Tips", Tags: "google"},
+				{ID: 107, Title: "Google Android 15", Tags: "google"},
+			}, // size 7 (large cluster)
+		},
+		{
+			Tag: "anthropic",
+			Articles: []repository.ArticleRecord{
+				{ID: 101, Title: "Google employees are already testing the next Gemini Flash AI model", Tags: "ai, google, anthropic, business"},
+				{ID: 201, Title: "An Anthropic researcher gave us a peek at self-improving AI", Tags: "ai, anthropic, development"},
+				{ID: 202, Title: "Claude 3.5 Sonnet Release", Tags: "anthropic"},
+			}, // size 3 (small cluster)
+		},
+		{
+			Tag: "ai",
+			Articles: []repository.ArticleRecord{
+				{ID: 101, Title: "Google employees are already testing the next Gemini Flash AI model", Tags: "ai, google, anthropic, business"},
+				{ID: 201, Title: "An Anthropic researcher gave us a peek at self-improving AI", Tags: "ai, anthropic, development"},
+				{ID: 301, Title: "General AI Note 1", Tags: "ai"},
+				{ID: 302, Title: "General AI Note 2", Tags: "ai"},
+				{ID: 303, Title: "General AI Note 3", Tags: "ai"},
+				{ID: 304, Title: "General AI Note 4", Tags: "ai"},
+				{ID: 305, Title: "General AI Note 5", Tags: "ai"},
+				{ID: 306, Title: "General AI Note 6", Tags: "ai"},
+			}, // size 8 (largest cluster)
+		},
+	}
+
+	primary := DeterminePrimaryTopicFolders(clusters)
+
+	// Article 101 has "Google" in the title -> MUST be filed into "google", despite anthropic cluster being smaller (3 vs 7)
+	if primary[101] != "google" {
+		t.Errorf("expected article 101 with 'Google' in title to have primary topic 'google', got %q", primary[101])
+	}
+
+	// Article 201 has "Anthropic" in the title -> MUST be filed into "anthropic"
+	if primary[201] != "anthropic" {
+		t.Errorf("expected article 201 with 'Anthropic' in title to have primary topic 'anthropic', got %q", primary[201])
+	}
+
+	// Article 301 has no title match -> files into 'ai'
+	if primary[301] != "ai" {
+		t.Errorf("expected article 301 to have primary topic 'ai', got %q", primary[301])
+	}
+}
+
+func TestLibrarian_PrimaryTopicSpecificityFiling(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// Seed 5 AI articles (broad cluster, size 6)
+	for i := 1; i <= 5; i++ {
+		title := fmt.Sprintf("AI Note %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "ai",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	// Seed 4 specific Anthropic articles + 1 overlapping note (specific cluster, size 5)
+	for i := 10; i <= 14; i++ {
+		title := fmt.Sprintf("Anthropic Note %d", i)
+		tags := "anthropic"
+		if i == 10 {
+			tags = "ai, anthropic" // Belongs to both AI (size 6) and Anthropic (size 5)
+		}
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    tags,
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{"topic_title":"Synthesized Topic","executive_summary":"Summary","sections":[]}`,
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.CreatedMOCs != 2 {
+		t.Errorf("expected 2 MOCs created (AI and Anthropic), got %d", result.CreatedMOCs)
+	}
+
+	// Overlapping note 10 MUST be filed in Anthropic/ (the more specific cluster, size 5), NOT AI/ (size 6)
+	var note10 repository.GormArticle
+	db.First(&note10, 10)
+	if !strings.HasPrefix(note10.Article, "/articles/Anthropic/") && !strings.HasPrefix(note10.Article, "/articles/anthropic/") && !strings.HasPrefix(note10.Article, "/articles/Synthesized Topic/") {
+		t.Errorf("expected Note 10 to be filed into specific Anthropic topic folder, got %q", note10.Article)
+	}
+
+	// Verify physical file exists in the specific folder
+	anthropicFolder := filepath.Join(articlesDir, "Anthropic")
+	if _, err := os.Stat(anthropicFolder); os.IsNotExist(err) {
+		// Or sanitized topic
+		anthropicFolder = filepath.Join(articlesDir, "Synthesized Topic")
+	}
+	entries, _ := os.ReadDir(anthropicFolder)
+	if len(entries) < 5 {
+		t.Errorf("expected Anthropic topic folder to retain all its member notes, found %d entries", len(entries))
+	}
+}
+
+func TestLibrarian_PrunesSecondaryCompetitorLinksFromMOC(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// 1. Existing MOC - Anthropic containing a Google note and Anthropic notes
+	anthropicFolder := filepath.Join(articlesDir, "Anthropic")
+	_ = os.MkdirAll(anthropicFolder, 0755)
+	mocPath := filepath.Join(anthropicFolder, "MOC - Anthropic.md")
+
+	mocBody := `# MOC - Anthropic
+
+## Core Concepts
+- [[An Anthropic researcher gave us a peek at self-improving AI]] - Frontier research.
+- [[Claude 3.5 Sonnet Release]] - Major model release.
+- [[Google employees are already testing the next Gemini Flash AI model]] - Competitor model.
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*
+`
+	_ = os.WriteFile(mocPath, []byte(mocBody), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      500,
+		Title:   "MOC - Anthropic",
+		Tags:    "moc, anthropic",
+		Article: "/articles/Anthropic/MOC - Anthropic.md",
+	})
+
+	// 5 Anthropic articles
+	for i := 1; i <= 5; i++ {
+		title := fmt.Sprintf("Anthropic Core Note %d", i)
+		if i == 1 {
+			title = "An Anthropic researcher gave us a peek at self-improving AI"
+		} else if i == 2 {
+			title = "Claude 3.5 Sonnet Release"
+		}
+		filePath := filepath.Join(anthropicFolder, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "anthropic",
+			Article: fmt.Sprintf("/articles/Anthropic/%s.md", title),
+		})
+	}
+
+	// 5 Google articles (including the one with secondary anthropic tag)
+	googleFolder := filepath.Join(articlesDir, "Google")
+	_ = os.MkdirAll(googleFolder, 0755)
+	for i := 10; i <= 14; i++ {
+		title := fmt.Sprintf("Google Note %d", i)
+		tags := "google"
+		if i == 10 {
+			title = "Google employees are already testing the next Gemini Flash AI model"
+			tags = "ai, google, anthropic, business" // has secondary anthropic tag!
+		}
+		filePath := filepath.Join(googleFolder, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    tags,
+			Article: fmt.Sprintf("/articles/Google/%s.md", title),
+		})
+	}
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{"topic_title":"Google","executive_summary":"Summary","sections":[]}`,
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.UpdatedMOCs < 1 {
+		t.Errorf("expected MOC - Anthropic to be updated/reconciled, got %+v", result)
+	}
+
+	updatedBytes, err := os.ReadFile(mocPath)
+	if err != nil {
+		t.Fatalf("failed to read MOC: %v", err)
+	}
+	updatedContent := string(updatedBytes)
+
+	// Google employees note MUST be pruned from MOC - Anthropic!
+	if strings.Contains(updatedContent, "[[Google employees are already testing the next Gemini Flash AI model]]") {
+		t.Errorf("expected Google note to be pruned from MOC - Anthropic, got:\n%s", updatedContent)
+	}
+
+	// Anthropic notes must remain
+	if !strings.Contains(updatedContent, "[[An Anthropic researcher gave us a peek at self-improving AI]]") {
+		t.Errorf("expected Anthropic note to remain in MOC - Anthropic")
+	}
+}
+
+func TestLibrarian_SubMinSizeClustersAfterPrimaryFiltering_Skipped(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// Seed 4 specific "Docker" articles (cluster size 5 because of 1 shared note)
+	for i := 1; i <= 4; i++ {
+		title := fmt.Sprintf("Docker Note %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "docker",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	// Seed 1 shared note with tags "docker, kubernetes" where Title has affinity to Kubernetes
+	sharedTitle := "Kubernetes Pod Deployment Guide"
+	sharedPath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", sharedTitle))
+	_ = os.WriteFile(sharedPath, []byte(fmt.Sprintf("# %s\nContent", sharedTitle)), 0644)
+	db.Create(&repository.GormArticle{
+		ID:      5,
+		Title:   sharedTitle,
+		Tags:    "docker, kubernetes",
+		Article: fmt.Sprintf("/articles/%s.md", sharedTitle),
+	})
+
+	// Seed 5 Kubernetes articles (cluster size 6)
+	for i := 10; i <= 14; i++ {
+		title := fmt.Sprintf("Kubernetes Note %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "kubernetes",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	// Shared note 5 has Title-Affinity to Kubernetes.
+	// Therefore, Kubernetes retains 6 notes (>= minSize 5).
+	// Docker loses note 5 and drops to 4 notes (< minSize 5).
+	// Only 1 MOC (Kubernetes) should be created, Docker should be skipped!
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{"topic_title":"Kubernetes Cluster","executive_summary":"Summary","sections":[]}`,
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.CreatedMOCs != 1 {
+		t.Errorf("expected exactly 1 MOC created (Kubernetes), got %d", result.CreatedMOCs)
+	}
+}
+
+func TestLibrarian_PruneEmptyMOC_DoesNotPruneRegularArticlesWithMOCTagSubstring(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// Seed a regular article with tags "mocking, unit-testing" (has substring "moc" in "mocking")
+	regularFile := filepath.Join(articlesDir, "Go Unit Testing with Mocking.md")
+	_ = os.WriteFile(regularFile, []byte("# Go Unit Testing with Mocking\nContent"), 0644)
+	db.Create(&repository.GormArticle{
+		ID:      801,
+		Title:   "Go Unit Testing with Mocking",
+		Tags:    "mocking, unit-testing",
+		Article: "/articles/Go Unit Testing with Mocking.md",
+	})
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	pruned, err := runner.pruneEmptyMOCs(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if pruned != 0 {
+		t.Errorf("expected 0 articles pruned, got %d", pruned)
+	}
+
+	// Verify article still exists in DB and on disk
+	var count int64
+	db.Model(&repository.GormArticle{}).Where("id = ?", 801).Count(&count)
+	if count != 1 {
+		t.Errorf("expected regular article 801 to remain in DB, found %d", count)
+	}
+	if _, err := os.Stat(regularFile); os.IsNotExist(err) {
+		t.Errorf("expected regular article file to remain on disk at %s", regularFile)
+	}
+}
