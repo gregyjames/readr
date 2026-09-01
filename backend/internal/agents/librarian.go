@@ -92,7 +92,7 @@ type LibrarianRunResult struct {
 	ClustersDetected int      `json:"clusters_detected"`
 	CreatedMOCs      int      `json:"created_mocs"`
 	UpdatedMOCs      int      `json:"updated_mocs"`
-	PrunedMOCs       int      `json:"pruned_mocs,omitempty"`
+	PrunedMOCs       int      `json:"pruned_mocs"`
 	ExecutionTimeMs  int64    `json:"execution_time_ms"`
 	Errors           []string `json:"errors,omitempty"`
 }
@@ -385,6 +385,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	primaryTopics := DeterminePrimaryTopicFolders(clusters)
 
 	// Filter each cluster candidate list so an MOC only manages articles whose primary topic belongs to this cluster
+	var validClusters []ClusterCandidate
 	for i := range clusters {
 		clusterTopic := clusters[i].Tag
 		if clusters[i].ExistingMOC != nil && clusters[i].ExistingMOC.Title != "" {
@@ -406,7 +407,14 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 			}
 		}
 		clusters[i].Articles = primaryArticles
+
+		// Only retain clusters that meet minSize threshold (or are existing MOCs undergoing link reconciliation)
+		if len(clusters[i].Articles) >= minSize || clusters[i].ExistingMOC != nil {
+			validClusters = append(validClusters, clusters[i])
+		}
 	}
+	clusters = validClusters
+	result.ClustersDetected = len(clusters)
 
 	for _, cluster := range clusters {
 		if cluster.ExistingMOC != nil {
@@ -562,6 +570,10 @@ func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
 
 	prunedCount := 0
 	for _, moc := range mocs {
+		if !repository.IsMOCArticle(moc.Title, moc.Tags) {
+			continue
+		}
+
 		// 1. Extract tag from MOC
 		tag := ""
 		tagParts := strings.Split(moc.Tags, ",")
@@ -579,18 +591,24 @@ func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
 		// 2. Count active non-MOC member notes with this tag or in this folder
 		var memberCount int64
 		if tag != "" {
-			r.db.WithContext(ctx).Model(&repository.GormArticle{}).
+			if err := r.db.WithContext(ctx).Model(&repository.GormArticle{}).
 				Where("deleted_at IS NULL AND id != ?", moc.ID).
 				Where("tags LIKE ? OR article LIKE ?", "%"+tag+"%", "%/articles/"+tag+"/%").
-				Count(&memberCount)
+				Count(&memberCount).Error; err != nil {
+				r.logger.Error("Failed to count member notes for MOC pruning", zap.Int64("id", moc.ID), zap.Error(err))
+				continue
+			}
 		}
 
 		// Also check article_links
 		var linkCount int64
-		r.db.WithContext(ctx).Table("article_links").
+		if err := r.db.WithContext(ctx).Table("article_links").
 			Joins("JOIN articles ON articles.id = article_links.target_id").
 			Where("article_links.source_id = ? AND articles.deleted_at IS NULL", moc.ID).
-			Count(&linkCount)
+			Count(&linkCount).Error; err != nil {
+			r.logger.Error("Failed to count article links for MOC pruning", zap.Int64("id", moc.ID), zap.Error(err))
+			continue
+		}
 
 		if memberCount > 0 || linkCount > 0 {
 			continue // MOC is not empty
@@ -610,15 +628,29 @@ func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
 			}
 		}
 
-		// 4. Safe to prune: remove physical file
-		if err == nil {
-			_ = os.Remove(absPath)
+		// 4. Delete MOC record from SQLite and article_links in transaction
+		txErr := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Where("source_id = ? OR target_id = ?", moc.ID, moc.ID).Delete(&repository.GormArticleLink{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Delete(&moc).Error; err != nil {
+				return err
+			}
+			_ = tx.Exec("DELETE FROM articles_fts WHERE rowid = ?", moc.ID).Error
+			return nil
+		})
+		if txErr != nil {
+			r.logger.Error("Failed to delete empty MOC from database",
+				zap.Int64("id", moc.ID),
+				zap.Error(txErr),
+			)
+			continue
 		}
 
-		// 5. Delete MOC record from SQLite and article_links
-		r.db.WithContext(ctx).Where("source_id = ? OR target_id = ?", moc.ID, moc.ID).Delete(&repository.GormArticleLink{})
-		r.db.WithContext(ctx).Delete(&moc)
-		r.db.WithContext(ctx).Exec("DELETE FROM articles_fts WHERE rowid = ?", moc.ID)
+		// 5. Remove physical file from disk
+		if absPath != "" {
+			_ = os.Remove(absPath)
+		}
 
 		prunedCount++
 		r.logger.Info("Pruned empty automated MOC with 0 notes",

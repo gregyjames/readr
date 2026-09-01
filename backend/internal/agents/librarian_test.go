@@ -1681,3 +1681,112 @@ func TestLibrarian_PrunesSecondaryCompetitorLinksFromMOC(t *testing.T) {
 		t.Errorf("expected Anthropic note to remain in MOC - Anthropic")
 	}
 }
+
+func TestLibrarian_SubMinSizeClustersAfterPrimaryFiltering_Skipped(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// Seed 4 specific "Docker" articles (cluster size 5 because of 1 shared note)
+	for i := 1; i <= 4; i++ {
+		title := fmt.Sprintf("Docker Note %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "docker",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	// Seed 1 shared note with tags "docker, kubernetes" where Title has affinity to Kubernetes
+	sharedTitle := "Kubernetes Pod Deployment Guide"
+	sharedPath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", sharedTitle))
+	_ = os.WriteFile(sharedPath, []byte(fmt.Sprintf("# %s\nContent", sharedTitle)), 0644)
+	db.Create(&repository.GormArticle{
+		ID:      5,
+		Title:   sharedTitle,
+		Tags:    "docker, kubernetes",
+		Article: fmt.Sprintf("/articles/%s.md", sharedTitle),
+	})
+
+	// Seed 5 Kubernetes articles (cluster size 6)
+	for i := 10; i <= 14; i++ {
+		title := fmt.Sprintf("Kubernetes Note %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "kubernetes",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	// Shared note 5 has Title-Affinity to Kubernetes.
+	// Therefore, Kubernetes retains 6 notes (>= minSize 5).
+	// Docker loses note 5 and drops to 4 notes (< minSize 5).
+	// Only 1 MOC (Kubernetes) should be created, Docker should be skipped!
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": `{"topic_title":"Kubernetes Cluster","executive_summary":"Summary","sections":[]}`,
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.CreatedMOCs != 1 {
+		t.Errorf("expected exactly 1 MOC created (Kubernetes), got %d", result.CreatedMOCs)
+	}
+}
+
+func TestLibrarian_PruneEmptyMOC_DoesNotPruneRegularArticlesWithMOCTagSubstring(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// Seed a regular article with tags "mocking, unit-testing" (has substring "moc" in "mocking")
+	regularFile := filepath.Join(articlesDir, "Go Unit Testing with Mocking.md")
+	_ = os.WriteFile(regularFile, []byte("# Go Unit Testing with Mocking\nContent"), 0644)
+	db.Create(&repository.GormArticle{
+		ID:      801,
+		Title:   "Go Unit Testing with Mocking",
+		Tags:    "mocking, unit-testing",
+		Article: "/articles/Go Unit Testing with Mocking.md",
+	})
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	pruned, err := runner.pruneEmptyMOCs(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if pruned != 0 {
+		t.Errorf("expected 0 articles pruned, got %d", pruned)
+	}
+
+	// Verify article still exists in DB and on disk
+	var count int64
+	db.Model(&repository.GormArticle{}).Where("id = ?", 801).Count(&count)
+	if count != 1 {
+		t.Errorf("expected regular article 801 to remain in DB, found %d", count)
+	}
+	if _, err := os.Stat(regularFile); os.IsNotExist(err) {
+		t.Errorf("expected regular article file to remain on disk at %s", regularFile)
+	}
+}
