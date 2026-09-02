@@ -21,7 +21,7 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to, _from, next) => {
-  if (!authState.isLoaded || to.path !== '/login') {
+  if (!authState.isLoaded) {
     await checkAuthStatus()
   }
 
