@@ -221,6 +221,25 @@ const copyArticleLink = () => {
   } catch {}
 }
 
+const isGraphOpen = ref(localStorage.getItem('readr_local_graph_open') !== 'false')
+
+const toggleGraphSidebar = () => {
+  isGraphOpen.value = !isGraphOpen.value
+  try {
+    localStorage.setItem('readr_local_graph_open', String(isGraphOpen.value))
+  } catch {}
+  nextTick(() => {
+    if (isGraphOpen.value) {
+      if (localNetwork) {
+        localNetwork.redraw()
+        localNetwork.fit()
+      } else {
+        loadLocalGraph()
+      }
+    }
+  })
+}
+
 type NotificationState = 'idle' | 'running' | 'completed' | 'error'
 const notificationState = ref<NotificationState>('idle')
 const notificationMessage = ref('')
@@ -701,7 +720,11 @@ onBeforeUnmount(() => {
   </div>
 
   <div class="flex flex-col lg:flex-row w-full max-w-6xl mx-auto items-start relative px-4 sm:px-6">
-    <article ref="articleRef" class="w-full lg:w-2/3 max-w-2xl mx-auto py-8 sm:py-12 transition-colors">
+    <article
+      ref="articleRef"
+      class="w-full transition-all duration-300 py-6 sm:py-10"
+      :class="isGraphOpen ? 'lg:w-2/3 max-w-2xl mx-auto' : 'max-w-3xl mx-auto'"
+    >
       
       <!-- Floating Reader HUD & Companion Bar (Pinned at top) -->
       <div class="sticky top-16 md:top-4 z-30 flex items-center justify-between gap-3 mb-8 p-2 rounded-2xl bg-white/90 dark:bg-[#12151C]/90 backdrop-blur-xl border border-gray-200/80 dark:border-white/[0.08] shadow-md transition-all">
@@ -757,6 +780,17 @@ onBeforeUnmount(() => {
             <span v-if="readerFontSize === 'sm'">A-</span>
             <span v-else-if="readerFontSize === 'base'">A</span>
             <span v-else class="font-bold text-emerald-600 dark:text-emerald-400">A+</span>
+          </button>
+
+          <!-- Local Orbit Graph Toggle -->
+          <button
+            @click="toggleGraphSidebar"
+            class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-mono transition-all cursor-pointer border"
+            :class="isGraphOpen ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-medium' : 'bg-gray-100/70 dark:bg-white/[0.04] border-gray-200/50 dark:border-white/[0.04] text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'"
+            title="Toggle Local Orbit Graph"
+          >
+            <span class="w-1.5 h-1.5 rounded-full" :class="isGraphOpen ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400 dark:bg-gray-500'"></span>
+            <span class="hidden sm:inline">Orbit</span>
           </button>
 
           <!-- Copy Link -->
@@ -919,20 +953,71 @@ onBeforeUnmount(() => {
 
     </article>
     
-    <!-- Local Knowledge Graph Sidebar -->
-    <aside class="hidden lg:block w-1/3 sticky top-8 ml-8">
-      <!-- Local Orbit Graph Card -->
-      <div class="bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] overflow-hidden shadow-2xs">
+    <!-- Dedicated Collapsible Local Knowledge Graph Sidebar -->
+    <aside
+      v-if="isGraphOpen"
+      class="w-full lg:w-80 xl:w-96 flex-shrink-0 sticky top-16 md:top-8 mt-8 lg:mt-0 lg:ml-8 transition-all duration-300"
+    >
+      <div class="bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] overflow-hidden shadow-sm">
+        <!-- Header with Title, Node count, Zoom & Collapse Action -->
         <div class="px-4 py-3 border-b border-gray-100 dark:border-white/[0.06] font-medium text-xs text-gray-700 dark:text-gray-300 flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span class="font-mono text-xs">Local Orbit Graph</span>
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span class="font-mono font-semibold text-xs text-gray-900 dark:text-gray-100">Local Orbit Graph</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.05] text-gray-500 dark:text-gray-400">
+              {{ backlinks.length + 1 }}
+            </span>
           </div>
-          <GraphZoomControls @zoom-in="localZoomIn" @zoom-out="localZoomOut" @fit="localFitView" />
+
+          <div class="flex items-center gap-1.5">
+            <GraphZoomControls @zoom-in="localZoomIn" @zoom-out="localZoomOut" @fit="localFitView" />
+            <button
+              @click="toggleGraphSidebar"
+              class="p-1 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition-colors cursor-pointer"
+              title="Collapse sidebar"
+            >
+              <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
         </div>
-        <div ref="localGraphContainer" class="w-full h-[300px]"></div>
+
+        <!-- Vis-Network Graph Container -->
+        <div ref="localGraphContainer" class="w-full h-[360px]"></div>
+
+        <!-- Inset Connections List -->
+        <div v-if="backlinks.length > 0" class="px-4 py-3 border-t border-gray-100 dark:border-white/[0.06] bg-gray-50/50 dark:bg-white/[0.01]">
+          <div class="text-[10px] font-mono uppercase text-gray-400 mb-2 font-semibold">
+            Connected Notes ({{ backlinks.length }})
+          </div>
+          <div class="space-y-1 max-h-32 overflow-y-auto">
+            <router-link
+              v-for="link in backlinks"
+              :key="link.ID"
+              :to="`/articles/${link.ID}`"
+              class="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 py-1 transition-colors"
+            >
+              <span class="truncate pr-2">{{ link.title }}</span>
+              <span class="text-gray-400 text-[10px]">&rarr;</span>
+            </router-link>
+          </div>
+        </div>
       </div>
     </aside>
+
+    <!-- Collapsed Floating Edge Trigger (Desktop) -->
+    <button
+      v-else
+      @click="toggleGraphSidebar"
+      class="hidden lg:flex fixed right-6 top-24 z-30 items-center gap-2 px-3 py-2 rounded-2xl bg-white/90 dark:bg-[#12151C]/90 backdrop-blur-xl border border-gray-200/80 dark:border-white/[0.08] shadow-sm hover:shadow-md hover:border-emerald-500/40 text-xs font-mono text-gray-600 dark:text-gray-300 transition-all cursor-pointer group"
+      title="Open Local Orbit Graph"
+    >
+      <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+      <span class="font-medium">Orbit Graph</span>
+      <span class="text-gray-400 group-hover:translate-x-0.5 transition-transform">&larr;</span>
+    </button>
 
     <div 
       v-if="showLinker" 
