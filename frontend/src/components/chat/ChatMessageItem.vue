@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, watch, nextTick } from 'vue'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 import type { Message } from '../../types/chat'
@@ -23,9 +24,10 @@ const renderedContent = computed(() => {
   if (!props.message.content) return ''
   try {
     const html = marked.parse(props.message.content, { async: false })
-    return typeof html === 'string' ? html : ''
+    return typeof html === 'string' ? DOMPurify.sanitize(html) : ''
   } catch (err) {
-    return props.message.content
+    // Never fall back to the raw string: it reaches v-html.
+    return ''
   }
 })
 

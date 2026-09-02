@@ -76,6 +76,7 @@ import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMagicKeys, watchDebounced } from '@vueuse/core'
 import axios from 'axios'
+import DOMPurify from 'dompurify'
 import emitter from '../event-bus'
 import { authState } from '../store/auth'
 
@@ -178,7 +179,11 @@ watchDebounced(query, async (newQuery) => {
   isLoading.value = true
   try {
     const res = await axios.get<SearchResult[]>(`/api/search?q=${encodeURIComponent(newQuery)}`)
-    results.value = res.data || []
+    // The excerpt is server-built HTML (FTS5 snippet); keep only the <mark> highlight.
+    results.value = (res.data || []).map(r => ({
+      ...r,
+      excerpt: DOMPurify.sanitize(r.excerpt ?? '', { ALLOWED_TAGS: ['mark'], ALLOWED_ATTR: [] })
+    }))
     selectedIndex.value = 0
   } catch (err) {
     console.error('Search failed:', err)
