@@ -148,6 +148,7 @@ watch([viewMode, sortOrder, selectedTag, filterMocOnly], () => {
 })
 
 const totalMocs = computed(() => articles.value.filter(isMocArticle).length)
+const totalNotes = computed(() => articles.value.filter(a => !isMocArticle(a)).length)
 
 const filteredArticles = computed(() => {
   let list = [...articles.value]
@@ -157,9 +158,11 @@ const filteredArticles = computed(() => {
     list = list.filter(a => a.parsedTags.includes(selectedTag.value!))
   }
 
-  // Filter MOCs
+  // Filter MOCs: Hubs tab shows ONLY MOCs; Notes tab shows ONLY non-MOC articles
   if (filterMocOnly.value) {
     list = list.filter(isMocArticle)
+  } else {
+    list = list.filter(a => !isMocArticle(a))
   }
 
 
@@ -203,18 +206,19 @@ const secondaryArticles = computed(() => {
           </span>
         </div>
 
-        <!-- Filter Tabs: All vs MOC Hubs -->
+        <!-- Filter Tabs: Notes vs Hubs -->
         <div class="flex items-center bg-gray-100/70 dark:bg-white/[0.04] p-0.5 rounded-lg border border-gray-200/50 dark:border-white/[0.05]">
           <button
             @click="filterMocOnly = false"
             :class="[
-              'px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer',
+              'px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5',
               !filterMocOnly
                 ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs'
                 : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
             ]"
           >
-            All Notes
+            <span>Notes</span>
+            <span class="text-[10px] font-mono opacity-70 ml-0.5">{{ totalNotes }}</span>
           </button>
           <button
             @click="filterMocOnly = true"
