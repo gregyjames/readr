@@ -3,6 +3,7 @@ import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import axios from 'axios'
 import emitter from '../event-bus.ts'
 import BookmarkIcon from '../assets/book.svg'
+import { useRoute, useRouter } from 'vue-router'
 
 interface Article {
   ID: number
@@ -16,26 +17,38 @@ interface Article {
 defineProps<{ msg?: string }>()
 
 const articles = ref<Article[]>([])
-
-import { useRoute, useRouter} from 'vue-router'
 const route = useRoute()
 const router = useRouter()
 
-const viewMode = ref<'card' | 'list'>('card')
+type ViewMode = 'studio' | 'ledger' | 'timeline'
+const viewMode = ref<ViewMode>('studio')
 const selectedTag = ref<string | null>(null)
-const sortOrder = ref<'latest' | 'oldest'>('latest')
+const filterMocOnly = ref(false)
+const sortOrder = ref<'latest' | 'oldest' | 'title'>('latest')
+const searchQuery = ref('')
+
+const isQueryUrl = computed(() => {
+  const q = searchQuery.value.trim()
+  return /^https?:\/\//i.test(q) || (q.includes('.') && !q.includes(' ') && q.length > 4)
+})
+
+const isIngesting = ref(false)
 
 const fetchArticles = async () => {
-  const res = await axios.get('/api/getarticles')
-  articles.value = res.data.map((article: any) => ({
-    ...article,
-    parsedTags: article.tags ? article.tags.split(',').map((tag: string) => tag.trim()) : []
-  }))
-  await nextTick()
-  initReveal()
+  try {
+    const res = await axios.get('/api/getarticles')
+    articles.value = res.data.map((article: any) => ({
+      ...article,
+      parsedTags: article.tags ? article.tags.split(',').map((tag: string) => tag.trim()) : []
+    }))
+    await nextTick()
+    initReveal()
+  } catch (err) {
+    console.error('Failed to load articles', err)
+  }
 }
 
-// Scroll-reveal via IntersectionObserver — no deps needed
+// Scroll-reveal via IntersectionObserver
 let observer: IntersectionObserver | null = null
 
 function initReveal() {
@@ -49,46 +62,78 @@ function initReveal() {
         }
       })
     },
-    { threshold: 0.12, rootMargin: '0px 0px -40px 0px' }
+    { threshold: 0.1, rootMargin: '0px 0px -20px 0px' }
   )
   document.querySelectorAll('.reveal-item').forEach((el) => observer!.observe(el))
 }
 
-// Format unix timestamp (article ID) as a readable date
 function formatDate(unixTs: number): string {
-  // IDs under ~1e9 are likely DB sequential IDs, not timestamps — fall back gracefully
   if (unixTs < 1_000_000_000) return ''
   const ms = unixTs < 100_000_000_000 ? unixTs * 1000 : unixTs
   const d = new Date(ms)
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-onMounted(async () => {
-  await fetchArticles()
-  const queryView = route.query.view
-  const storedView = localStorage.getItem('viewMode')
+function formatShortDate(unixTs: number): string {
+  if (unixTs < 1_000_000_000) return ''
+  const ms = unixTs < 100_000_000_000 ? unixTs * 1000 : unixTs
+  const d = new Date(ms)
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
 
-  if (queryView === 'card' || queryView === 'list') {
-    viewMode.value = queryView
-  } else if (storedView === 'card' || storedView === 'list') {
-    viewMode.value = storedView
-    router.replace({ query: { view: storedView } })
-  } else {
-    router.replace({ query: { view: 'card' } })
+function getReadingTime(text: string): string {
+  if (!text) return '1 min'
+  const words = text.trim().split(/\s+/).length
+  const minutes = Math.max(1, Math.ceil(words / 200))
+  return `${minutes} min read`
+}
+
+function isMocArticle(article: Article): boolean {
+  if (!article) return false
+  const title = (article.title || '').toLowerCase().trim()
+  if (title.startsWith('moc -') || title.startsWith('moc:') || title.startsWith('moc ') || title === 'moc') {
+    return true
   }
+  return article.parsedTags.some(t => t.toLowerCase() === 'moc')
+}
 
-  syncScrollbar(viewMode.value)
-  emitter.on('article-added', fetchArticles)
-})
+function getDomain(article: Article): string {
+  if (article.image && article.image.startsWith('http')) {
+    try {
+      return new URL(article.image).hostname.replace(/^www\./, '')
+    } catch {
+      // ignore
+    }
+  }
+  return 'vault note'
+}
 
-onBeforeUnmount(() => {
-  emitter.off('article-added', fetchArticles)
-  observer?.disconnect()
-  document.documentElement.classList.remove('no-scrollbar')
-})
+const handleOmniEnter = async () => {
+  if (isQueryUrl.value && !isIngesting.value) {
+    let url = searchQuery.value.trim()
+    if (!/^https?:\/\//i.test(url)) {
+      url = 'https://' + url
+    }
+    isIngesting.value = true
+    try {
+      const res = await fetch('/api/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, Tags: [] })
+      })
+      if (!res.ok) throw new Error('Failed to ingest URL')
+      searchQuery.value = ''
+      await fetchArticles()
+    } catch (err) {
+      console.error('Ingest failed', err)
+    } finally {
+      isIngesting.value = false
+    }
+  }
+}
 
 const deleteArticle = async (id: number) => {
-  if (!confirm("Are you sure you want to delete this article?")) return
+  if (!confirm('Are you sure you want to permanently delete this note from the vault?')) return
   try {
     await axios.delete(`/api/delete/${id}`)
     articles.value = articles.value.filter(article => article.ID !== id)
@@ -97,173 +142,491 @@ const deleteArticle = async (id: number) => {
   }
 }
 
-function syncScrollbar(mode: string) {
-  document.documentElement.classList.toggle('no-scrollbar', mode === 'list')
-}
+onMounted(async () => {
+  await fetchArticles()
+  const queryView = route.query.view as ViewMode
+  const storedView = localStorage.getItem('readr_viewMode') as ViewMode
+
+  if (queryView === 'studio' || queryView === 'ledger' || queryView === 'timeline') {
+    viewMode.value = queryView
+  } else if (storedView === 'studio' || storedView === 'ledger' || storedView === 'timeline') {
+    viewMode.value = storedView
+    router.replace({ query: { ...route.query, view: storedView } })
+  } else {
+    viewMode.value = 'studio'
+  }
+
+  emitter.on('article-added', fetchArticles)
+})
+
+onBeforeUnmount(() => {
+  emitter.off('article-added', fetchArticles)
+  observer?.disconnect()
+})
 
 watch(() => route.query.view, (newView) => {
-  if (newView === 'card' || newView === 'list') {
+  if (newView === 'studio' || newView === 'ledger' || newView === 'timeline') {
     viewMode.value = newView
-    localStorage.setItem('viewMode', newView)
-    syncScrollbar(newView)
+    localStorage.setItem('readr_viewMode', newView)
     nextTick(initReveal)
   }
 })
 
-watch(viewMode, () => nextTick(initReveal))
-watch(sortOrder, () => nextTick(initReveal))
+watch([viewMode, sortOrder, selectedTag, filterMocOnly], () => {
+  nextTick(initReveal)
+})
+
+const totalMocs = computed(() => articles.value.filter(isMocArticle).length)
 
 const filteredArticles = computed(() => {
-  let list = selectedTag.value
-    ? articles.value.filter(a => a.parsedTags.includes(selectedTag.value!))
-    : [...articles.value]
-  list.sort((a, b) => sortOrder.value === 'latest' ? b.ID - a.ID : a.ID - b.ID)
+  let list = [...articles.value]
+
+  // Filter by tag
+  if (selectedTag.value) {
+    list = list.filter(a => a.parsedTags.includes(selectedTag.value!))
+  }
+
+  // Filter MOCs
+  if (filterMocOnly.value) {
+    list = list.filter(isMocArticle)
+  }
+
+  // Real-time search query
+  if (searchQuery.value.trim()) {
+    const q = searchQuery.value.toLowerCase().trim()
+    list = list.filter(a =>
+      a.title.toLowerCase().includes(q) ||
+      a.article.toLowerCase().includes(q) ||
+      a.parsedTags.some(t => t.toLowerCase().includes(q))
+    )
+  }
+
+  // Sorting
+  if (sortOrder.value === 'latest') {
+    list.sort((a, b) => b.ID - a.ID)
+  } else if (sortOrder.value === 'oldest') {
+    list.sort((a, b) => a.ID - b.ID)
+  } else if (sortOrder.value === 'title') {
+    list.sort((a, b) => a.title.localeCompare(b.title))
+  }
+
   return list
 })
 
+const leadArticle = computed(() => {
+  if (filteredArticles.value.length === 0) return null
+  return filteredArticles.value[0]
+})
+
+const secondaryArticles = computed(() => {
+  if (filteredArticles.value.length <= 1) return []
+  return filteredArticles.value.slice(1)
+})
 </script>
 
 <template>
-  <div>
-    <div v-if="selectedTag" class="flex justify-between items-center mb-10 px-2">
-      <div class="flex items-center gap-3">
-        <span class="text-sm text-gray-500 dark:text-gray-400">Filtered by</span>
-        <span class="bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm font-medium px-4 py-1.5 rounded-full shadow-sm">{{ selectedTag }}</span>
-      </div>
-      <button @click="selectedTag = null" class="text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors">
-        Clear filter
-      </button>
-    </div>
-
-    <!-- Empty State -->
-    <div v-if="filteredArticles.length === 0" class="flex flex-col items-center justify-center py-40 px-4 text-center">
-      <div class="w-20 h-20 bg-gray-100/50 dark:bg-gray-800/50 rounded-full flex items-center justify-center mb-8 backdrop-blur-sm border border-gray-200/50 dark:border-gray-700/50 shadow-inner">
-        <BookmarkIcon class="w-10 h-10 text-gray-400 dark:text-gray-500" />
-      </div>
-      <h3 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 mb-3">No articles found</h3>
-      <p class="text-lg text-gray-500 dark:text-gray-400 max-w-sm mx-auto leading-relaxed">You haven't added any articles yet, or none match your current filter.</p>
-    </div>
-
-    <!-- Card View (unchanged) -->
-    <div v-else-if="viewMode === 'card'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
-      <div v-for="article in filteredArticles" :key="article.ID" class="group relative bg-white dark:bg-[#121212] rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.6)] border border-gray-100/80 dark:border-white/5 hover:shadow-[0_20px_60px_rgb(0,0,0,0.08)] dark:hover:shadow-[0_20px_60px_rgb(0,0,0,0.8)] hover:-translate-y-1.5 transition-all duration-500 ease-out overflow-hidden flex flex-col active:scale-[0.98]">
-        <button
-          @click.prevent="deleteArticle(article.ID)"
-          class="absolute top-5 right-5 bg-white/80 dark:bg-black/60 backdrop-blur-md border border-gray-200/50 dark:border-white/10 text-gray-900 dark:text-gray-100 opacity-0 group-hover:opacity-100 hover:bg-red-500 dark:hover:bg-red-500 hover:text-white hover:border-transparent rounded-full w-9 h-9 flex items-center justify-center text-lg z-20 transition-all duration-300 shadow-sm active:scale-90"
-          title="Delete"
-        >
-        &times;
-        </button>
-        <div class="w-full aspect-[4/3] overflow-hidden bg-gray-50 dark:bg-[#1a1a1a] relative group-hover:after:absolute group-hover:after:inset-0 group-hover:after:bg-black/10 dark:group-hover:after:bg-white/5 group-hover:after:transition-colors">
-          <img v-if="article.image" :src="article.image" alt="Cover" class="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)]" />
+  <div class="max-w-6xl mx-auto px-5 sm:px-8 py-8 md:py-10 space-y-8">
+    
+    <!-- Clean Minimalist Studio Header -->
+    <header class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-black/[0.06] dark:border-white/[0.06]">
+      
+      <!-- Left: Title & Filter Tabs -->
+      <div class="flex items-center gap-5">
+        <div class="flex items-baseline gap-2.5">
+          <h1 class="text-xl font-semibold tracking-tight text-gray-900 dark:text-gray-100 font-['Outfit']">
+            Vault
+          </h1>
+          <span class="text-xs font-mono text-gray-400 dark:text-gray-500 font-medium">
+            {{ filteredArticles.length }}
+          </span>
         </div>
-        <div class="p-8 flex flex-col flex-grow">
-          <div class="flex flex-wrap gap-2 mb-5">
-            <button v-for="tag in article.parsedTags.slice(0, 3)" :key="tag" @click.prevent="selectedTag = tag" class="bg-gray-100/80 dark:bg-white/5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 text-gray-700 dark:text-gray-300 hover:text-emerald-700 dark:hover:text-emerald-300 text-[10px] font-bold px-3 py-1.5 rounded-full uppercase tracking-widest transition-colors z-20 relative cursor-pointer active:scale-95">
-              {{ tag }}
-            </button>
-          </div>
-          <router-link
-            :to="`/articles/${article.ID}`"
-            class="block text-2xl leading-tight font-bold text-gray-900 dark:text-white hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors mb-4 tracking-tight before:absolute before:inset-0"
-          >
-            {{ article.title }}
-          </router-link>
-          <p class="text-gray-500 dark:text-gray-400 text-sm leading-relaxed line-clamp-2 mt-auto font-medium">
-            {{ article.article }}
-          </p>
-        </div>
-      </div>
-    </div>
 
-    <!-- Timeline List View -->
-    <div v-else>
-      <!-- sort control -->
-      <div class="flex justify-end mb-6">
-        <div class="inline-flex items-center bg-gray-100/70 dark:bg-white/5 rounded-full p-1 gap-0.5">
+        <!-- Filter Tabs: All vs MOC Hubs -->
+        <div class="flex items-center bg-gray-100/70 dark:bg-white/[0.04] p-0.5 rounded-lg border border-gray-200/50 dark:border-white/[0.05]">
           <button
-            @click="sortOrder = 'latest'"
+            @click="filterMocOnly = false"
             :class="[
-              'text-xs font-semibold px-4 py-1.5 rounded-full transition-all duration-200',
-              sortOrder === 'latest'
-                ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm'
-                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+              'px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer',
+              !filterMocOnly
+                ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
             ]"
-          >Latest</button>
-          <button
-            @click="sortOrder = 'oldest'"
-            :class="[
-              'text-xs font-semibold px-4 py-1.5 rounded-full transition-all duration-200',
-              sortOrder === 'oldest'
-                ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm'
-                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-            ]"
-          >Oldest</button>
-        </div>
-      </div>
-
-      <div class="timeline-root max-w-3xl mx-auto">
-      <!-- spine line -->
-      <div class="timeline-spine" aria-hidden="true"></div>
-
-      <div
-        v-for="(article, i) in filteredArticles"
-        :key="article.ID"
-        class="reveal-item timeline-entry group"
-        :style="{ transitionDelay: `${Math.min(i, 4) * 60}ms` }"
-      >
-        <!-- dot + date -->
-        <div class="timeline-marker" aria-hidden="true">
-          <span class="timeline-dot"></span>
-        </div>
-        <div class="timeline-date" aria-label="saved on">
-          {{ formatDate(article.ID) }}
-        </div>
-
-        <!-- card -->
-        <div class="timeline-card relative bg-white dark:bg-[#121212] rounded-[1.75rem] shadow-[0_4px_20px_rgb(0,0,0,0.04)] dark:shadow-[0_4px_20px_rgb(0,0,0,0.5)] border border-gray-100/80 dark:border-white/5 hover:shadow-[0_12px_40px_rgb(0,0,0,0.08)] dark:hover:shadow-[0_12px_40px_rgb(0,0,0,0.7)] hover:-translate-y-1 transition-all duration-500 ease-out active:scale-[0.99] overflow-hidden flex flex-col sm:flex-row">
-          <button
-            @click.prevent="deleteArticle(article.ID)"
-            class="absolute top-5 right-5 bg-white/80 dark:bg-black/60 backdrop-blur-md border border-gray-200/50 dark:border-white/10 text-gray-900 dark:text-gray-100 opacity-0 group-hover:opacity-100 hover:bg-red-500 dark:hover:bg-red-500 hover:text-white hover:border-transparent rounded-full w-8 h-8 flex items-center justify-center text-base z-30 transition-all duration-300 shadow-sm active:scale-90"
-            title="Delete"
           >
-          &times;
+            All Notes
           </button>
+          <button
+            @click="filterMocOnly = true"
+            :class="[
+              'px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5',
+              filterMocOnly
+                ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+            ]"
+          >
+            <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+            <span>Hubs</span>
+            <span class="text-[10px] font-mono opacity-70 ml-0.5">{{ totalMocs }}</span>
+          </button>
+        </div>
+      </div>
 
-          <!-- thumbnail -->
-          <div class="w-full sm:w-44 aspect-[16/9] sm:aspect-auto flex-shrink-0 overflow-hidden bg-gray-50 dark:bg-[#1a1a1a] sm:rounded-l-[1.75rem]">
-            <img v-if="article.image" :src="article.image" :alt="article.title" class="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)]" />
-            <div v-else class="w-full h-full flex items-center justify-center opacity-30">
-              <BookmarkIcon class="w-8 h-8 text-gray-400 dark:text-gray-500" />
+      <!-- Right: Search Omnibar, Sort, View, Capture -->
+      <div class="flex flex-wrap items-center gap-2">
+        <!-- Omnibar (Search & Ingest) -->
+        <div class="relative">
+          <input
+            v-model="searchQuery"
+            @keydown.enter="handleOmniEnter"
+            type="text"
+            :placeholder="isQueryUrl ? 'Press Enter to ingest URL ↵' : 'Search notes or paste URL...'"
+            class="w-52 sm:w-64 pl-8 pr-16 py-1.5 text-xs bg-white dark:bg-[#12151C] hover:bg-gray-50/50 dark:hover:bg-white/[0.03] focus:bg-white dark:focus:bg-[#12151C] border border-gray-200/80 dark:border-white/10 focus:border-emerald-500 rounded-lg text-gray-900 dark:text-white placeholder:text-gray-400 focus:outline-none transition-all shadow-2xs"
+          />
+          <svg class="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <button
+            v-if="isQueryUrl"
+            @click="handleOmniEnter"
+            :disabled="isIngesting"
+            class="absolute right-1.5 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-mono font-medium transition-colors cursor-pointer flex items-center gap-1"
+          >
+            <svg v-if="isIngesting" class="animate-spin h-2.5 w-2.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+            <span>{{ isIngesting ? '...' : 'Ingest ↵' }}</span>
+          </button>
+          <button
+            v-else-if="searchQuery"
+            @click="searchQuery = ''"
+            class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs cursor-pointer"
+          >&times;</button>
+        </div>
+
+        <!-- Sort Control -->
+        <div class="flex items-center bg-gray-100/70 dark:bg-white/[0.04] p-0.5 rounded-lg border border-gray-200/50 dark:border-white/[0.05]">
+          <button
+            @click="sortOrder = sortOrder === 'latest' ? 'oldest' : (sortOrder === 'oldest' ? 'title' : 'latest')"
+            class="px-2.5 py-1 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors cursor-pointer flex items-center gap-1"
+            :title="`Sort order: ${sortOrder}`"
+          >
+            <span>{{ sortOrder === 'latest' ? 'Latest' : (sortOrder === 'oldest' ? 'Oldest' : 'Title') }}</span>
+            <svg class="w-3 h-3 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 9 6 6 6-6"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- View Mode Switcher -->
+        <div class="flex items-center bg-gray-100/70 dark:bg-white/[0.04] p-0.5 rounded-lg border border-gray-200/50 dark:border-white/[0.05]">
+          <button
+            @click="viewMode = 'studio'; router.replace({ query: { ...route.query, view: 'studio' } })"
+            class="p-1.5 rounded-md transition-all cursor-pointer"
+            :class="viewMode === 'studio' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'"
+            title="Studio Grid"
+          >
+            <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="7" height="7" x="3" y="3" rx="1"></rect>
+              <rect width="7" height="7" x="14" y="3" rx="1"></rect>
+              <rect width="7" height="7" x="14" y="14" rx="1"></rect>
+              <rect width="7" height="7" x="3" y="14" rx="1"></rect>
+            </svg>
+          </button>
+          <button
+            @click="viewMode = 'ledger'; router.replace({ query: { ...route.query, view: 'ledger' } })"
+            class="p-1.5 rounded-md transition-all cursor-pointer"
+            :class="viewMode === 'ledger' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'"
+            title="Ledger Table"
+          >
+            <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+    </header>
+
+    <!-- Active Tag Filter Sub-banner (only if tag selected) -->
+    <div v-if="selectedTag" class="flex items-center gap-2 -mt-4">
+      <span class="text-xs text-gray-400 font-mono">Filter:</span>
+      <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-xs font-mono font-medium border border-emerald-500/20">
+        #{{ selectedTag }}
+        <button @click="selectedTag = null" class="hover:text-emerald-900 dark:hover:text-white cursor-pointer">&times;</button>
+      </span>
+    </div>
+
+    <!-- Empty Vault State -->
+    <div v-if="filteredArticles.length === 0" class="flex flex-col items-center justify-center py-32 px-4 text-center">
+      <div class="w-12 h-12 bg-gray-100 dark:bg-white/[0.05] rounded-xl flex items-center justify-center mb-4 border border-gray-200/80 dark:border-white/[0.08]">
+        <BookmarkIcon class="w-6 h-6 text-gray-400 dark:text-gray-500" />
+      </div>
+      <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">No notes found</h3>
+      <p class="text-xs text-gray-500 dark:text-gray-400 max-w-xs leading-relaxed font-mono">
+        {{ searchQuery ? 'No notes match your current search query.' : (selectedTag ? 'No notes have the selected tag.' : 'Your vault is ready. Paste a URL in the capture bar above to ingest your first article.') }}
+      </p>
+    </div>
+
+    <!-- VIEW MODE 1: STUDIO (Editorial Layout with Lead Spotlight) -->
+    <div v-else-if="viewMode === 'studio'" class="space-y-8">
+      
+      <!-- Lead Spotlight Card (Hero Ingestion) -->
+      <div v-if="leadArticle" class="reveal-item">
+        <div class="relative group bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-300 overflow-hidden shadow-xs hover:shadow-md">
+          
+          <div class="flex flex-col lg:flex-row items-stretch">
+            
+            <!-- Left Editorial Text Content -->
+            <div class="flex-1 p-6 sm:p-8 flex flex-col justify-between">
+              <div>
+                <!-- Editorial Index & Meta -->
+                <div class="flex flex-wrap items-center gap-2.5 text-xs font-mono text-gray-400 dark:text-gray-500 mb-3">
+                  <span class="text-emerald-600 dark:text-emerald-400 font-semibold">// 01 · LATEST INGESTION</span>
+                  <span>•</span>
+                  <span class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.05] text-[10px] text-gray-500 dark:text-gray-400 font-mono">{{ getDomain(leadArticle) }}</span>
+                  <span>•</span>
+                  <span>{{ formatDate(leadArticle.ID) || 'Recent' }}</span>
+                  <span>•</span>
+                  <span>{{ getReadingTime(leadArticle.article) }}</span>
+                </div>
+
+                <!-- Tags / MOC Badge -->
+                <div class="flex flex-wrap items-center gap-1.5 mb-3">
+                  <span
+                    v-if="isMocArticle(leadArticle)"
+                    class="px-2 py-0.5 rounded text-[11px] font-mono bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 font-medium"
+                  >
+                    ★ MOC HUB
+                  </span>
+                  <button
+                    v-for="tag in leadArticle.parsedTags.slice(0, 4)"
+                    :key="tag"
+                    @click="selectedTag = tag"
+                    class="text-[11px] font-mono px-2 py-0.5 rounded bg-gray-100 dark:bg-white/[0.05] hover:bg-emerald-500/10 hover:text-emerald-700 dark:hover:text-emerald-300 text-gray-600 dark:text-gray-400 transition-colors cursor-pointer"
+                  >
+                    #{{ tag }}
+                  </button>
+                </div>
+
+                <!-- Title -->
+                <h2 class="text-xl sm:text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors mb-3 leading-snug">
+                  <router-link :to="`/articles/${leadArticle.ID}`">
+                    {{ leadArticle.title }}
+                  </router-link>
+                </h2>
+
+                <!-- Excerpt -->
+                <p class="text-xs sm:text-sm text-gray-600 dark:text-gray-400 line-clamp-3 leading-relaxed max-w-[65ch]">
+                  {{ leadArticle.article }}
+                </p>
+              </div>
+
+              <!-- Action Bar -->
+              <div class="flex items-center justify-between pt-6 mt-6 border-t border-gray-100 dark:border-white/[0.04]">
+                <router-link
+                  :to="`/articles/${leadArticle.ID}`"
+                  class="inline-flex items-center gap-1 text-xs font-mono font-medium text-emerald-600 dark:text-emerald-400 group-hover:underline"
+                >
+                  <span>Open article</span>
+                  <span>&rarr;</span>
+                </router-link>
+
+                <button
+                  @click="deleteArticle(leadArticle.ID)"
+                  class="text-gray-400 hover:text-red-500 p-1 rounded transition-colors text-xs font-mono cursor-pointer"
+                  title="Delete article"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
-          </div>
 
-          <!-- body -->
-          <div class="flex flex-col justify-center px-7 py-6 sm:pr-12">
-            <div class="flex flex-wrap gap-1.5 mb-3">
-              <button
-                v-for="tag in article.parsedTags.slice(0, 4)"
-                :key="tag"
-                @click.prevent="selectedTag = tag"
-                class="bg-gray-100/80 dark:bg-white/5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 text-gray-700 dark:text-gray-300 hover:text-emerald-700 dark:hover:text-emerald-300 text-[9px] font-bold px-2.5 py-1 rounded-full uppercase tracking-widest transition-colors z-20 relative cursor-pointer active:scale-95"
+            <!-- Right Cover Media (if exists) -->
+            <div
+              v-if="leadArticle.image"
+              class="lg:w-80 h-48 lg:h-auto overflow-hidden bg-gray-100 dark:bg-white/[0.02] border-t lg:border-t-0 lg:border-l border-gray-100 dark:border-white/[0.06] flex-shrink-0"
+            >
+              <img
+                :src="leadArticle.image"
+                :alt="leadArticle.title"
+                class="w-full h-full object-cover group-hover:scale-103 transition-transform duration-500"
+                loading="lazy"
+              />
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- Secondary Articles Masonry / Grid -->
+      <div v-if="secondaryArticles.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <article
+          v-for="(article, idx) in secondaryArticles"
+          :key="article.ID"
+          class="reveal-item group relative bg-white dark:bg-[#12151C] rounded-xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-200 shadow-2xs hover:shadow-xs p-5 flex flex-col justify-between"
+        >
+          <div>
+            <!-- Monospace Index & Reading Time -->
+            <div class="flex items-center justify-between text-[11px] font-mono text-gray-400 dark:text-gray-500 mb-2.5">
+              <div class="flex items-center gap-1.5">
+                <span>// {{ String(idx + 2).padStart(2, '0') }}</span>
+                <span class="text-[10px] px-1 py-0.2 rounded bg-gray-100 dark:bg-white/[0.04] text-gray-500 font-mono">{{ getDomain(article) }}</span>
+              </div>
+              <span>{{ getReadingTime(article.article) }}</span>
+            </div>
+
+            <!-- Tags -->
+            <div v-if="article.parsedTags.length > 0 || isMocArticle(article)" class="flex flex-wrap gap-1.5 mb-2.5">
+              <span
+                v-if="isMocArticle(article)"
+                class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 font-medium"
               >
-                {{ tag }}
+                ★ MOC
+              </span>
+              <button
+                v-for="tag in article.parsedTags.slice(0, 2)"
+                :key="tag"
+                @click="selectedTag = tag"
+                class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.05] text-gray-500 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors cursor-pointer"
+              >
+                #{{ tag }}
               </button>
             </div>
-            <router-link
-              :to="`/articles/${article.ID}`"
-              class="text-xl font-bold text-gray-900 dark:text-white hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors tracking-tight mb-2 leading-snug before:absolute before:inset-0"
-            >
-              {{ article.title }}
-            </router-link>
-            <p class="text-gray-400 dark:text-gray-500 text-sm leading-relaxed line-clamp-2">
+
+            <!-- Title -->
+            <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors mb-2 line-clamp-2 leading-snug">
+              <router-link :to="`/articles/${article.ID}`">
+                {{ article.title }}
+              </router-link>
+            </h3>
+
+            <!-- Excerpt -->
+            <p class="text-xs text-gray-500 dark:text-gray-400 line-clamp-3 leading-relaxed mb-4">
               {{ article.article }}
             </p>
           </div>
-        </div>
+
+          <!-- Footer Metadata -->
+          <div class="pt-3 border-t border-gray-100 dark:border-white/[0.04] flex items-center justify-between text-[11px] font-mono text-gray-400 dark:text-gray-500">
+            <span>{{ formatShortDate(article.ID) || `ID #${article.ID}` }}</span>
+            <div class="flex items-center gap-2">
+              <button
+                @click="deleteArticle(article.ID)"
+                class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer"
+                title="Delete note"
+              >
+                &times;
+              </button>
+              <router-link
+                :to="`/articles/${article.ID}`"
+                class="hover:text-gray-900 dark:hover:text-white transition-colors"
+              >
+                Read &rarr;
+              </router-link>
+            </div>
+          </div>
+        </article>
       </div>
-    </div>  <!-- end timeline-root -->
-    </div>  <!-- end v-else -->
+
+    </div>
+
+    <!-- VIEW MODE 2: POWER LEDGER (Linear Dense Table) -->
+    <div v-else-if="viewMode === 'ledger'" class="reveal-item">
+      <div class="bg-white dark:bg-[#12151C] rounded-xl border border-gray-200/80 dark:border-white/[0.08] overflow-hidden shadow-2xs">
+        <table class="w-full text-left border-collapse text-xs">
+          <thead>
+            <tr class="border-b border-gray-100 dark:border-white/[0.06] bg-gray-50/50 dark:bg-white/[0.02] font-mono text-[11px] text-gray-400 uppercase">
+              <th class="py-2.5 px-4 font-normal w-12">#</th>
+              <th class="py-2.5 px-4 font-normal">Title</th>
+              <th class="py-2.5 px-4 font-normal hidden sm:table-cell">Tags</th>
+              <th class="py-2.5 px-4 font-normal hidden md:table-cell">Read Time</th>
+              <th class="py-2.5 px-4 font-normal text-right">Date</th>
+              <th class="py-2.5 px-4 font-normal text-right w-16">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="(article, idx) in filteredArticles"
+              :key="article.ID"
+              class="group border-b last:border-0 border-gray-100 dark:border-white/[0.04] hover:bg-gray-50/70 dark:hover:bg-white/[0.03] transition-colors"
+            >
+              <td class="py-3 px-4 font-mono text-gray-400">
+                {{ String(idx + 1).padStart(2, '0') }}
+              </td>
+              <td class="py-3 px-4 font-medium text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
+                <router-link :to="`/articles/${article.ID}`" class="flex items-center gap-2">
+                  <span v-if="isMocArticle(article)" class="text-amber-500 font-mono text-[10px]">★</span>
+                  <span class="truncate max-w-md">{{ article.title }}</span>
+                </router-link>
+              </td>
+              <td class="py-3 px-4 hidden sm:table-cell">
+                <div class="flex items-center gap-1.5">
+                  <span
+                    v-for="tag in article.parsedTags.slice(0, 2)"
+                    :key="tag"
+                    class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.05] text-gray-500 dark:text-gray-400"
+                  >
+                    #{{ tag }}
+                  </span>
+                </div>
+              </td>
+              <td class="py-3 px-4 hidden md:table-cell font-mono text-gray-400 text-[11px]">
+                {{ getReadingTime(article.article) }}
+              </td>
+              <td class="py-3 px-4 text-right font-mono text-gray-400 text-[11px]">
+                {{ formatShortDate(article.ID) }}
+              </td>
+              <td class="py-3 px-4 text-right">
+                <button
+                  @click="deleteArticle(article.ID)"
+                  class="text-gray-400 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer font-mono"
+                  title="Delete"
+                >
+                  &times;
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- VIEW MODE 3: TIMELINE STREAM -->
+    <div v-else class="max-w-3xl mx-auto space-y-4">
+      <article
+        v-for="article in filteredArticles"
+        :key="article.ID"
+        class="reveal-item group relative bg-white dark:bg-[#12151C] rounded-xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all p-5 flex flex-col sm:flex-row items-start gap-4 shadow-2xs"
+      >
+        <div class="flex-grow min-w-0 pr-6">
+          <div class="flex items-center gap-2 mb-1.5 font-mono text-[11px] text-gray-400">
+            <span>{{ formatDate(article.ID) }}</span>
+            <span>•</span>
+            <span>{{ getReadingTime(article.article) }}</span>
+            <span v-if="isMocArticle(article)" class="text-amber-500 font-semibold">★ MOC</span>
+          </div>
+
+          <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors mb-1.5 truncate">
+            <router-link :to="`/articles/${article.ID}`">
+              {{ article.title }}
+            </router-link>
+          </h3>
+
+          <p class="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
+            {{ article.article }}
+          </p>
+        </div>
+
+        <button
+          @click="deleteArticle(article.ID)"
+          class="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 p-1 transition-opacity cursor-pointer"
+          title="Delete article"
+        >
+          &times;
+        </button>
+      </article>
+    </div>
+
   </div>
 </template>
 
