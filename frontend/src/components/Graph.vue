@@ -343,42 +343,58 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="relative w-full h-[100dvh] bg-[#f8f9fa] dark:bg-[#0a0a0a] overflow-hidden">
-    <!-- Ambient subtle background glow -->
-    <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-gray-200/20 via-transparent to-transparent dark:from-emerald-900/10 dark:via-transparent pointer-events-none"></div>
-
-    <div ref="container" class="absolute inset-0 pt-16"></div> 
+  <div class="relative w-full h-[100dvh] bg-[#FAFAFA] dark:bg-[#08090C] overflow-hidden">
+    <div ref="container" class="absolute inset-0"></div> 
 
     <!-- Loading State -->
     <div v-if="isLoading" class="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
-      <div class="flex items-center space-x-3 text-gray-800 dark:text-gray-200 bg-white/60 dark:bg-[#1a1a1a]/60 px-6 py-3 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.6)] border border-white/50 dark:border-white/10 backdrop-blur-xl">
-        <svg class="animate-spin h-5 w-5 text-emerald-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <div class="flex items-center gap-2.5 text-gray-700 dark:text-gray-300 bg-white/90 dark:bg-[#12151C]/90 px-4 py-2 rounded-xl border border-gray-200 dark:border-white/10 shadow-sm backdrop-blur-sm">
+        <svg class="animate-spin h-4 w-4 text-emerald-600 dark:text-emerald-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
         </svg>
-        <span class="text-sm font-semibold tracking-wide">Loading graph...</span>
+        <span class="text-xs font-medium font-mono">Simulating neural graph...</span>
       </div>
     </div>
 
     <!-- Error State -->
     <div v-else-if="error" class="absolute inset-0 flex items-center justify-center p-4 z-20">
-      <div class="bg-white/80 dark:bg-[#1a1a1a]/80 backdrop-blur-xl p-8 rounded-3xl border border-red-100 dark:border-red-900/30 shadow-[0_20px_60px_rgb(0,0,0,0.08)] dark:shadow-[0_20px_60px_rgb(0,0,0,0.8)] text-center max-w-sm">
-        <p class="text-red-600 dark:text-red-400 font-bold mb-4 tracking-tight">{{ error }}</p>
-        <button @click="loadGraph" class="px-5 py-2 bg-red-500 hover:bg-red-600 text-white text-sm font-bold rounded-xl transition-all cursor-pointer active:scale-95">
-          Retry Connection
+      <div class="bg-white dark:bg-[#12151C] p-6 rounded-xl border border-red-200 dark:border-red-900/40 shadow-sm text-center max-w-sm">
+        <p class="text-red-600 dark:text-red-400 font-medium text-xs mb-3 font-mono">{{ error }}</p>
+        <button @click="loadGraph" class="px-3.5 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded-lg transition-all cursor-pointer active:scale-98">
+          Retry
         </button>
       </div>
     </div>
 
+    <!-- Top Left Legend -->
+    <div v-if="!isLoading && !error" class="absolute top-6 left-6 z-10 hidden sm:flex items-center gap-3 px-3.5 py-1.5 rounded-xl bg-white/80 dark:bg-[#12151C]/80 backdrop-blur-md border border-gray-200/80 dark:border-white/[0.08] text-[11px] font-mono text-gray-500 dark:text-gray-400 shadow-2xs">
+      <div class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+        <span>Article</span>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rotate-45 bg-amber-500"></span>
+        <span>MOC Hub</span>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-xs bg-gray-400 dark:bg-gray-600"></span>
+        <span>Tag</span>
+      </div>
+    </div>
+
     <!-- Bottom Action Controls: Zoom Buttons & Tag Toggle -->
-    <div v-if="!isLoading && !error" class="absolute bottom-10 right-10 z-10 flex items-center gap-3">
+    <div v-if="!isLoading && !error" class="absolute bottom-6 right-6 z-10 flex items-center gap-2">
       <!-- Zoom Controls Pill -->
       <GraphZoomControls @zoom-in="zoomIn" @zoom-out="zoomOut" @fit="fitView" />
 
       <!-- Tag Toggle Button -->
-      <button @click="toggleTags" class="bg-white/70 dark:bg-black/50 backdrop-blur-xl px-5 py-2.5 text-gray-900 dark:text-gray-100 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.6)] border border-black/5 dark:border-white/10 text-sm font-bold hover:bg-white dark:hover:bg-[#1a1a1a] transition-all duration-300 cursor-pointer active:scale-95 flex items-center gap-2">
-        <div :class="['w-2 h-2 rounded-full transition-colors', showTags ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600']"></div>
-        {{ showTags ? 'Hide Tags' : 'Show Tags' }}
+      <button
+        @click="toggleTags"
+        class="bg-white/90 dark:bg-[#12151C]/90 backdrop-blur-sm px-3 py-2 text-gray-700 dark:text-gray-300 rounded-lg shadow-2xs border border-gray-200 dark:border-white/10 text-xs font-medium hover:text-gray-900 dark:hover:text-white transition-all cursor-pointer active:scale-98 flex items-center gap-2"
+      >
+        <div :class="['w-1.5 h-1.5 rounded-full transition-colors', showTags ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600']"></div>
+        <span>{{ showTags ? 'Tags Visible' : 'Tags Hidden' }}</span>
       </button>
     </div>
   </div>

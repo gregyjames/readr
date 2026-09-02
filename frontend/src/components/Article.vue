@@ -656,31 +656,42 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <!-- Fixed Reading Progress Bar under Navbar -->
+  <!-- Reading Progress Bar -->
   <div
-    class="fixed top-20 left-0 w-full h-[2.5px] z-40 bg-gray-200/40 dark:bg-white/5 pointer-events-none overflow-hidden"
+    class="fixed top-0 md:left-16 left-0 right-0 h-[2px] z-40 bg-gray-200/50 dark:bg-white/5 pointer-events-none"
     aria-hidden="true"
   >
     <div
-      class="h-full bg-emerald-500 dark:bg-emerald-400 transition-[width] duration-75 ease-out shadow-[0_0_8px_rgba(16,185,129,0.6)]"
+      class="h-full bg-emerald-600 dark:bg-emerald-400 transition-[width] duration-100 ease-out"
       :style="{ width: `${readingProgress}%` }"
     ></div>
   </div>
 
-  <div v-if="articleError" class="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-4 text-center w-full font-medium border-b border-red-100 dark:border-red-900/30">
+  <div v-if="articleError" class="bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 p-3 text-center w-full text-xs font-mono border-b border-red-200 dark:border-red-900/40">
     {{ articleError }}
   </div>
-  <div class="flex flex-col lg:flex-row w-full max-w-7xl mx-auto items-start relative px-4 lg:px-8">
-    <article ref="articleRef" class="w-full lg:w-2/3 max-w-2xl mx-auto py-16 transition-colors duration-300">
+
+  <div class="flex flex-col lg:flex-row w-full max-w-6xl mx-auto items-start relative px-4 sm:px-6">
+    <article ref="articleRef" class="w-full lg:w-2/3 max-w-2xl mx-auto py-8 sm:py-12 transition-colors">
       
-      
+      <!-- Back to Library Nav -->
+      <div class="mb-6">
+        <router-link
+          to="/"
+          class="inline-flex items-center gap-1.5 text-xs font-mono text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
+        >
+          <span>&larr;</span>
+          <span>Vault Library</span>
+        </router-link>
+      </div>
+
       <!-- If Editing Markdown -->
-      <div v-if="isEditing" class="mb-8 w-full animate-in fade-in slide-in-from-top-4 duration-300">
-        <textarea v-model="editContent" rows="18" class="w-full p-6 bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-gray-800 rounded-2xl text-gray-900 dark:text-gray-100 font-mono text-sm leading-relaxed focus:ring-4 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none resize-y transition-all shadow-inner"></textarea>
-        <div class="flex justify-end gap-3 mt-4">
-          <button @click="cancelEditing" :disabled="isSaving" class="px-5 py-2.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 font-bold text-sm transition-colors disabled:opacity-50">Cancel</button>
-          <button @click="saveEdit" :disabled="isSaving" class="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-sm rounded-xl transition-colors active:scale-95 shadow-sm disabled:opacity-50 flex items-center gap-2">
-            <svg v-if="isSaving" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+      <div v-if="isEditing" class="mb-8 w-full">
+        <textarea v-model="editContent" rows="18" class="w-full p-4 bg-gray-50/50 dark:bg-[#12151C] border border-gray-200 dark:border-white/10 rounded-xl text-gray-900 dark:text-gray-100 font-mono text-sm leading-relaxed focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none resize-y transition-all"></textarea>
+        <div class="flex justify-end gap-2 mt-3">
+          <button @click="cancelEditing" :disabled="isSaving" class="px-4 py-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 text-xs font-medium transition-colors disabled:opacity-50 cursor-pointer">Cancel</button>
+          <button @click="saveEdit" :disabled="isSaving" class="px-4 py-2 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-100 text-white dark:text-gray-950 text-xs font-medium rounded-lg transition-all active:scale-[0.98] disabled:opacity-50 flex items-center gap-1.5 cursor-pointer shadow-xs">
+            <svg v-if="isSaving" class="animate-spin h-3.5 w-3.5 text-white dark:text-gray-950" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
             {{ isSaving ? 'Saving...' : 'Save Changes' }}
           </button>
         </div>
@@ -688,17 +699,17 @@ onBeforeUnmount(() => {
 
       <div v-else>
         <!-- Editorial Provenance Masthead -->
-        <header v-if="properties.length > 0" class="mb-10 pb-8 border-b border-gray-200/60 dark:border-white/10">
-          <!-- Top Row: Source Publisher, Date, and Edit Button -->
+        <header v-if="properties.length > 0" class="mb-8 pb-6 border-b border-gray-200/60 dark:border-white/[0.06]">
+          <!-- Top Row: Source Publisher, Date, and Actions -->
           <div class="flex items-center justify-between gap-4">
-            <div class="flex flex-wrap items-center gap-3">
+            <div class="flex flex-wrap items-center gap-2">
               <!-- MOC Hub Badge -->
               <span
                 v-if="isMOC"
-                class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 text-xs font-semibold tracking-tight shadow-sm"
+                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 text-xs font-medium"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-amber-500"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/><path d="M6 10h10"/></svg>
-                Map of Content (Hub)
+                <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                Map of Content
               </span>
 
               <!-- Source Badge -->
@@ -707,35 +718,34 @@ onBeforeUnmount(() => {
                 :href="knownProperties.source"
                 target="_blank"
                 rel="noopener noreferrer"
-                class="group inline-flex items-center gap-2 px-3 py-1 rounded-full bg-gray-100/80 dark:bg-white/5 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-gray-700 dark:text-gray-300 hover:text-emerald-700 dark:hover:text-emerald-300 border border-gray-200/50 dark:border-white/5 text-xs font-medium tracking-tight transition-all duration-200 active:scale-95"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-100 dark:bg-white/[0.04] hover:bg-gray-200/80 dark:hover:bg-white/[0.08] text-gray-700 dark:text-gray-300 border border-gray-200/60 dark:border-white/[0.06] text-xs font-medium transition-colors"
               >
-                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 group-hover:scale-125 transition-transform"></span>
-                <span class="font-medium">{{ getHostname(knownProperties.source) }}</span>
-                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                <span>{{ getHostname(knownProperties.source) }}</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
               </a>
 
               <!-- Captured Date -->
-              <div v-if="knownProperties.date" class="text-xs text-gray-400 dark:text-gray-500 font-medium flex items-center gap-1.5">
-                <span class="hidden sm:inline">Saved</span>
-                <span>{{ formatDisplayDate(knownProperties.date) }}</span>
+              <div v-if="knownProperties.date" class="text-xs text-gray-400 dark:text-gray-500 font-mono">
+                {{ formatDisplayDate(knownProperties.date) }}
               </div>
             </div>
 
-            <div class="flex items-center gap-2">
+            <!-- Action Controls -->
+            <div class="flex items-center gap-1.5">
               <button
                 @click="reparseArticle"
                 :disabled="isReparsing"
-                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-white/5 transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Re-run enabled agents (Enricher, Linker) for this article"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-colors cursor-pointer disabled:opacity-50"
+                title="Re-run pipeline agents"
               >
                 <svg v-if="isReparsing" class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
                 <svg v-else xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>
-                <span>{{ isReparsing ? 'Running...' : 'Re-run Agents' }}</span>
+                <span>{{ isReparsing ? 'Running...' : 'Reparse' }}</span>
               </button>
-              <!-- Edit Control -->
+
               <button
                 @click="startEditing"
-                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-white/5 transition-all active:scale-95 cursor-pointer"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-colors cursor-pointer"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                 <span>Edit</span>
@@ -743,91 +753,74 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <!-- Bottom Row: Topic tags & custom metadata -->
-          <div v-if="knownProperties.tags.length > 0 || knownProperties.custom.length > 0" class="flex flex-wrap items-center gap-2 mt-4">
-            <!-- Topic Chips -->
+          <!-- Tags strip -->
+          <div v-if="knownProperties.tags.length > 0" class="flex flex-wrap items-center gap-1.5 mt-3">
             <span
               v-for="tag in knownProperties.tags"
               :key="tag"
-              class="inline-flex items-center text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md bg-gray-100/90 dark:bg-white/5 text-gray-700 dark:text-gray-300 border border-gray-200/50 dark:border-white/5"
+              class="text-[11px] font-mono px-2 py-0.5 rounded bg-gray-100/80 dark:bg-white/[0.04] text-gray-600 dark:text-gray-400 border border-gray-200/50 dark:border-white/[0.04]"
             >
-              {{ tag }}
+              #{{ tag }}
             </span>
-
-            <!-- Custom Attributes (if any) -->
-            <div
-              v-for="custom in knownProperties.custom"
-              :key="custom.key"
-              class="inline-flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-md bg-gray-50 dark:bg-white/[0.02] border border-gray-200/40 dark:border-white/5 text-gray-600 dark:text-gray-400 font-mono"
-            >
-              <span class="text-[10px] text-gray-400 uppercase tracking-wider">{{ custom.label }}:</span>
-              <span class="font-medium text-gray-800 dark:text-gray-200">{{ custom.value }}</span>
-            </div>
           </div>
         </header>
 
         <!-- Standalone edit button for legacy articles without frontmatter -->
         <div v-else class="flex justify-end mb-6">
-          <button @click="startEditing" class="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-bold hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors active:scale-95">Edit Markdown</button>
+          <button @click="startEditing" class="px-3 py-1.5 bg-gray-100 dark:bg-white/[0.06] text-gray-700 dark:text-gray-300 rounded-md text-xs font-medium hover:bg-gray-200 dark:hover:bg-white/[0.1] transition-colors cursor-pointer">Edit Markdown</button>
         </div>
 
         <!-- Article Main Title -->
-        <h1 v-if="articleTitle" class="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-gray-900 dark:text-gray-50 mb-8 font-sans leading-[1.18]">
+        <h1 v-if="articleTitle" class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900 dark:text-gray-100 mb-6 font-sans leading-tight">
           {{ articleTitle }}
         </h1>
 
         <!-- Markdown Prose Body -->
         <div
-          class="prose prose-lg md:prose-xl dark:prose-invert prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-p:leading-relaxed prose-p:font-serif prose-headings:font-sans prose-headings:font-bold prose-headings:tracking-tight prose-headings:text-gray-900 dark:prose-headings:text-gray-50 prose-a:text-emerald-600 dark:prose-a:text-emerald-400 prose-a:no-underline hover:prose-a:underline prose-img:rounded-3xl prose-img:shadow-sm prose-pre:text-left prose-pre:bg-[#111] dark:prose-pre:bg-[#1a1a1a] prose-pre:rounded-[2rem] transition-colors duration-300"
+          class="prose prose-base dark:prose-invert max-w-none prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-p:leading-relaxed prose-p:font-serif prose-headings:font-sans prose-headings:font-semibold prose-headings:tracking-tight prose-a:text-emerald-600 dark:prose-a:text-emerald-400 prose-img:rounded-xl prose-pre:bg-gray-900 dark:prose-pre:bg-[#0E1117] prose-pre:rounded-xl prose-pre:border prose-pre:border-black/10 dark:prose-pre:border-white/10"
           v-html="markdownContent"
         />
       </div>
 
-      
-      <div v-if="backlinks.length > 0" class="mt-24 pt-12 border-t border-gray-200/50 dark:border-white/10">
-        <h3 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 mb-6 flex items-center gap-3">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400 dark:text-gray-500"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
-          Linked Mentions
+      <!-- Linked Mentions (Backlinks) -->
+      <div v-if="backlinks.length > 0" class="mt-16 pt-8 border-t border-gray-200/60 dark:border-white/[0.06]">
+        <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+          Linked Mentions ({{ backlinks.length }})
         </h3>
         
-        <div class="overflow-hidden rounded-[2rem] border border-gray-200/50 dark:border-white/5 bg-white/50 dark:bg-[#121212]/50 backdrop-blur-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.4)]">
-          <table class="w-full text-left border-collapse">
-            <thead>
-              <tr class="border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-black/20 text-sm font-semibold text-gray-500 dark:text-gray-400 tracking-wide uppercase">
-                <th class="px-8 py-5 font-bold">Article</th>
-                <th class="px-8 py-5 font-bold text-right hidden sm:table-cell">Tags</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="link in backlinks" :key="link.ID" :data-id="link.ID" class="backlink-row group border-b last:border-0 border-gray-100 dark:border-white/5 hover:bg-gray-50/80 dark:hover:bg-white/5 transition-all duration-300 cursor-pointer active:scale-[0.99]" @click="router.push(`/articles/${link.ID}`)">
-                <td class="px-8 py-5">
-                  <span class="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">{{ link.title }}</span>
-                </td>
-                <td class="px-8 py-5 text-right hidden sm:table-cell">
-                  <div class="flex justify-end gap-2">
-                     <span v-for="tag in (link.tags ? link.tags.split(',') : []).slice(0,3)" :key="tag" class="px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest bg-gray-100/80 dark:bg-black/60 text-gray-600 dark:text-gray-400 rounded-lg group-hover:bg-emerald-50 dark:group-hover:bg-emerald-900/30 group-hover:text-emerald-700 dark:group-hover:text-emerald-300 transition-colors">
-                       {{ tag.trim() }}
-                     </span>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="rounded-xl border border-gray-200/80 dark:border-white/[0.08] bg-white dark:bg-[#12151C] overflow-hidden shadow-2xs">
+          <div
+            v-for="link in backlinks"
+            :key="link.ID"
+            :data-id="link.ID"
+            class="backlink-row p-3.5 border-b last:border-0 border-gray-100 dark:border-white/[0.04] hover:bg-gray-50/80 dark:hover:bg-white/[0.03] transition-colors cursor-pointer flex items-center justify-between gap-4"
+            @click="router.push(`/articles/${link.ID}`)"
+          >
+            <span class="text-xs font-medium text-gray-800 dark:text-gray-200 hover:text-emerald-600 dark:hover:text-emerald-400 truncate">
+              {{ link.title }}
+            </span>
+            <div class="flex items-center gap-1.5 flex-shrink-0">
+              <span v-for="tag in (link.tags ? link.tags.split(',') : []).slice(0, 2)" :key="tag" class="text-[10px] font-mono px-2 py-0.5 rounded bg-gray-100 dark:bg-white/[0.05] text-gray-500 dark:text-gray-400">
+                #{{ tag.trim() }}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
     </article>
     
     <!-- Local Graph Sidebar -->
-    <aside class="hidden lg:block w-1/3 sticky top-32 h-[420px] bg-white/40 dark:bg-black/20 backdrop-blur-3xl rounded-[2rem] border border-gray-200/50 dark:border-white/5 ml-12 overflow-hidden mt-16 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.4)]">
-      <div class="px-7 py-5 border-b border-gray-100 dark:border-white/5 font-bold tracking-tight text-gray-900 dark:text-gray-100 text-sm flex items-center gap-2">
-        <div class="w-2 h-2 rounded-full bg-emerald-500"></div>
-        Local Network
-      </div>
-      <div class="absolute bottom-4 right-4 z-10 opacity-70 hover:opacity-100 transition-opacity">
+    <aside class="hidden lg:block w-1/3 sticky top-24 bg-white dark:bg-[#12151C] rounded-xl border border-gray-200/80 dark:border-white/[0.08] ml-8 overflow-hidden shadow-2xs">
+      <div class="px-4 py-3 border-b border-gray-100 dark:border-white/[0.06] font-medium text-xs text-gray-700 dark:text-gray-300 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+          <span>Local Orbit Graph</span>
+        </div>
         <GraphZoomControls @zoom-in="localZoomIn" @zoom-out="localZoomOut" @fit="localFitView" />
       </div>
-      <div ref="localGraphContainer" class="w-full h-[360px]"></div>
+      <div ref="localGraphContainer" class="w-full h-[320px]"></div>
     </aside>
 
     <div 
