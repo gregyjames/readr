@@ -3,7 +3,7 @@ import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import axios from 'axios'
 import emitter from '../event-bus.ts'
 import BookmarkIcon from '../assets/book.svg'
-import { useRoute, useRouter } from 'vue-router'
+import { settings, setViewMode as saveGlobalViewMode } from '../store/settings'
 
 interface Article {
   ID: number
@@ -17,11 +17,20 @@ interface Article {
 defineProps<{ msg?: string }>()
 
 const articles = ref<Article[]>([])
-const route = useRoute()
-const router = useRouter()
 
-type ViewMode = 'studio' | 'ledger' | 'timeline'
-const viewMode = ref<ViewMode>('studio')
+type ViewMode = 'card' | 'list' | 'studio' | 'ledger' | 'timeline'
+const initialMode = (localStorage.getItem('readr_viewMode') || settings.view_mode || 'card') as ViewMode
+const viewMode = ref<ViewMode>(initialMode)
+
+const changeViewMode = (mode: 'card' | 'list') => {
+  viewMode.value = mode
+  try {
+    localStorage.setItem('readr_viewMode', mode)
+  } catch {}
+  saveGlobalViewMode(mode)
+  nextTick(initReveal)
+}
+
 const selectedTag = ref<string | null>(null)
 const filterMocOnly = ref(false)
 const sortOrder = ref<'latest' | 'oldest' | 'title'>('latest')
@@ -143,19 +152,13 @@ const deleteArticle = async (id: number) => {
 }
 
 onMounted(async () => {
-  await fetchArticles()
-  const queryView = route.query.view as ViewMode
-  const storedView = localStorage.getItem('readr_viewMode') as ViewMode
-
-  if (queryView === 'studio' || queryView === 'ledger' || queryView === 'timeline') {
-    viewMode.value = queryView
-  } else if (storedView === 'studio' || storedView === 'ledger' || storedView === 'timeline') {
-    viewMode.value = storedView
-    router.replace({ query: { ...route.query, view: storedView } })
-  } else {
-    viewMode.value = 'studio'
+  const stored = localStorage.getItem('readr_viewMode') as ViewMode | null
+  if (stored === 'card' || stored === 'list' || stored === 'studio' || stored === 'ledger') {
+    viewMode.value = (stored === 'list' || stored === 'ledger') ? 'list' : 'card'
+  } else if (settings.view_mode) {
+    viewMode.value = (settings.view_mode === 'list' || settings.view_mode === 'ledger') ? 'list' : 'card'
   }
-
+  await fetchArticles()
   emitter.on('article-added', fetchArticles)
 })
 
@@ -164,10 +167,9 @@ onBeforeUnmount(() => {
   observer?.disconnect()
 })
 
-watch(() => route.query.view, (newView) => {
-  if (newView === 'studio' || newView === 'ledger' || newView === 'timeline') {
-    viewMode.value = newView
-    localStorage.setItem('readr_viewMode', newView)
+watch(() => settings.view_mode, (newMode) => {
+  if (newMode === 'card' || newMode === 'list' || newMode === 'studio' || newMode === 'ledger') {
+    viewMode.value = (newMode === 'list' || newMode === 'ledger') ? 'list' : 'card'
     nextTick(initReveal)
   }
 })
@@ -318,10 +320,10 @@ const secondaryArticles = computed(() => {
         <!-- View Mode Switcher -->
         <div class="flex items-center bg-gray-100/70 dark:bg-white/[0.04] p-0.5 rounded-lg border border-gray-200/50 dark:border-white/[0.05]">
           <button
-            @click="viewMode = 'studio'; router.replace({ query: { ...route.query, view: 'studio' } })"
+            @click="changeViewMode('card')"
             class="p-1.5 rounded-md transition-all cursor-pointer"
-            :class="viewMode === 'studio' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'"
-            title="Studio Grid"
+            :class="(viewMode === 'card' || viewMode === 'studio') ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'"
+            title="Card View"
           >
             <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect width="7" height="7" x="3" y="3" rx="1"></rect>
@@ -331,10 +333,10 @@ const secondaryArticles = computed(() => {
             </svg>
           </button>
           <button
-            @click="viewMode = 'ledger'; router.replace({ query: { ...route.query, view: 'ledger' } })"
+            @click="changeViewMode('list')"
             class="p-1.5 rounded-md transition-all cursor-pointer"
-            :class="viewMode === 'ledger' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'"
-            title="Ledger Table"
+            :class="(viewMode === 'list' || viewMode === 'ledger') ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'"
+            title="List View"
           >
             <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="3" y1="6" x2="21" y2="6"></line>
@@ -367,8 +369,8 @@ const secondaryArticles = computed(() => {
       </p>
     </div>
 
-    <!-- VIEW MODE 1: STUDIO (Editorial Layout with Lead Spotlight) -->
-    <div v-else-if="viewMode === 'studio'" class="space-y-8">
+    <!-- VIEW MODE 1: CARD VIEW -->
+    <div v-else-if="viewMode === 'card' || viewMode === 'studio'" class="space-y-8">
       
       <!-- Lead Spotlight Card (Hero Ingestion) -->
       <div v-if="leadArticle" class="reveal-item">
@@ -530,8 +532,8 @@ const secondaryArticles = computed(() => {
 
     </div>
 
-    <!-- VIEW MODE 2: POWER LEDGER (Linear Dense Table) -->
-    <div v-else-if="viewMode === 'ledger'" class="reveal-item">
+    <!-- VIEW MODE 2: LIST VIEW -->
+    <div v-else-if="viewMode === 'list' || viewMode === 'ledger'" class="reveal-item">
       <div class="bg-white dark:bg-[#12151C] rounded-xl border border-gray-200/80 dark:border-white/[0.08] overflow-hidden shadow-2xs">
         <table class="w-full text-left border-collapse text-xs">
           <thead>

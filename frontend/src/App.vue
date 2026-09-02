@@ -8,7 +8,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import emitter from './event-bus.ts'
-import { isSettingsLoaded, initSettings } from './store/settings'
+import { isSettingsLoaded, initSettings, settings, toggleTheme } from './store/settings'
 import { authState, logout } from './store/auth'
 
 interface TemplateInfo {
@@ -60,18 +60,7 @@ const matchedTemplate = computed(() => {
   return null
 })
 
-const isDark = ref(typeof document !== 'undefined' ? document.documentElement.classList.contains('dark') : true)
-
-const toggleTheme = () => {
-  isDark.value = !isDark.value
-  if (isDark.value) {
-    document.documentElement.classList.add('dark')
-    localStorage.setItem('theme', 'dark')
-  } else {
-    document.documentElement.classList.remove('dark')
-    localStorage.setItem('theme', 'light')
-  }
-}
+const isDark = computed(() => settings.theme === 'dark')
 
 const handleGlobalKeydown = (e: KeyboardEvent) => {
   // Ignore if user is currently typing in an input or textarea

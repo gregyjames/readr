@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { settings, saveSettingsToServer } from '../store/settings'
+import { settings, saveSettingsToServer, toggleTheme, setViewMode } from '../store/settings'
 import { authState, changePassword } from '../store/auth'
 
 // Diagnostics Tab State
@@ -156,15 +156,6 @@ const savedMessage = ref('')
 
 const isKeyConfigured = computed(() => Boolean(settings.api_key?.trim()))
 
-const toggleTheme = () => {
-  settings.theme = settings.theme === 'dark' ? 'light' : 'dark'
-  saveSettingsToServer()
-}
-
-const setViewMode = (mode: string) => {
-  settings.view_mode = mode
-  saveSettingsToServer()
-}
 
 const isLoadingModels = ref(false)
 const modelSearch = ref('')
