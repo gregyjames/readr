@@ -34,14 +34,6 @@ const changeViewMode = (mode: 'card' | 'list') => {
 const selectedTag = ref<string | null>(null)
 const filterMocOnly = ref(false)
 const sortOrder = ref<'latest' | 'oldest' | 'title'>('latest')
-const searchQuery = ref('')
-
-const isQueryUrl = computed(() => {
-  const q = searchQuery.value.trim()
-  return /^https?:\/\//i.test(q) || (q.includes('.') && !q.includes(' ') && q.length > 4)
-})
-
-const isIngesting = ref(false)
 
 const fetchArticles = async () => {
   try {
@@ -117,29 +109,6 @@ function getDomain(article: Article): string {
   return 'vault note'
 }
 
-const handleOmniEnter = async () => {
-  if (isQueryUrl.value && !isIngesting.value) {
-    let url = searchQuery.value.trim()
-    if (!/^https?:\/\//i.test(url)) {
-      url = 'https://' + url
-    }
-    isIngesting.value = true
-    try {
-      const res = await fetch('/api/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, Tags: [] })
-      })
-      if (!res.ok) throw new Error('Failed to ingest URL')
-      searchQuery.value = ''
-      await fetchArticles()
-    } catch (err) {
-      console.error('Ingest failed', err)
-    } finally {
-      isIngesting.value = false
-    }
-  }
-}
 
 const deleteArticle = async (id: number) => {
   if (!confirm('Are you sure you want to permanently delete this note from the vault?')) return
@@ -193,15 +162,6 @@ const filteredArticles = computed(() => {
     list = list.filter(isMocArticle)
   }
 
-  // Real-time search query
-  if (searchQuery.value.trim()) {
-    const q = searchQuery.value.toLowerCase().trim()
-    list = list.filter(a =>
-      a.title.toLowerCase().includes(q) ||
-      a.article.toLowerCase().includes(q) ||
-      a.parsedTags.some(t => t.toLowerCase().includes(q))
-    )
-  }
 
   // Sorting
   if (sortOrder.value === 'latest') {
@@ -272,36 +232,8 @@ const secondaryArticles = computed(() => {
         </div>
       </div>
 
-      <!-- Right: Search Omnibar, Sort, View, Capture -->
-      <div class="flex flex-wrap items-center gap-2">
-        <!-- Omnibar (Search & Ingest) -->
-        <div class="relative">
-          <input
-            v-model="searchQuery"
-            @keydown.enter="handleOmniEnter"
-            type="text"
-            :placeholder="isQueryUrl ? 'Press Enter to ingest URL ↵' : 'Search notes or paste URL...'"
-            class="w-52 sm:w-64 pl-8 pr-16 py-1.5 text-xs bg-white dark:bg-[#12151C] hover:bg-gray-50/50 dark:hover:bg-white/[0.03] focus:bg-white dark:focus:bg-[#12151C] border border-gray-200/80 dark:border-white/10 focus:border-emerald-500 rounded-lg text-gray-900 dark:text-white placeholder:text-gray-400 focus:outline-none transition-all shadow-2xs"
-          />
-          <svg class="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="11" cy="11" r="8"></circle>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-          </svg>
-          <button
-            v-if="isQueryUrl"
-            @click="handleOmniEnter"
-            :disabled="isIngesting"
-            class="absolute right-1.5 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-mono font-medium transition-colors cursor-pointer flex items-center gap-1"
-          >
-            <svg v-if="isIngesting" class="animate-spin h-2.5 w-2.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
-            <span>{{ isIngesting ? '...' : 'Ingest ↵' }}</span>
-          </button>
-          <button
-            v-else-if="searchQuery"
-            @click="searchQuery = ''"
-            class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs cursor-pointer"
-          >&times;</button>
-        </div>
+      <!-- Right: Sort & View Controls -->
+      <div class="flex items-center gap-2">
 
         <!-- Sort Control -->
         <div class="flex items-center bg-gray-100/70 dark:bg-white/[0.04] p-0.5 rounded-lg border border-gray-200/50 dark:border-white/[0.05]">
@@ -365,7 +297,7 @@ const secondaryArticles = computed(() => {
       </div>
       <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">No notes found</h3>
       <p class="text-xs text-gray-500 dark:text-gray-400 max-w-xs leading-relaxed font-mono">
-        {{ searchQuery ? 'No notes match your current search query.' : (selectedTag ? 'No notes have the selected tag.' : 'Your vault is ready. Paste a URL in the capture bar above to ingest your first article.') }}
+        {{ selectedTag ? 'No notes have the selected tag.' : (filterMocOnly ? 'No MOC Hubs found in vault.' : 'Your vault is ready. Ingest your first article to begin.') }}
       </p>
     </div>
 
