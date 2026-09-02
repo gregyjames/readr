@@ -919,37 +919,8 @@ onBeforeUnmount(() => {
 
     </article>
     
-    <!-- Local Graph & Intelligence Dossier Sidebar -->
-    <aside class="hidden lg:block w-1/3 sticky top-8 ml-8 space-y-5">
-      <!-- Article Intelligence Dossier Card -->
-      <div class="bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] p-4 shadow-2xs space-y-3">
-        <div class="flex items-center justify-between pb-2.5 border-b border-gray-100 dark:border-white/[0.06] text-xs font-mono">
-          <span class="text-gray-400 uppercase tracking-wider font-semibold">// INTEL DOSSIER</span>
-          <span class="text-emerald-600 dark:text-emerald-400 font-medium">Verified</span>
-        </div>
-        <div class="grid grid-cols-2 gap-2.5 text-xs font-mono">
-          <div class="p-2.5 rounded-xl bg-gray-50/70 dark:bg-white/[0.02] border border-gray-100 dark:border-white/[0.04]">
-            <span class="text-[10px] text-gray-400 block mb-0.5">READ TIME</span>
-            <span class="font-semibold text-gray-800 dark:text-gray-200">{{ estimatedReadingTime }}</span>
-          </div>
-          <div class="p-2.5 rounded-xl bg-gray-50/70 dark:bg-white/[0.02] border border-gray-100 dark:border-white/[0.04]">
-            <span class="text-[10px] text-gray-400 block mb-0.5">WORD COUNT</span>
-            <span class="font-semibold text-gray-800 dark:text-gray-200">{{ wordCount }} words</span>
-          </div>
-        </div>
-        <div v-if="knownProperties.source" class="pt-1">
-          <a
-            :href="knownProperties.source"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-mono bg-gray-100/70 dark:bg-white/[0.04] text-gray-700 dark:text-gray-300 hover:bg-emerald-500 hover:text-white transition-all group"
-          >
-            <span>Original Source</span>
-            <span class="group-hover:translate-x-0.5 transition-transform">&nearr;</span>
-          </a>
-        </div>
-      </div>
-
+    <!-- Local Knowledge Graph Sidebar -->
+    <aside class="hidden lg:block w-1/3 sticky top-8 ml-8">
       <!-- Local Orbit Graph Card -->
       <div class="bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] overflow-hidden shadow-2xs">
         <div class="px-4 py-3 border-b border-gray-100 dark:border-white/[0.06] font-medium text-xs text-gray-700 dark:text-gray-300 flex items-center justify-between">
