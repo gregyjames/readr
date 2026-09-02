@@ -3,6 +3,7 @@ import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 import { Network } from 'vis-network'
@@ -507,10 +508,12 @@ const loadContent = async () => {
     // Strip YAML frontmatter (--- ... ---) so it never renders in the article view                                                                                 
     const strippedRaw = parsedRaw.replace(/^---[\s\S]*?---\n?/, '')  
 
-    markdownContent.value = await marked.parse(strippedRaw, {
+    // Sanitize before assignment: article bodies and wikilink-injected titles are
+    // untrusted, and marked passes raw HTML through.
+    markdownContent.value = DOMPurify.sanitize(await marked.parse(strippedRaw, {
       gfm: false,
       async: true
-    })
+    }))
 
     await nextTick()
     document.querySelectorAll('pre code').forEach((block) => {
