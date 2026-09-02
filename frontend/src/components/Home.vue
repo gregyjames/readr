@@ -105,6 +105,16 @@ function formatShortDate(unixTs: number): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+function formatTimelineDate(unixTs: number): { month: string; day: string; year: string } {
+  if (unixTs < 1_000_000_000) return { month: 'NOTE', day: '•', year: '' }
+  const ms = unixTs < 100_000_000_000 ? unixTs * 1000 : unixTs
+  const d = new Date(ms)
+  const month = d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase()
+  const day = d.toLocaleDateString('en-US', { day: '2-digit' })
+  const year = d.toLocaleDateString('en-US', { year: 'numeric' })
+  return { month, day, year }
+}
+
 function getReadingTime(text: string): string {
   if (!text) return '1 min'
   const words = text.trim().split(/\s+/).length
@@ -295,12 +305,14 @@ const secondaryArticles = computed(() => {
             @click="changeViewMode('list')"
             class="p-1.5 rounded-md transition-all cursor-pointer"
             :class="(viewMode === 'list' || viewMode === 'ledger') ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'"
-            title="List View"
+            title="Timeline Stream"
           >
             <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="3" y1="6" x2="21" y2="6"></line>
-              <line x1="3" y1="12" x2="21" y2="12"></line>
-              <line x1="3" y1="18" x2="21" y2="18"></line>
+              <line x1="6" y1="3" x2="6" y2="21"></line>
+              <circle cx="6" cy="8" r="2" fill="currentColor"></circle>
+              <circle cx="6" cy="16" r="2" fill="currentColor"></circle>
+              <line x1="12" y1="8" x2="20" y2="8"></line>
+              <line x1="12" y1="16" x2="18" y2="16"></line>
             </svg>
           </button>
         </div>
@@ -566,228 +578,153 @@ const secondaryArticles = computed(() => {
 
     </div>
 
-    <!-- VIEW MODE 2: LIST VIEW -->
-    <div v-else-if="viewMode === 'list' || viewMode === 'ledger'" class="reveal-item">
-      <div class="bg-white dark:bg-[#12151C] rounded-xl border border-gray-200/80 dark:border-white/[0.08] overflow-hidden shadow-2xs">
-        <table class="w-full text-left border-collapse text-xs">
-          <thead>
-            <tr class="border-b border-gray-100 dark:border-white/[0.06] bg-gray-50/50 dark:bg-white/[0.02] font-mono text-[11px] text-gray-400 uppercase">
-              <th class="py-2.5 px-4 font-normal w-12">#</th>
-              <th class="py-2.5 px-4 font-normal">Title</th>
-              <th class="py-2.5 px-4 font-normal hidden sm:table-cell">Tags</th>
-              <th class="py-2.5 px-4 font-normal hidden md:table-cell">Read Time</th>
-              <th class="py-2.5 px-4 font-normal text-right">Date</th>
-              <th class="py-2.5 px-4 font-normal text-right w-16">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="(article, idx) in filteredArticles"
-              :key="article.ID"
-              class="group border-b last:border-0 border-gray-100 dark:border-white/[0.04] hover:bg-gray-50/70 dark:hover:bg-white/[0.03] transition-colors"
-            >
-              <td class="py-3 px-4 font-mono text-gray-400">
-                {{ String(idx + 1).padStart(2, '0') }}
-              </td>
-              <td class="py-3 px-4 font-medium text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
-                <router-link :to="`/articles/${article.ID}`" class="flex items-center gap-2">
-                  <span v-if="isMocArticle(article)" class="text-amber-500 font-mono text-[10px]">★</span>
-                  <span class="truncate max-w-md">{{ article.title }}</span>
-                </router-link>
-              </td>
-              <td class="py-3 px-4 hidden sm:table-cell">
-                <div class="flex items-center gap-1.5">
-                  <span
-                    v-for="tag in article.parsedTags.slice(0, 2)"
-                    :key="tag"
-                    class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.05] text-gray-500 dark:text-gray-400"
-                  >
-                    #{{ tag }}
-                  </span>
-                </div>
-              </td>
-              <td class="py-3 px-4 hidden md:table-cell font-mono text-gray-400 text-[11px]">
-                {{ getReadingTime(article.article) }}
-              </td>
-              <td class="py-3 px-4 text-right font-mono text-gray-400 text-[11px]">
-                {{ formatShortDate(article.ID) }}
-              </td>
-              <td class="py-3 px-4 text-right">
-                <button
-                  @click="deleteArticle(article.ID)"
-                  class="text-gray-400 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer font-mono"
-                  title="Delete"
-                >
-                  &times;
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <!-- VIEW MODE 2: BREATHTAKING VERTICAL TIMELINE STREAM -->
+    <div v-else class="max-w-4xl mx-auto relative pl-6 sm:pl-32 py-4">
 
-    <!-- VIEW MODE 3: TIMELINE STREAM -->
-    <div v-else class="max-w-3xl mx-auto space-y-4">
-      <article
-        v-for="article in filteredArticles"
-        :key="article.ID"
-        class="reveal-item group relative bg-white dark:bg-[#12151C] rounded-xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all p-5 flex flex-col sm:flex-row items-start gap-4 shadow-2xs"
-      >
-        <div class="flex-grow min-w-0 pr-6">
-          <div class="flex items-center gap-2 mb-1.5 font-mono text-[11px] text-gray-400">
-            <span>{{ formatDate(article.ID) }}</span>
-            <span>•</span>
-            <span>{{ getReadingTime(article.article) }}</span>
-            <span v-if="isMocArticle(article)" class="text-amber-500 font-semibold">★ MOC</span>
+      <!-- Continuous Luminescent Spine -->
+      <div class="absolute left-6 sm:left-[5.5rem] top-3 bottom-6 w-[2px] bg-gradient-to-b from-emerald-500/50 via-gray-200/80 dark:via-white/[0.08] to-transparent pointer-events-none"></div>
+
+      <div class="space-y-6 sm:space-y-8">
+        <div
+          v-for="(article, idx) in filteredArticles"
+          :key="article.ID"
+          class="reveal-item relative group"
+        >
+          <!-- Desktop Timestamp on Left of Spine -->
+          <div class="hidden sm:flex absolute -left-[5.5rem] top-5 w-20 flex-col items-end pr-4 text-right select-none">
+            <span class="text-[10px] font-mono font-bold tracking-widest text-emerald-600 dark:text-emerald-400 uppercase">
+              {{ formatTimelineDate(article.ID).month }}
+            </span>
+            <span class="text-xl font-bold tracking-tight text-gray-900 dark:text-gray-100 font-['Outfit'] -my-0.5">
+              {{ formatTimelineDate(article.ID).day }}
+            </span>
+            <span class="text-[10px] font-mono text-gray-400 dark:text-gray-500">
+              {{ formatTimelineDate(article.ID).year }}
+            </span>
           </div>
 
-          <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors mb-1.5 truncate">
-            <router-link :to="`/articles/${article.ID}`">
-              {{ article.title }}
-            </router-link>
-          </h3>
+          <!-- Interactive Node Pin on Spine -->
+          <div class="absolute -left-[1.375rem] top-7 -translate-x-1/2 w-4 h-4 rounded-full bg-[#FAFAFA] dark:bg-[#0C0E12] border-2 border-gray-300 dark:border-white/20 group-hover:border-emerald-500 group-hover:scale-125 transition-all duration-300 flex items-center justify-center z-10 shadow-xs">
+            <div class="w-1.5 h-1.5 rounded-full bg-gray-400 dark:bg-white/40 group-hover:bg-emerald-500 group-hover:shadow-[0_0_10px_rgba(16,185,129,0.9)] transition-all duration-300"></div>
+          </div>
 
-          <p class="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
-            {{ article.article }}
-          </p>
+          <!-- Timeline Content Capsule (Double-Bezel Hardware Aesthetic) -->
+          <div class="ml-2 sm:ml-4 relative bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 hover:shadow-xl hover:shadow-emerald-500/[0.03] transition-all duration-300 p-4 sm:p-5 flex flex-col md:flex-row items-start md:items-center gap-4 sm:gap-5 group-hover:-translate-y-0.5">
+            
+            <!-- Thumbnail Visual Preview -->
+            <div class="w-full md:w-36 h-36 md:h-24 rounded-xl overflow-hidden bg-gray-100 dark:bg-[#0A0C10] border border-gray-100 dark:border-white/[0.06] flex-shrink-0 relative group/thumb">
+              <template v-if="hasValidImage(article)">
+                <img
+                  :src="article.image"
+                  :alt="article.title"
+                  @error="onImageError(article.ID)"
+                  class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+                  loading="lazy"
+                />
+                <div class="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent pointer-events-none"></div>
+              </template>
+              <div
+                v-else
+                class="w-full h-full p-3 flex flex-col justify-between relative bg-gradient-to-br"
+                :class="getProceduralGradient(article.ID)"
+              >
+                <div class="absolute inset-0 opacity-10 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:10px_10px]"></div>
+                <span class="relative z-10 text-[9px] font-mono text-emerald-400/70 font-semibold tracking-wider uppercase truncate">
+                  {{ getDomain(article).split('.')[0] }}
+                </span>
+                <span class="relative z-10 font-mono text-2xl font-bold text-white/10 select-none">
+                  #{{ String(idx + 1).padStart(2, '0') }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Content Details -->
+            <div class="flex-grow min-w-0 pr-2">
+              <!-- Eyebrow Meta -->
+              <div class="flex flex-wrap items-center gap-2 mb-1.5 text-xs font-mono">
+                <!-- Mobile Date Pill (hidden on desktop) -->
+                <span class="sm:hidden text-emerald-600 dark:text-emerald-400 font-semibold">
+                  {{ formatShortDate(article.ID) }}
+                </span>
+                <span class="sm:hidden text-gray-300 dark:text-gray-600">•</span>
+
+                <!-- Domain Pill -->
+                <span class="px-2 py-0.5 rounded-full text-[10px] bg-gray-100 dark:bg-white/[0.05] text-gray-600 dark:text-gray-300 border border-gray-200/60 dark:border-white/[0.06] flex items-center gap-1.5 font-medium">
+                  <span class="w-1 h-1 rounded-full bg-emerald-500"></span>
+                  {{ getDomain(article) }}
+                </span>
+
+                <!-- Reading Time -->
+                <span class="text-[11px] text-gray-400 dark:text-gray-500 font-mono">
+                  {{ getReadingTime(article.article) }}
+                </span>
+
+                <!-- MOC Badge -->
+                <span
+                  v-if="isMocArticle(article)"
+                  class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-700 dark:text-amber-300 font-medium border border-amber-500/20"
+                >
+                  ★ MOC
+                </span>
+
+                <!-- Tags -->
+                <button
+                  v-for="tag in article.parsedTags.slice(0, 2)"
+                  :key="tag"
+                  @click="selectedTag = tag"
+                  class="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-gray-100/70 dark:bg-white/[0.03] text-gray-500 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors cursor-pointer"
+                >
+                  #{{ tag }}
+                </button>
+              </div>
+
+              <!-- Title -->
+              <h3 class="text-base sm:text-lg font-semibold tracking-tight text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors mb-1.5 leading-snug font-['Outfit']">
+                <router-link :to="`/articles/${article.ID}`">
+                  {{ article.title }}
+                </router-link>
+              </h3>
+
+              <!-- Excerpt -->
+              <p class="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed font-normal">
+                {{ article.article }}
+              </p>
+            </div>
+
+            <!-- Trailing Interactive Action & Delete -->
+            <div class="flex items-center gap-3 self-end md:self-center flex-shrink-0 pt-2 md:pt-0">
+              <button
+                @click="deleteArticle(article.ID)"
+                class="opacity-0 group-hover:opacity-100 hover:text-red-500 text-gray-400 p-2 rounded-lg transition-all cursor-pointer text-xs font-mono"
+                title="Delete note"
+              >
+                <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+              </button>
+
+              <router-link
+                :to="`/articles/${article.ID}`"
+                class="w-10 h-10 rounded-xl bg-gray-100 dark:bg-white/[0.05] group-hover:bg-emerald-500 text-gray-400 group-hover:text-white transition-all duration-300 flex items-center justify-center shadow-2xs group-hover:shadow-emerald-500/25 group-hover:scale-105 active:scale-95"
+                title="Read article"
+              >
+                <svg class="w-4 h-4 group-hover:translate-x-0.5 transition-transform" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                  <polyline points="12 5 19 12 12 19"></polyline>
+                </svg>
+              </router-link>
+            </div>
+
+          </div>
         </div>
-
-        <button
-          @click="deleteArticle(article.ID)"
-          class="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 p-1 transition-opacity cursor-pointer"
-          title="Delete article"
-        >
-          &times;
-        </button>
-      </article>
+      </div>
     </div>
 
   </div>
 </template>
 
 <style scoped>
-/* ─── Timeline spine ─────────────────────────────────── */
-.timeline-root {
-  position: relative;
-  padding-left: 3rem;
-}
-
-.timeline-spine {
-  position: absolute;
-  left: 0.75rem;
-  top: 0.5rem;
-  bottom: 0.5rem;
-  width: 1.5px;
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    rgb(209 213 219 / 0.8) 4%,
-    rgb(209 213 219 / 0.8) 96%,
-    transparent
-  );
-}
-
-:global(.dark) .timeline-spine {
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    rgb(55 65 81 / 0.7) 4%,
-    rgb(55 65 81 / 0.7) 96%,
-    transparent
-  );
-}
-
-/* ─── Timeline entry ─────────────────────────────────── */
-.timeline-entry {
-  position: relative;
-  margin-bottom: 2.5rem;
-}
-
-/* ─── Dot ────────────────────────────────────────────── */
-.timeline-marker {
-  position: absolute;
-  left: -2.25rem;
-  top: 1.6rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 1rem;
-  height: 1rem;
-  z-index: 2;
-}
-
-.timeline-dot {
-  display: block;
-  width: 0.625rem;
-  height: 0.625rem;
-  border-radius: 9999px;
-  background: #d1d5db;
-  border: 2px solid white;
-  box-shadow: 0 0 0 3px rgb(209 213 219 / 0.35);
-  transition: background 0.3s ease, box-shadow 0.3s ease;
-}
-
-:global(.dark) .timeline-dot {
-  background: #374151;
-  border-color: #0a0a0a;
-  box-shadow: 0 0 0 3px rgb(55 65 81 / 0.35);
-}
-
-.timeline-entry:hover .timeline-dot {
-  background: #10b981;
-  box-shadow: 0 0 0 4px rgb(16 185 129 / 0.2);
-}
-
-/* ─── Date label ─────────────────────────────────────── */
-.timeline-date {
-  position: absolute;
-  left: -2.75rem;
-  top: -1.25rem;
-  font-size: 0.65rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #9ca3af;
-  white-space: nowrap;
-  transform: rotate(-90deg);
-  transform-origin: right center;
-  right: auto;
-  display: none; /* show on wider screens only */
-}
-
-@media (min-width: 768px) {
-  .timeline-root {
-    padding-left: 5rem;
-  }
-
-  .timeline-spine {
-    left: 1.5rem;
-  }
-
-  .timeline-marker {
-    left: -3rem;
-  }
-
-  .timeline-date {
-    display: block;
-    position: absolute;
-    left: auto;
-    right: calc(100% + 4.25rem);
-    top: 50%;
-    transform: translateY(-50%);
-    text-align: right;
-    font-size: 0.7rem;
-    white-space: nowrap;
-    writing-mode: horizontal-tb;
-    color: #9ca3af;
-  }
-
-  :global(.dark) .timeline-date {
-    color: #6b7280;
-  }
-}
-
 /* ─── Scroll reveal ──────────────────────────────────── */
 .reveal-item {
   opacity: 0;
