@@ -192,6 +192,35 @@ function getHostname(url: string): string {
   }
 }
 
+const heroImage = computed(() => {
+  return knownProperties.value.cover || currentArticle.value?.image || ''
+})
+
+const wordCount = computed(() => {
+  if (!rawMarkdown.value) return 0
+  return rawMarkdown.value.trim().split(/\s+/).length
+})
+
+const estimatedReadingTime = computed(() => {
+  const words = wordCount.value
+  const minutes = Math.max(1, Math.ceil(words / 200))
+  return `${minutes} min read`
+})
+
+const readerFont = ref<'serif' | 'sans'>('serif')
+const readerFontSize = ref<'sm' | 'base' | 'lg'>('base')
+const copiedLink = ref(false)
+
+const copyArticleLink = () => {
+  try {
+    navigator.clipboard.writeText(window.location.href)
+    copiedLink.value = true
+    setTimeout(() => {
+      copiedLink.value = false
+    }, 2000)
+  } catch {}
+}
+
 type NotificationState = 'idle' | 'running' | 'completed' | 'error'
 const notificationState = ref<NotificationState>('idle')
 const notificationMessage = ref('')
@@ -674,23 +703,89 @@ onBeforeUnmount(() => {
   <div class="flex flex-col lg:flex-row w-full max-w-6xl mx-auto items-start relative px-4 sm:px-6">
     <article ref="articleRef" class="w-full lg:w-2/3 max-w-2xl mx-auto py-8 sm:py-12 transition-colors">
       
-      <!-- Back to Library Nav -->
-      <div class="mb-6">
-        <router-link
-          to="/"
-          class="inline-flex items-center gap-1.5 text-xs font-mono text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
-        >
-          <span>&larr;</span>
-          <span>Vault Library</span>
-        </router-link>
+      <!-- Floating Reader HUD & Companion Bar -->
+      <div class="sticky top-4 z-30 flex items-center justify-between gap-3 mb-8 p-2 rounded-2xl bg-white/85 dark:bg-[#12151C]/85 backdrop-blur-xl border border-gray-200/80 dark:border-white/[0.08] shadow-sm">
+        <div class="flex items-center gap-2">
+          <router-link
+            to="/"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-mono font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/[0.06] transition-all"
+          >
+            <span>&larr;</span>
+            <span>Vault</span>
+          </router-link>
+          <div class="h-4 w-px bg-gray-200 dark:bg-white/10 hidden sm:block"></div>
+          <span class="text-xs font-mono text-gray-400 dark:text-gray-500 hidden sm:inline truncate max-w-[180px]">
+            {{ articleTitle }}
+          </span>
+        </div>
+
+        <div class="flex items-center gap-1.5 sm:gap-2">
+          <!-- Reading Progress Pill -->
+          <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-gray-100/80 dark:bg-white/[0.04] text-[11px] font-mono text-gray-600 dark:text-gray-400 border border-gray-200/50 dark:border-white/[0.04]">
+            <div class="w-2 h-2 rounded-full border border-emerald-500/40 flex items-center justify-center relative overflow-hidden bg-emerald-500/10">
+              <div class="w-full bg-emerald-500 transition-all duration-150" :style="{ height: `${readingProgress}%` }"></div>
+            </div>
+            <span>{{ Math.round(readingProgress) }}%</span>
+          </div>
+
+          <!-- Typography Toggle: Newsreader Serif vs Geist Sans -->
+          <div class="flex items-center bg-gray-100/70 dark:bg-white/[0.04] p-0.5 rounded-xl border border-gray-200/50 dark:border-white/[0.04]">
+            <button
+              @click="readerFont = 'serif'"
+              class="px-2 py-1 rounded-lg text-xs font-serif transition-all cursor-pointer"
+              :class="readerFont === 'serif' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs font-medium' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'"
+              title="Serif typography (Newsreader)"
+            >
+              Aa
+            </button>
+            <button
+              @click="readerFont = 'sans'"
+              class="px-2 py-1 rounded-lg text-xs font-sans transition-all cursor-pointer"
+              :class="readerFont === 'sans' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs font-medium' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'"
+              title="Sans-serif typography (Geist)"
+            >
+              Aa
+            </button>
+          </div>
+
+          <!-- Font Size Adjuster -->
+          <button
+            @click="readerFontSize = readerFontSize === 'sm' ? 'base' : (readerFontSize === 'base' ? 'lg' : 'sm')"
+            class="px-2 py-1 rounded-xl text-xs font-mono text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white bg-gray-100/70 dark:bg-white/[0.04] border border-gray-200/50 dark:border-white/[0.04] transition-all cursor-pointer"
+            :title="`Text size: ${readerFontSize}`"
+          >
+            <span v-if="readerFontSize === 'sm'">A-</span>
+            <span v-else-if="readerFontSize === 'base'">A</span>
+            <span v-else class="font-bold text-emerald-600 dark:text-emerald-400">A+</span>
+          </button>
+
+          <!-- Copy Link -->
+          <button
+            @click="copyArticleLink"
+            class="p-1.5 rounded-xl text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition-all cursor-pointer"
+            :title="copiedLink ? 'Link copied to clipboard!' : 'Copy link'"
+          >
+            <svg v-if="copiedLink" class="w-3.5 h-3.5 text-emerald-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <svg v-else class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+          </button>
+
+          <!-- Edit Action -->
+          <button
+            @click="startEditing"
+            class="p-1.5 rounded-xl text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition-all cursor-pointer"
+            title="Edit markdown"
+          >
+            <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+          </button>
+        </div>
       </div>
 
       <!-- If Editing Markdown -->
       <div v-if="isEditing" class="mb-8 w-full">
-        <textarea v-model="editContent" rows="18" class="w-full p-4 bg-gray-50/50 dark:bg-[#12151C] border border-gray-200 dark:border-white/10 rounded-xl text-gray-900 dark:text-gray-100 font-mono text-sm leading-relaxed focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none resize-y transition-all"></textarea>
+        <textarea v-model="editContent" rows="18" class="w-full p-4 bg-gray-50/50 dark:bg-[#12151C] border border-gray-200 dark:border-white/10 rounded-2xl text-gray-900 dark:text-gray-100 font-mono text-sm leading-relaxed focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none resize-y transition-all"></textarea>
         <div class="flex justify-end gap-2 mt-3">
           <button @click="cancelEditing" :disabled="isSaving" class="px-4 py-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 text-xs font-medium transition-colors disabled:opacity-50 cursor-pointer">Cancel</button>
-          <button @click="saveEdit" :disabled="isSaving" class="px-4 py-2 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-100 text-white dark:text-gray-950 text-xs font-medium rounded-lg transition-all active:scale-[0.98] disabled:opacity-50 flex items-center gap-1.5 cursor-pointer shadow-xs">
+          <button @click="saveEdit" :disabled="isSaving" class="px-4 py-2 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-100 text-white dark:text-gray-950 text-xs font-medium rounded-xl transition-all active:scale-[0.98] disabled:opacity-50 flex items-center gap-1.5 cursor-pointer shadow-xs">
             <svg v-if="isSaving" class="animate-spin h-3.5 w-3.5 text-white dark:text-gray-950" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
             {{ isSaving ? 'Saving...' : 'Save Changes' }}
           </button>
@@ -698,98 +793,111 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-else>
-        <!-- Editorial Provenance Masthead -->
-        <header v-if="properties.length > 0" class="mb-8 pb-6 border-b border-gray-200/60 dark:border-white/[0.06]">
-          <!-- Top Row: Source Publisher, Date, and Actions -->
-          <div class="flex items-center justify-between gap-4">
+        <!-- Hero Cover Masthead -->
+        <div
+          v-if="heroImage"
+          class="relative mb-8 rounded-[2rem] overflow-hidden border border-gray-200/80 dark:border-white/[0.08] shadow-sm max-h-[420px] group"
+        >
+          <img
+            :src="heroImage"
+            :alt="articleTitle"
+            class="w-full h-full object-cover max-h-[420px] group-hover:scale-102 transition-transform duration-700 ease-out"
+          />
+          <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-black/15 to-transparent pointer-events-none"></div>
+
+          <!-- Floating Inset Provenance Pill -->
+          <div class="absolute bottom-4 left-4 right-4 flex items-center justify-between pointer-events-none z-10">
+            <a
+              v-if="knownProperties.source"
+              :href="knownProperties.source"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="pointer-events-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md text-white/95 text-xs font-mono font-medium border border-white/15 hover:bg-black/80 transition-all shadow-sm"
+            >
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              <span>{{ getHostname(knownProperties.source) }}</span>
+              <span class="text-white/60">&nearr;</span>
+            </a>
+            <span v-if="knownProperties.date" class="text-xs font-mono text-white/80 drop-shadow-sm font-medium">
+              {{ formatDisplayDate(knownProperties.date) }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Editorial Masthead Header -->
+        <header class="mb-8 pb-6 border-b border-gray-200/60 dark:border-white/[0.06]">
+          <!-- Top Row: Eyebrow Metadata & Agent Actions -->
+          <div class="flex items-center justify-between gap-4 mb-3">
             <div class="flex flex-wrap items-center gap-2">
-              <!-- MOC Hub Badge -->
               <span
                 v-if="isMOC"
-                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 text-xs font-medium"
+                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 text-xs font-mono font-semibold"
               >
-                <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                Map of Content
+                ★ MOC HUB
               </span>
-
-              <!-- Source Badge -->
-              <a
-                v-if="knownProperties.source"
-                :href="knownProperties.source"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-100 dark:bg-white/[0.04] hover:bg-gray-200/80 dark:hover:bg-white/[0.08] text-gray-700 dark:text-gray-300 border border-gray-200/60 dark:border-white/[0.06] text-xs font-medium transition-colors"
-              >
-                <span>{{ getHostname(knownProperties.source) }}</span>
-                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-              </a>
-
-              <!-- Captured Date -->
-              <div v-if="knownProperties.date" class="text-xs text-gray-400 dark:text-gray-500 font-mono">
-                {{ formatDisplayDate(knownProperties.date) }}
-              </div>
+              <span class="text-xs font-mono text-emerald-600 dark:text-emerald-400 font-semibold tracking-wide">
+                // VAULT ARTICLE
+              </span>
+              <span class="text-gray-300 dark:text-gray-700">•</span>
+              <span class="text-xs font-mono text-gray-400 dark:text-gray-500">
+                {{ estimatedReadingTime }} · {{ wordCount }} words
+              </span>
             </div>
 
-            <!-- Action Controls -->
-            <div class="flex items-center gap-1.5">
-              <button
-                @click="reparseArticle"
-                :disabled="isReparsing"
-                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-colors cursor-pointer disabled:opacity-50"
-                title="Re-run pipeline agents"
-              >
-                <svg v-if="isReparsing" class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
-                <svg v-else xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>
-                <span>{{ isReparsing ? 'Running...' : 'Reparse' }}</span>
-              </button>
-
-              <button
-                @click="startEditing"
-                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-colors cursor-pointer"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                <span>Edit</span>
-              </button>
-            </div>
+            <!-- Reparse Agent Action -->
+            <button
+              @click="reparseArticle"
+              :disabled="isReparsing"
+              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-colors cursor-pointer disabled:opacity-50"
+              title="Re-run pipeline agents"
+            >
+              <svg v-if="isReparsing" class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+              <svg v-else xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>
+              <span>{{ isReparsing ? 'Agent Running...' : 'Reparse' }}</span>
+            </button>
           </div>
 
-          <!-- Tags strip -->
-          <div v-if="knownProperties.tags.length > 0" class="flex flex-wrap items-center gap-1.5 mt-3">
+          <!-- Article Main Title -->
+          <h1 v-if="articleTitle" class="text-2xl sm:text-4xl font-bold tracking-tight text-gray-900 dark:text-gray-100 mb-4 font-['Outfit'] leading-tight">
+            {{ articleTitle }}
+          </h1>
+
+          <!-- Tags Bar -->
+          <div v-if="knownProperties.tags.length > 0" class="flex flex-wrap items-center gap-1.5 mt-4">
             <span
               v-for="tag in knownProperties.tags"
               :key="tag"
-              class="text-[11px] font-mono px-2 py-0.5 rounded bg-gray-100/80 dark:bg-white/[0.04] text-gray-600 dark:text-gray-400 border border-gray-200/50 dark:border-white/[0.04]"
+              class="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-gray-100/80 dark:bg-white/[0.04] text-gray-600 dark:text-gray-400 border border-gray-200/50 dark:border-white/[0.04]"
             >
               #{{ tag }}
             </span>
           </div>
         </header>
 
-        <!-- Standalone edit button for legacy articles without frontmatter -->
-        <div v-else class="flex justify-end mb-6">
-          <button @click="startEditing" class="px-3 py-1.5 bg-gray-100 dark:bg-white/[0.06] text-gray-700 dark:text-gray-300 rounded-md text-xs font-medium hover:bg-gray-200 dark:hover:bg-white/[0.1] transition-colors cursor-pointer">Edit Markdown</button>
-        </div>
-
-        <!-- Article Main Title -->
-        <h1 v-if="articleTitle" class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900 dark:text-gray-100 mb-6 font-sans leading-tight">
-          {{ articleTitle }}
-        </h1>
-
-        <!-- Markdown Prose Body -->
+        <!-- Markdown Prose Body with Custom Typography -->
         <div
-          class="prose prose-base dark:prose-invert max-w-none prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-p:leading-relaxed prose-p:font-serif prose-headings:font-sans prose-headings:font-semibold prose-headings:tracking-tight prose-a:text-emerald-600 dark:prose-a:text-emerald-400 prose-img:rounded-xl prose-pre:bg-gray-900 dark:prose-pre:bg-[#0E1117] prose-pre:rounded-xl prose-pre:border prose-pre:border-black/10 dark:prose-pre:border-white/10"
+          :class="[
+            'prose dark:prose-invert max-w-none transition-all duration-200',
+            readerFont === 'serif' ? 'font-[\'Newsreader\'] prose-p:font-[\'Newsreader\'] prose-p:text-gray-800 dark:prose-p:text-gray-200 prose-p:leading-[1.85]' : 'font-sans prose-p:font-sans prose-p:text-gray-800 dark:prose-p:text-gray-200 prose-p:leading-relaxed',
+            readerFontSize === 'lg' ? 'text-lg sm:text-xl' : (readerFontSize === 'sm' ? 'text-sm sm:text-base' : 'text-base sm:text-lg'),
+            'prose-headings:font-[\'Outfit\'] prose-headings:font-bold prose-headings:tracking-tight',
+            'prose-a:text-emerald-600 dark:prose-a:text-emerald-400 prose-a:underline-offset-4',
+            'prose-blockquote:border-l-2 prose-blockquote:border-emerald-500 prose-blockquote:bg-emerald-500/[0.04] prose-blockquote:py-1.5 prose-blockquote:px-5 prose-blockquote:rounded-r-2xl prose-blockquote:italic',
+            'prose-img:rounded-2xl prose-img:shadow-sm',
+            'prose-pre:bg-gray-950 dark:prose-pre:bg-[#0A0C10] prose-pre:rounded-2xl prose-pre:border prose-pre:border-black/10 dark:prose-pre:border-white/10'
+          ]"
           v-html="markdownContent"
         />
       </div>
 
       <!-- Linked Mentions (Backlinks) -->
       <div v-if="backlinks.length > 0" class="mt-16 pt-8 border-t border-gray-200/60 dark:border-white/[0.06]">
-        <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+        <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2 font-mono">
+          <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
           Linked Mentions ({{ backlinks.length }})
         </h3>
         
-        <div class="rounded-xl border border-gray-200/80 dark:border-white/[0.08] bg-white dark:bg-[#12151C] overflow-hidden shadow-2xs">
+        <div class="rounded-2xl border border-gray-200/80 dark:border-white/[0.08] bg-white dark:bg-[#12151C] overflow-hidden shadow-2xs">
           <div
             v-for="link in backlinks"
             :key="link.ID"
@@ -811,16 +919,48 @@ onBeforeUnmount(() => {
 
     </article>
     
-    <!-- Local Graph Sidebar -->
-    <aside class="hidden lg:block w-1/3 sticky top-24 bg-white dark:bg-[#12151C] rounded-xl border border-gray-200/80 dark:border-white/[0.08] ml-8 overflow-hidden shadow-2xs">
-      <div class="px-4 py-3 border-b border-gray-100 dark:border-white/[0.06] font-medium text-xs text-gray-700 dark:text-gray-300 flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-          <span>Local Orbit Graph</span>
+    <!-- Local Graph & Intelligence Dossier Sidebar -->
+    <aside class="hidden lg:block w-1/3 sticky top-8 ml-8 space-y-5">
+      <!-- Article Intelligence Dossier Card -->
+      <div class="bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] p-4 shadow-2xs space-y-3">
+        <div class="flex items-center justify-between pb-2.5 border-b border-gray-100 dark:border-white/[0.06] text-xs font-mono">
+          <span class="text-gray-400 uppercase tracking-wider font-semibold">// INTEL DOSSIER</span>
+          <span class="text-emerald-600 dark:text-emerald-400 font-medium">Verified</span>
         </div>
-        <GraphZoomControls @zoom-in="localZoomIn" @zoom-out="localZoomOut" @fit="localFitView" />
+        <div class="grid grid-cols-2 gap-2.5 text-xs font-mono">
+          <div class="p-2.5 rounded-xl bg-gray-50/70 dark:bg-white/[0.02] border border-gray-100 dark:border-white/[0.04]">
+            <span class="text-[10px] text-gray-400 block mb-0.5">READ TIME</span>
+            <span class="font-semibold text-gray-800 dark:text-gray-200">{{ estimatedReadingTime }}</span>
+          </div>
+          <div class="p-2.5 rounded-xl bg-gray-50/70 dark:bg-white/[0.02] border border-gray-100 dark:border-white/[0.04]">
+            <span class="text-[10px] text-gray-400 block mb-0.5">WORD COUNT</span>
+            <span class="font-semibold text-gray-800 dark:text-gray-200">{{ wordCount }} words</span>
+          </div>
+        </div>
+        <div v-if="knownProperties.source" class="pt-1">
+          <a
+            :href="knownProperties.source"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-mono bg-gray-100/70 dark:bg-white/[0.04] text-gray-700 dark:text-gray-300 hover:bg-emerald-500 hover:text-white transition-all group"
+          >
+            <span>Original Source</span>
+            <span class="group-hover:translate-x-0.5 transition-transform">&nearr;</span>
+          </a>
+        </div>
       </div>
-      <div ref="localGraphContainer" class="w-full h-[320px]"></div>
+
+      <!-- Local Orbit Graph Card -->
+      <div class="bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] overflow-hidden shadow-2xs">
+        <div class="px-4 py-3 border-b border-gray-100 dark:border-white/[0.06] font-medium text-xs text-gray-700 dark:text-gray-300 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span class="font-mono text-xs">Local Orbit Graph</span>
+          </div>
+          <GraphZoomControls @zoom-in="localZoomIn" @zoom-out="localZoomOut" @fit="localFitView" />
+        </div>
+        <div ref="localGraphContainer" class="w-full h-[300px]"></div>
+      </div>
     </aside>
 
     <div 
