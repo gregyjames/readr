@@ -35,6 +35,29 @@ const selectedTag = ref<string | null>(null)
 const filterMocOnly = ref(false)
 const sortOrder = ref<'latest' | 'oldest' | 'title'>('latest')
 
+const failedImages = ref<Record<number, boolean>>({})
+
+const onImageError = (id: number) => {
+  failedImages.value[id] = true
+}
+
+const hasValidImage = (article: Article | null | undefined) => {
+  if (!article || !article.image) return false
+  return !failedImages.value[article.ID]
+}
+
+const getProceduralGradient = (id: number) => {
+  const gradients = [
+    'from-emerald-950/60 via-[#121620] to-slate-950',
+    'from-blue-950/60 via-[#121620] to-slate-950',
+    'from-teal-950/60 via-[#121620] to-zinc-950',
+    'from-indigo-950/50 via-[#121620] to-slate-950',
+    'from-cyan-950/50 via-[#121620] to-neutral-950',
+    'from-amber-950/40 via-[#121620] to-stone-950',
+  ]
+  return gradients[Math.abs(Number(id) || 0) % gradients.length]
+}
+
 const fetchArticles = async () => {
   try {
     const res = await axios.get('/api/getarticles')
@@ -319,9 +342,9 @@ const secondaryArticles = computed(() => {
               <div>
                 <!-- Editorial Index & Meta -->
                 <div class="flex flex-wrap items-center gap-2.5 text-xs font-mono text-gray-400 dark:text-gray-500 mb-3">
-                  <span class="text-emerald-600 dark:text-emerald-400 font-semibold">// 01 · LATEST INGESTION</span>
+                  <span class="text-emerald-600 dark:text-emerald-400 font-semibold tracking-wide">// 01 · LATEST NOTE</span>
                   <span>•</span>
-                  <span class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.05] text-[10px] text-gray-500 dark:text-gray-400 font-mono">{{ getDomain(leadArticle) }}</span>
+                  <span class="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-white/[0.05] text-[10px] text-gray-600 dark:text-gray-300 font-mono font-medium">{{ getDomain(leadArticle) }}</span>
                   <span>•</span>
                   <span>{{ formatDate(leadArticle.ID) || 'Recent' }}</span>
                   <span>•</span>
@@ -347,7 +370,7 @@ const secondaryArticles = computed(() => {
                 </div>
 
                 <!-- Title -->
-                <h2 class="text-xl sm:text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors mb-3 leading-snug">
+                <h2 class="text-xl sm:text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors mb-3 leading-snug font-['Outfit']">
                   <router-link :to="`/articles/${leadArticle.ID}`">
                     {{ leadArticle.title }}
                   </router-link>
@@ -363,7 +386,7 @@ const secondaryArticles = computed(() => {
               <div class="flex items-center justify-between pt-6 mt-6 border-t border-gray-100 dark:border-white/[0.04]">
                 <router-link
                   :to="`/articles/${leadArticle.ID}`"
-                  class="inline-flex items-center gap-1 text-xs font-mono font-medium text-emerald-600 dark:text-emerald-400 group-hover:underline"
+                  class="inline-flex items-center gap-1.5 text-xs font-mono font-medium text-emerald-600 dark:text-emerald-400 group-hover:translate-x-0.5 transition-transform"
                 >
                   <span>Open article</span>
                   <span>&rarr;</span>
@@ -379,17 +402,32 @@ const secondaryArticles = computed(() => {
               </div>
             </div>
 
-            <!-- Right Cover Media (if exists) -->
+            <!-- Right Cover Media -->
             <div
-              v-if="leadArticle.image"
-              class="lg:w-80 h-48 lg:h-auto overflow-hidden bg-gray-100 dark:bg-white/[0.02] border-t lg:border-t-0 lg:border-l border-gray-100 dark:border-white/[0.06] flex-shrink-0"
+              v-if="hasValidImage(leadArticle)"
+              class="lg:w-96 xl:w-[420px] h-56 lg:h-auto overflow-hidden bg-gray-100 dark:bg-[#0A0C10] border-t lg:border-t-0 lg:border-l border-gray-100 dark:border-white/[0.06] flex-shrink-0 relative"
             >
               <img
                 :src="leadArticle.image"
                 :alt="leadArticle.title"
-                class="w-full h-full object-cover group-hover:scale-103 transition-transform duration-500"
+                @error="onImageError(leadArticle.ID)"
+                class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out"
                 loading="lazy"
               />
+              <div class="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent pointer-events-none"></div>
+            </div>
+            <div
+              v-else
+              class="lg:w-80 h-44 lg:h-auto overflow-hidden p-6 flex flex-col justify-between border-t lg:border-t-0 lg:border-l border-gray-100 dark:border-white/[0.06] flex-shrink-0 relative bg-gradient-to-br"
+              :class="getProceduralGradient(leadArticle.ID)"
+            >
+              <div class="absolute inset-0 opacity-10 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:14px_14px]"></div>
+              <div class="relative z-10 flex justify-end">
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-mono text-white/70 bg-white/10 backdrop-blur-md border border-white/10">Readr Ingest</span>
+              </div>
+              <div class="relative z-10 font-mono text-4xl font-black text-white/10 uppercase select-none">
+                #01
+              </div>
             </div>
 
           </div>
@@ -397,70 +435,130 @@ const secondaryArticles = computed(() => {
       </div>
 
       <!-- Secondary Articles Masonry / Grid -->
-      <div v-if="secondaryArticles.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+      <div v-if="secondaryArticles.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <article
           v-for="(article, idx) in secondaryArticles"
           :key="article.ID"
-          class="reveal-item group relative bg-white dark:bg-[#12151C] rounded-xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-200 shadow-2xs hover:shadow-xs p-5 flex flex-col justify-between"
+          class="reveal-item group relative bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-300 shadow-2xs hover:shadow-md overflow-hidden flex flex-col justify-between"
         >
-          <div>
-            <!-- Monospace Index & Reading Time -->
-            <div class="flex items-center justify-between text-[11px] font-mono text-gray-400 dark:text-gray-500 mb-2.5">
-              <div class="flex items-center gap-1.5">
-                <span>// {{ String(idx + 2).padStart(2, '0') }}</span>
-                <span class="text-[10px] px-1 py-0.2 rounded bg-gray-100 dark:bg-white/[0.04] text-gray-500 font-mono">{{ getDomain(article) }}</span>
+          <!-- Top Cover Media -->
+          <div class="relative h-48 w-full overflow-hidden bg-gray-100 dark:bg-[#0A0C10] border-b border-gray-100 dark:border-white/[0.06]">
+            <!-- Actual Image -->
+            <template v-if="hasValidImage(article)">
+              <img
+                :src="article.image"
+                :alt="article.title"
+                @error="onImageError(article.ID)"
+                class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+                loading="lazy"
+              />
+              <!-- Subtle Cinematic Scrim -->
+              <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-black/15 to-black/20 pointer-events-none"></div>
+            </template>
+
+            <!-- Generative Curated Fallback Banner -->
+            <div
+              v-else
+              class="w-full h-full p-4 flex flex-col justify-between relative bg-gradient-to-br"
+              :class="getProceduralGradient(article.ID)"
+            >
+              <div class="absolute inset-0 opacity-10 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:12px_12px]"></div>
+              <div class="relative z-10 flex items-center justify-between">
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-black/40 dark:bg-white/10 backdrop-blur-md text-white/90 border border-white/10 flex items-center gap-1">
+                  <span class="w-1 h-1 rounded-full bg-emerald-400"></span>
+                  {{ getDomain(article) }}
+                </span>
+                <span class="text-[10px] font-mono text-white/70">
+                  {{ getReadingTime(article.article) }}
+                </span>
               </div>
-              <span>{{ getReadingTime(article.article) }}</span>
+              <div class="relative z-10 flex items-baseline justify-between select-none">
+                <span class="text-3xl font-bold tracking-tighter text-white/10 dark:text-white/[0.08] font-mono">
+                  #{{ String(idx + 2).padStart(2, '0') }}
+                </span>
+                <span class="text-xs font-mono uppercase tracking-widest text-emerald-400/30 font-semibold">
+                  {{ getDomain(article).split('.')[0].slice(0, 10) }}
+                </span>
+              </div>
             </div>
 
-            <!-- Tags -->
-            <div v-if="article.parsedTags.length > 0 || isMocArticle(article)" class="flex flex-wrap gap-1.5 mb-2.5">
-              <span
-                v-if="isMocArticle(article)"
-                class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 font-medium"
-              >
-                ★ MOC
+            <!-- Floating Overlay Badges (When Image Is Present) -->
+            <div v-if="hasValidImage(article)" class="absolute inset-x-3 top-3 flex items-center justify-between pointer-events-none z-10">
+              <span class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-medium bg-black/60 backdrop-blur-md text-white/95 border border-white/15 shadow-xs flex items-center gap-1.5">
+                <span class="w-1 h-1 rounded-full bg-emerald-400"></span>
+                {{ getDomain(article) }}
               </span>
-              <button
-                v-for="tag in article.parsedTags.slice(0, 2)"
-                :key="tag"
-                @click="selectedTag = tag"
-                class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.05] text-gray-500 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors cursor-pointer"
-              >
-                #{{ tag }}
-              </button>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-mono bg-black/60 backdrop-blur-md text-white/85 border border-white/15 shadow-xs">
+                {{ getReadingTime(article.article) }}
+              </span>
             </div>
 
-            <!-- Title -->
-            <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors mb-2 line-clamp-2 leading-snug">
-              <router-link :to="`/articles/${article.ID}`">
-                {{ article.title }}
-              </router-link>
-            </h3>
-
-            <!-- Excerpt -->
-            <p class="text-xs text-gray-500 dark:text-gray-400 line-clamp-3 leading-relaxed mb-4">
-              {{ article.article }}
-            </p>
+            <!-- Inset Bottom Bar over Image -->
+            <div v-if="hasValidImage(article)" class="absolute inset-x-3 bottom-2.5 flex items-center justify-between pointer-events-none z-10">
+              <span class="text-[10px] font-mono text-white/90 font-medium drop-shadow-sm">
+                {{ formatShortDate(article.ID) || `ID #${article.ID}` }}
+              </span>
+              <span class="text-[10px] font-mono text-emerald-300 font-semibold drop-shadow-sm group-hover:translate-x-0.5 transition-transform">
+                Read &rarr;
+              </span>
+            </div>
           </div>
 
-          <!-- Footer Metadata -->
-          <div class="pt-3 border-t border-gray-100 dark:border-white/[0.04] flex items-center justify-between text-[11px] font-mono text-gray-400 dark:text-gray-500">
-            <span>{{ formatShortDate(article.ID) || `ID #${article.ID}` }}</span>
-            <div class="flex items-center gap-2">
-              <button
-                @click="deleteArticle(article.ID)"
-                class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer"
-                title="Delete note"
-              >
-                &times;
-              </button>
-              <router-link
-                :to="`/articles/${article.ID}`"
-                class="hover:text-gray-900 dark:hover:text-white transition-colors"
-              >
-                Read &rarr;
-              </router-link>
+          <!-- Card Content Body -->
+          <div class="p-5 flex flex-col justify-between flex-1">
+            <div>
+              <!-- Tags / MOC Hub Indicator -->
+              <div v-if="article.parsedTags.length > 0 || isMocArticle(article)" class="flex flex-wrap items-center gap-1.5 mb-2.5">
+                <span
+                  v-if="isMocArticle(article)"
+                  class="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 font-medium border border-amber-500/20"
+                >
+                  ★ MOC
+                </span>
+                <button
+                  v-for="tag in article.parsedTags.slice(0, 3)"
+                  :key="tag"
+                  @click="selectedTag = tag"
+                  class="text-[10px] font-mono px-2 py-0.5 rounded-md bg-gray-100 dark:bg-white/[0.04] text-gray-600 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors cursor-pointer"
+                >
+                  #{{ tag }}
+                </button>
+              </div>
+
+              <!-- Title -->
+              <h3 class="text-base font-semibold tracking-tight text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors mb-2 line-clamp-2 leading-snug font-['Outfit']">
+                <router-link :to="`/articles/${article.ID}`">
+                  {{ article.title }}
+                </router-link>
+              </h3>
+
+              <!-- Excerpt -->
+              <p class="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed mb-4">
+                {{ article.article }}
+              </p>
+            </div>
+
+            <!-- Footer Action & Meta -->
+            <div class="pt-3 border-t border-gray-100 dark:border-white/[0.04] flex items-center justify-between text-[11px] font-mono text-gray-400 dark:text-gray-500">
+              <span class="flex items-center gap-1.5">
+                <span class="w-1 h-1 rounded-full bg-emerald-500/70"></span>
+                <span>// {{ String(idx + 2).padStart(2, '0') }}</span>
+              </span>
+              <div class="flex items-center gap-3">
+                <button
+                  @click="deleteArticle(article.ID)"
+                  class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer text-xs"
+                  title="Delete note"
+                >
+                  &times; Delete
+                </button>
+                <router-link
+                  :to="`/articles/${article.ID}`"
+                  class="hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors font-medium"
+                >
+                  Read &rarr;
+                </router-link>
+              </div>
             </div>
           </div>
         </article>
