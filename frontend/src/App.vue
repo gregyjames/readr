@@ -356,7 +356,7 @@ function removeTag(tag: string) {
     </nav>
 
     <!-- Main Dynamic Workspace -->
-    <main class="flex-1 flex flex-col min-w-0 min-h-screen overflow-y-auto pb-16 md:pb-0">
+    <main class="flex-1 flex flex-col min-w-0 min-h-screen pb-16 md:pb-0">
       <router-view v-if="route.name === 'login'" />
       <div v-else-if="!isSettingsLoaded" class="flex-grow flex items-center justify-center text-gray-400 text-xs font-mono">
         Loading vault...

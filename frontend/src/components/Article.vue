@@ -703,8 +703,8 @@ onBeforeUnmount(() => {
   <div class="flex flex-col lg:flex-row w-full max-w-6xl mx-auto items-start relative px-4 sm:px-6">
     <article ref="articleRef" class="w-full lg:w-2/3 max-w-2xl mx-auto py-8 sm:py-12 transition-colors">
       
-      <!-- Floating Reader HUD & Companion Bar -->
-      <div class="sticky top-4 z-30 flex items-center justify-between gap-3 mb-8 p-2 rounded-2xl bg-white/85 dark:bg-[#12151C]/85 backdrop-blur-xl border border-gray-200/80 dark:border-white/[0.08] shadow-sm">
+      <!-- Floating Reader HUD & Companion Bar (Pinned at top) -->
+      <div class="sticky top-16 md:top-4 z-30 flex items-center justify-between gap-3 mb-8 p-2 rounded-2xl bg-white/90 dark:bg-[#12151C]/90 backdrop-blur-xl border border-gray-200/80 dark:border-white/[0.08] shadow-md transition-all">
         <div class="flex items-center gap-2">
           <router-link
             to="/"
