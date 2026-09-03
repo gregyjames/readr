@@ -213,6 +213,18 @@ const estimatedReadingTime = computed(() => {
 
 const readerFont = ref<'serif' | 'sans'>('serif')
 const readerFontSize = ref<'sm' | 'base' | 'lg'>('base')
+
+const getProceduralGradient = (id: number) => {
+  const gradients = [
+    'from-emerald-900/50 via-teal-950/70 to-slate-950 text-emerald-300',
+    'from-indigo-900/50 via-purple-950/70 to-slate-950 text-indigo-300',
+    'from-rose-900/50 via-stone-950 to-slate-950 text-rose-300',
+    'from-amber-900/50 via-orange-950/70 to-slate-950 text-amber-300',
+    'from-cyan-900/50 via-blue-950/70 to-slate-950 text-cyan-300',
+    'from-violet-900/50 via-fuchsia-950/70 to-slate-950 text-violet-300',
+  ]
+  return gradients[Math.abs(Number(id) || 0) % gradients.length]
+}
 const copiedLink = ref(false)
 
 const copyArticleLink = () => {
@@ -736,7 +748,10 @@ onBeforeUnmount(() => {
   <div class="flex w-full min-h-screen relative">
     
     <!-- Main Article Reading Column -->
-    <div class="flex-1 min-w-0 flex justify-center px-4 sm:px-8 py-6 sm:py-10 transition-all duration-300">
+    <div class="flex-1 min-w-0 flex justify-center px-4 sm:px-8 py-6 sm:py-10 transition-all duration-300 relative">
+      <!-- Atmospheric Backdrop Glow on reading canvas -->
+      <div class="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 w-full max-w-4xl h-80 bg-gradient-to-b from-emerald-500/[0.08] dark:from-emerald-500/[0.04] to-transparent blur-3xl -z-10"></div>
+
       <article
         ref="articleRef"
         class="w-full transition-all duration-300"
@@ -834,15 +849,19 @@ onBeforeUnmount(() => {
 
       <div v-else>
         <!-- Hero Cover Masthead (Option 1: Luminous Aura & Cinematic Framing) -->
-        <div v-if="heroImage" class="relative mb-10 group">
-          <!-- Ambient Luminous Glow Behind the Card -->
-          <div
-            class="absolute -inset-3 sm:-inset-4 rounded-[2.5rem] bg-cover bg-center filter blur-3xl opacity-35 dark:opacity-30 -z-10 scale-95 pointer-events-none transition-opacity duration-700 group-hover:opacity-50"
-            :style="{ backgroundImage: `url(${heroImage})` }"
-          ></div>
+        <div v-if="heroImage" class="relative mb-10 group isolate">
+          <!-- Ambient Luminous Glow Behind the Card (Vivid, saturated, and isolated) -->
+          <div class="absolute -inset-4 sm:-inset-6 -z-10 overflow-visible pointer-events-none">
+            <img
+              :src="heroImage"
+              alt=""
+              aria-hidden="true"
+              class="w-full h-full object-cover rounded-[2.5rem] filter blur-3xl opacity-80 dark:opacity-65 scale-105 sm:scale-110 transition-opacity duration-700 group-hover:opacity-100 saturate-150"
+            />
+          </div>
 
           <!-- Cinematic Framed Container -->
-          <div class="relative rounded-[2rem] overflow-hidden border border-black/10 dark:border-white/10 shadow-lg aspect-[16/9] sm:aspect-[21/9] max-h-[460px] bg-gray-100 dark:bg-[#12151C]">
+          <div class="relative rounded-[2rem] overflow-hidden border border-black/10 dark:border-white/10 shadow-xl aspect-[16/9] sm:aspect-[21/9] max-h-[460px] bg-gray-100 dark:bg-[#12151C] z-10">
             <img
               :src="heroImage"
               :alt="articleTitle"
@@ -858,7 +877,7 @@ onBeforeUnmount(() => {
                 :href="knownProperties.source"
                 target="_blank"
                 rel="noopener noreferrer"
-                class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/40 hover:bg-black/70 backdrop-blur-xl text-white text-xs font-mono font-medium border border-white/20 shadow-md transition-all hover:scale-105"
+                class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/50 hover:bg-black/80 backdrop-blur-xl text-white text-xs font-mono font-medium border border-white/20 shadow-md transition-all hover:scale-105"
               >
                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                 <span>{{ getHostname(knownProperties.source) }}</span>
@@ -868,10 +887,56 @@ onBeforeUnmount(() => {
 
             <!-- Bottom Right Date Pill -->
             <div v-if="knownProperties.date" class="absolute bottom-4 right-4 z-10">
-              <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/40 backdrop-blur-xl text-white/90 text-xs font-mono font-medium border border-white/20 shadow-md">
+              <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/50 backdrop-blur-xl text-white/90 text-xs font-mono font-medium border border-white/20 shadow-md">
                 <svg class="w-3 h-3 text-emerald-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
                 {{ formatDisplayDate(knownProperties.date) }}
               </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Procedural Aurora Banner for Articles without an image -->
+        <div v-else class="relative mb-10 group isolate">
+          <!-- Ambient Glow for Procedural Banner -->
+          <div
+            class="absolute -inset-4 sm:-inset-6 -z-10 rounded-[2.5rem] filter blur-3xl opacity-45 dark:opacity-35 scale-105 sm:scale-110 pointer-events-none transition-opacity duration-700 bg-gradient-to-br"
+            :class="getProceduralGradient(Number(getArticleId()) || 0)"
+          ></div>
+
+          <div
+            class="relative rounded-[2rem] overflow-hidden border border-black/10 dark:border-white/10 shadow-xl h-44 sm:h-52 flex flex-col justify-between p-6 bg-gradient-to-br z-10"
+            :class="getProceduralGradient(Number(getArticleId()) || 0)"
+          >
+            <!-- Dot matrix pattern overlay -->
+            <div class="absolute inset-0 opacity-15 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none"></div>
+
+            <!-- Top Row Badges -->
+            <div class="flex items-center justify-between w-full z-10">
+              <div v-if="knownProperties.source">
+                <a
+                  :href="knownProperties.source"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-xl text-white text-xs font-mono font-medium border border-white/15 transition-all"
+                >
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  <span>{{ getHostname(knownProperties.source) }}</span>
+                  <span class="text-white/60">&nearr;</span>
+                </a>
+              </div>
+              <div v-else class="text-[10px] font-mono uppercase tracking-widest text-white/50">
+                READR VAULT
+              </div>
+
+              <div v-if="knownProperties.date" class="text-xs font-mono text-white/70">
+                {{ formatDisplayDate(knownProperties.date) }}
+              </div>
+            </div>
+
+            <!-- Monospace Watermark in bottom corner -->
+            <div class="flex items-end justify-between z-10">
+              <span class="font-mono text-[10px] tracking-widest uppercase text-white/40">#DOCUMENT</span>
+              <span class="font-mono text-xs font-semibold text-white/60">{{ wordCount }} WORDS</span>
             </div>
           </div>
         </div>
