@@ -1,5 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-  <rect x="4" y="5" width="16" height="2" class="fill-current" />
-  <rect x="4" y="11" width="16" height="2" class="fill-current" />
-  <rect x="4" y="17" width="16" height="2" class="fill-current" />
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" class="w-5 h-5" viewBox="0 0 24 24"><rect width="16" height="2" x="4" y="5" class="fill-current"/><rect width="16" height="2" x="4" y="11" class="fill-current"/><rect width="16" height="2" x="4" y="17" class="fill-current"/></svg>
