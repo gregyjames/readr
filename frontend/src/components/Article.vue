@@ -421,6 +421,7 @@ const backlinks = computed(() => {
 
 let observer: MutationObserver | null = null
 const localGraphContainer = ref<HTMLElement | null>(null)
+const localGraphNodeCount = ref(0)
 let localNetwork: Network | null = null
 const { zoomIn: localZoomIn, zoomOut: localZoomOut, fitGraph: localFitView } = useGraphZoom(() => localNetwork)
 
@@ -502,42 +503,136 @@ const loadLocalGraph = async () => {
       connectedNodeIds.add(e.to)
     })
     
+    const isDark = document.documentElement.classList.contains('dark')
+    const mocNodeIds = new Set(graphData.nodes.filter((n: any) => n.group === 'moc').map((n: any) => n.id))
+
     const localNodes = graphData.nodes.filter((n: any) => connectedNodeIds.has(n.id)).map((n: any) => {
       const connections = connectedEdges.filter((e: any) => e.from === n.id || e.to === n.id).length
-      const nodeSize = Math.min(10 + (connections * 3), 35)
+      const isCurrent = n.id === currentArticleNodeId
+      const isMoc = n.group === 'moc'
+      const isTag = n.group === 'tag'
       
-      if (n.group === 'article') {
-        return { ...n, title: n.label, label: undefined, size: nodeSize }
+      let nodeSize = 8
+      let displayLabel: string | undefined = undefined
+
+      if (isMoc) {
+        nodeSize = Math.max(16, Math.min(16 + connections * 2, 28))
+        displayLabel = n.label
+      } else if (isTag) {
+        nodeSize = Math.max(6, Math.min(6 + connections * 1, 14))
+        displayLabel = n.label
+      } else {
+        nodeSize = isCurrent ? 14 : Math.max(7, Math.min(7 + connections * 1.5, 20))
+        if (isCurrent || connections >= 2) {
+          displayLabel = n.label.length > 20 ? n.label.slice(0, 18) + '…' : n.label
+        } else {
+          displayLabel = undefined
+        }
       }
-      return { ...n, size: nodeSize }
+
+      return {
+        ...n,
+        size: nodeSize,
+        label: displayLabel,
+        title: `${n.label} (${connections} connection${connections === 1 ? '' : 's'})`,
+        borderWidth: isCurrent ? 3 : (isMoc ? 2.5 : 1.5),
+        shadow: isCurrent ? { enabled: true, color: isDark ? '#34d399' : '#059669', size: 10, x: 0, y: 0 } : false
+      }
     })
-    
-    const isDark = document.documentElement.classList.contains('dark')
+
+    localGraphNodeCount.value = localNodes.length
+
+    const processedEdges = connectedEdges.map((e: any) => {
+      const isMocEdge = mocNodeIds.has(e.from) || mocNodeIds.has(e.to)
+      return {
+        ...e,
+        length: isMocEdge ? 70 : 90,
+        color: isMocEdge
+          ? (isDark ? 'rgba(245, 158, 11, 0.45)' : 'rgba(217, 119, 6, 0.45)')
+          : (isDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.1)'),
+        width: isMocEdge ? 1.5 : 1
+      }
+    })
     
     const options = {
       nodes: { 
         shape: 'dot', 
         size: 10, 
-        font: { color: isDark ? '#fff' : '#000', size: 10, face: 'Outfit' },
+        font: { 
+          color: isDark ? '#e5e7eb' : '#374151', 
+          size: 10, 
+          face: 'Outfit, sans-serif',
+          strokeWidth: 2,
+          strokeColor: isDark ? '#0a0a0a' : '#f8f9fa'
+        },
         borderWidth: 2,
         color: { border: isDark ? '#1a1a1a' : '#fff', background: '#10b981' },
         widthConstraint: { maximum: 120 }
       },
       groups: {
-        article: { color: { background: '#10b981', border: isDark ? '#059669' : '#34d399' } },
+        article: { 
+          color: { 
+            background: '#10b981', 
+            border: isDark ? '#047857' : '#34d399',
+            hover: { background: '#059669', border: '#10b981' }
+          },
+          font: {
+            color: isDark ? '#e5e7eb' : '#374151',
+            size: 10,
+            strokeWidth: 2,
+            strokeColor: isDark ? '#0a0a0a' : '#f8f9fa'
+          }
+        },
+        moc: {
+          shape: 'hexagon',
+          color: {
+            background: '#f59e0b',
+            border: isDark ? '#d97706' : '#fbbf24',
+            hover: { background: '#d97706', border: '#fbbf24' }
+          },
+          font: {
+            color: isDark ? '#fef3c7' : '#92400e',
+            size: 11,
+            bold: 'bold',
+            strokeWidth: 2,
+            strokeColor: isDark ? '#0a0a0a' : '#f8f9fa'
+          }
+        },
         tag: { 
           shape: 'box', 
-          color: { background: isDark ? '#1f2937' : '#f3f4f6', border: isDark ? '#374151' : '#e5e7eb' },
-          font: { color: isDark ? '#d1d5db' : '#4b5563', size: 9 }
+          margin: 4,
+          color: { 
+            background: isDark ? 'rgba(31, 41, 55, 0.85)' : 'rgba(243, 244, 246, 0.9)', 
+            border: isDark ? '#374151' : '#e5e7eb',
+            hover: { background: isDark ? '#374151' : '#e5e7eb', border: isDark ? '#4b5563' : '#d1d5db' }
+          },
+          font: { 
+            color: isDark ? '#9ca3af' : '#6b7280', 
+            size: 9,
+            face: 'Inter, sans-serif'
+          }
         }
       },
-      edges: { color: isDark ? '#333' : '#e2e8f0', width: 1 },
-      physics: { barnesHut: { gravitationalConstant: -800, springLength: 80, damping: 0.2 } },
+      edges: { 
+        smooth: false,
+        hoverWidth: 1.5,
+        selectionWidth: 1.5
+      },
+      physics: { 
+        solver: 'forceAtlas2Based',
+        forceAtlas2Based: {
+          gravitationalConstant: -35,
+          centralGravity: 0.015,
+          springLength: 75,
+          springConstant: 0.08,
+          damping: 0.4
+        }
+      },
       interaction: { hover: true, tooltipDelay: 200, zoomView: false }
     }
 
     if (localNetwork && localGraphContainer.value && localGraphContainer.value.querySelector('canvas')) {
-      localNetwork.setData({ nodes: localNodes, edges: connectedEdges })
+      localNetwork.setData({ nodes: localNodes, edges: processedEdges })
       localNetwork.setOptions(options)
       localNetwork.setSize('100%', '100%')
       localNetwork.redraw()
@@ -547,7 +642,7 @@ const loadLocalGraph = async () => {
         localNetwork.destroy()
         localNetwork = null
       }
-      localNetwork = new Network(localGraphContainer.value, { nodes: localNodes, edges: connectedEdges }, options)
+      localNetwork = new Network(localGraphContainer.value, { nodes: localNodes, edges: processedEdges }, options)
       
       localNetwork.once('stabilizationIterationsDone', () => {
         localNetwork?.fit({
@@ -1104,7 +1199,7 @@ onBeforeUnmount(() => {
             Local Graph
           </span>
           <span class="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-gray-200/60 dark:bg-white/[0.06] text-gray-500 dark:text-gray-400">
-            {{ backlinks.length + 1 }}
+            {{ localGraphNodeCount || backlinks.length + 1 }}
           </span>
         </div>
 
@@ -1128,6 +1223,21 @@ onBeforeUnmount(() => {
       <!-- Graph Canvas Pane -->
       <div class="h-[280px] xl:h-[320px] relative bg-gray-50/30 dark:bg-black/20 flex-shrink-0 border-b border-black/[0.06] dark:border-white/[0.06]">
         <div ref="localGraphContainer" class="absolute inset-0 w-full h-full"></div>
+
+        <!-- Micro Legend Matching Main Graph -->
+        <div class="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between pointer-events-none z-10 text-[10px] font-mono">
+          <div class="flex items-center gap-2 px-2 py-1 rounded-md bg-white/85 dark:bg-black/70 backdrop-blur-md border border-black/[0.06] dark:border-white/[0.08] shadow-2xs">
+            <span class="inline-flex items-center gap-1 text-gray-600 dark:text-gray-300">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Note
+            </span>
+            <span class="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 font-semibold">
+              <span class="w-1.5 h-1.5 rotate-45 rounded-[1px] bg-amber-500"></span> MOC Hub
+            </span>
+            <span class="inline-flex items-center gap-1 text-gray-500 dark:text-gray-400">
+              <span class="w-2 h-1 rounded-[1px] bg-gray-400 dark:bg-gray-500"></span> Tag
+            </span>
+          </div>
+        </div>
       </div>
 
       <!-- Scrollable Document Metadata & Backlinks Section -->
