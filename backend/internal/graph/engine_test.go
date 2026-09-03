@@ -56,6 +56,14 @@ func (m *mockGraphRepository) UpdateArticleTags(ctx context.Context, id int64, t
 	return nil
 }
 
+func (m *mockGraphRepository) GetArchivedArticles(ctx context.Context) ([]repository.ArticleRecord, error) {
+	return nil, nil
+}
+
+func (m *mockGraphRepository) SetArticleArchived(ctx context.Context, id int64, archived bool) error {
+	return nil
+}
+
 func (m *mockGraphRepository) RecordPipelineMetric(ctx context.Context, metric *repository.PipelineMetric) error {
 	return nil
 }
@@ -199,5 +207,41 @@ func TestGraphEngine_CachingAndInvalidation(t *testing.T) {
 	}
 	if len(g3.Nodes) != 3 {
 		t.Errorf("expected 3 nodes after cache invalidation, got %d", len(g3.Nodes))
+	}
+}
+
+func TestBuildTopology_ArchivedNodes(t *testing.T) {
+	articles := []repository.ArticleRecord{
+		{ID: 1, Title: "Active Note", Tags: "tech", IsArchived: false},
+		{ID: 2, Title: "Archived Note", Tags: "archive", IsArchived: true},
+	}
+	links := []repository.LinkRecord{
+		{ID: 1, SourceID: 1, TargetID: 2},
+	}
+
+	graph := BuildTopology(articles, links)
+
+	var activeNode, archivedNode *Node
+	for i := range graph.Nodes {
+		if graph.Nodes[i].Id == "article-1" {
+			activeNode = &graph.Nodes[i]
+		}
+		if graph.Nodes[i].Id == "article-2" {
+			archivedNode = &graph.Nodes[i]
+		}
+	}
+
+	if activeNode == nil {
+		t.Fatalf("expected activeNode to be found in graph")
+	}
+	if activeNode.IsArchived {
+		t.Errorf("expected activeNode.IsArchived to be false, got true")
+	}
+
+	if archivedNode == nil {
+		t.Fatalf("expected archivedNode to be found in graph")
+	}
+	if !archivedNode.IsArchived {
+		t.Errorf("expected archivedNode.IsArchived to be true, got false")
 	}
 }

@@ -26,12 +26,13 @@ func IsMOCArticle(title, tags string) bool {
 }
 
 type ArticleRecord struct {
-	ID        int64  `json:"id"`
-	Title     string `json:"title"`
-	ImagePath string `json:"image"`
-	FilePath  string `json:"article"`
-	Tags      string `json:"tags"`
-	SourceURL string `json:"sourceUrl"`
+	ID         int64  `json:"id"`
+	Title      string `json:"title"`
+	ImagePath  string `json:"image"`
+	FilePath   string `json:"article"`
+	Tags       string `json:"tags"`
+	SourceURL  string `json:"sourceUrl"`
+	IsArchived bool   `json:"is_archived"`
 }
 
 type LinkRecord struct {
@@ -45,6 +46,8 @@ type Repository interface {
 	FindByID(ctx context.Context, id int64) (*ArticleRecord, error)
 	SaveArticle(ctx context.Context, a *ArticleRecord) error
 	GetAllArticles(ctx context.Context) ([]ArticleRecord, error)
+	GetArchivedArticles(ctx context.Context) ([]ArticleRecord, error)
+	SetArticleArchived(ctx context.Context, id int64, archived bool) error
 	GetAllLinks(ctx context.Context) ([]LinkRecord, error)
 	CreateLink(ctx context.Context, sourceID, targetID int64) (*LinkRecord, error)
 	DeleteArticle(ctx context.Context, id int64) error

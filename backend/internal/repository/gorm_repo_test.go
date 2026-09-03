@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -240,5 +241,107 @@ func TestFindRelevantTags(t *testing.T) {
 	}
 	if len(emptyTags) != 0 {
 		t.Errorf("expected 0 relevant tags for non-matching article, got %v", emptyTags)
+	}
+}
+
+func TestArchiveRepository(t *testing.T) {
+	tempDir := t.TempDir()
+	sqlDB, err := sql.Open("sqlite", filepath.Join(tempDir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.AutoMigrate(&GormArticle{}); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := NewGormRepository(db)
+	ctx := context.Background()
+
+	// Seed articles: 2 active, 1 archived
+	articles := []GormArticle{
+		{ID: 1, Title: "Active Article 1", Article: "active1.md", Image: "img1.png", Tags: "golang", IsArchived: false},
+		{ID: 2, Title: "Active Article 2", Article: "active2.md", Image: "img2.png", Tags: "k8s", IsArchived: false},
+		{ID: 3, Title: "Archived Article 3", Article: "archived3.md", Image: "img3.png", Tags: "docker", IsArchived: true},
+	}
+	for _, a := range articles {
+		if err := db.Create(&a).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 1. Test GetAllArticles excludes archived articles by default
+	activeArticles, err := repo.GetAllArticles(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(activeArticles) != 2 {
+		t.Fatalf("expected 2 active articles, got %d", len(activeArticles))
+	}
+	for _, a := range activeArticles {
+		if a.ID == 3 {
+			t.Errorf("GetAllArticles should exclude archived article ID 3")
+		}
+		if a.IsArchived {
+			t.Errorf("GetAllArticles should not return archived article: %+v", a)
+		}
+	}
+
+	// 2. Test GetArchivedArticles returns only archived articles
+	archivedArticles, err := repo.GetArchivedArticles(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(archivedArticles) != 1 {
+		t.Fatalf("expected 1 archived article, got %d", len(archivedArticles))
+	}
+	if archivedArticles[0].ID != 3 || !archivedArticles[0].IsArchived {
+		t.Errorf("expected archived article with ID 3 and IsArchived=true, got: %+v", archivedArticles[0])
+	}
+
+	// 3. Test SetArticleArchived(ctx, 1, true)
+	if err := repo.SetArticleArchived(ctx, 1, true); err != nil {
+		t.Fatalf("unexpected error archiving article: %v", err)
+	}
+
+	activeAfterArchive, err := repo.GetAllArticles(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(activeAfterArchive) != 1 {
+		t.Fatalf("expected 1 active article after archiving ID 1, got %d", len(activeAfterArchive))
+	}
+	if activeAfterArchive[0].ID != 2 {
+		t.Errorf("expected active article ID 2, got %d", activeAfterArchive[0].ID)
+	}
+
+	archivedAfterArchive, err := repo.GetArchivedArticles(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(archivedAfterArchive) != 2 {
+		t.Fatalf("expected 2 archived articles after archiving ID 1, got %d", len(archivedAfterArchive))
+	}
+
+	// 4. Test SetArticleArchived(ctx, 1, false) unarchives
+	if err := repo.SetArticleArchived(ctx, 1, false); err != nil {
+		t.Fatalf("unexpected error unarchiving article: %v", err)
+	}
+
+	activeAfterUnarchive, err := repo.GetAllArticles(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(activeAfterUnarchive) != 2 {
+		t.Fatalf("expected 2 active articles after unarchiving ID 1, got %d", len(activeAfterUnarchive))
+	}
+
+	// 5. Test SetArticleArchived on nonexistent ID returns ErrNotFound
+	if err := repo.SetArticleArchived(ctx, 9999, true); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound for nonexistent ID, got: %v", err)
 	}
 }

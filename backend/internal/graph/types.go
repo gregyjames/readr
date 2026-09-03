@@ -11,9 +11,10 @@ const (
 )
 
 type Node struct {
-	Id    string    `json:"id"`
-	Label string    `json:"label"`
-	Group NodeGroup `json:"group"`
+	Id         string    `json:"id"`
+	Label      string    `json:"label"`
+	Group      NodeGroup `json:"group"`
+	IsArchived bool      `json:"isArchived,omitempty"`
 }
 
 type Edge struct {

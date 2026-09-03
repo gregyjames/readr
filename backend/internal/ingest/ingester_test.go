@@ -159,6 +159,14 @@ func (m *mockArticleRepository) UpdateArticleTags(ctx context.Context, id int64,
 	return nil
 }
 
+func (m *mockArticleRepository) GetArchivedArticles(ctx context.Context) ([]IngestedArticle, error) {
+	return nil, nil
+}
+
+func (m *mockArticleRepository) SetArticleArchived(ctx context.Context, id int64, archived bool) error {
+	return nil
+}
+
 func (m *mockArticleRepository) RecordPipelineMetric(ctx context.Context, metric *repository.PipelineMetric) error {
 	return nil
 }

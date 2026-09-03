@@ -78,11 +78,12 @@ func extractCandidateKeywords(title, body string, maxKeywords int) []string {
 
 type GormArticle struct {
 	gorm.Model
-	ID      int64  `gorm:"primaryKey"`
-	Article string `json:"article"`
-	Image   string `json:"image"`
-	Title   string `json:"title"`
-	Tags    string `json:"tags"`
+	ID         int64  `gorm:"primaryKey"`
+	Article    string `json:"article"`
+	Image      string `json:"image"`
+	Title      string `json:"title"`
+	Tags       string `json:"tags"`
+	IsArchived bool   `gorm:"default:false;index" json:"is_archived"`
 }
 
 func (GormArticle) TableName() string {
@@ -116,12 +117,13 @@ func (r *GormRepository) FindBySourceURL(ctx context.Context, sourceURL string) 
 		return nil, err
 	}
 	return &ArticleRecord{
-		ID:        a.ID,
-		Title:     a.Title,
-		ImagePath: a.Image,
-		FilePath:  a.Article,
-		Tags:      a.Tags,
-		SourceURL: sourceURL,
+		ID:         a.ID,
+		Title:      a.Title,
+		ImagePath:  a.Image,
+		FilePath:   a.Article,
+		Tags:       a.Tags,
+		SourceURL:  sourceURL,
+		IsArchived: a.IsArchived,
 	}, nil
 }
 
@@ -134,42 +136,79 @@ func (r *GormRepository) FindByID(ctx context.Context, id int64) (*ArticleRecord
 		return nil, err
 	}
 	return &ArticleRecord{
-		ID:        a.ID,
-		Title:     a.Title,
-		ImagePath: a.Image,
-		FilePath:  a.Article,
-		Tags:      a.Tags,
+		ID:         a.ID,
+		Title:      a.Title,
+		ImagePath:  a.Image,
+		FilePath:   a.Article,
+		Tags:       a.Tags,
+		IsArchived: a.IsArchived,
 	}, nil
 }
 
 func (r *GormRepository) SaveArticle(ctx context.Context, a *ArticleRecord) error {
 	article := GormArticle{
-		ID:      a.ID,
-		Title:   a.Title,
-		Image:   a.ImagePath,
-		Article: a.FilePath,
-		Tags:    a.Tags,
+		ID:         a.ID,
+		Title:      a.Title,
+		Image:      a.ImagePath,
+		Article:    a.FilePath,
+		Tags:       a.Tags,
+		IsArchived: a.IsArchived,
 	}
 	return r.db.WithContext(ctx).Create(&article).Error
 }
 
 func (r *GormRepository) GetAllArticles(ctx context.Context) ([]ArticleRecord, error) {
 	var articles []GormArticle
-	if err := r.db.WithContext(ctx).Find(&articles).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("is_archived = ? OR is_archived IS NULL", false).Find(&articles).Error; err != nil {
 		return nil, err
 	}
 
 	result := make([]ArticleRecord, len(articles))
 	for i, a := range articles {
 		result[i] = ArticleRecord{
-			ID:        a.ID,
-			Title:     a.Title,
-			ImagePath: a.Image,
-			FilePath:  a.Article,
-			Tags:      a.Tags,
+			ID:         a.ID,
+			Title:      a.Title,
+			ImagePath:  a.Image,
+			FilePath:   a.Article,
+			Tags:       a.Tags,
+			IsArchived: a.IsArchived,
 		}
 	}
 	return result, nil
+}
+
+func (r *GormRepository) GetArchivedArticles(ctx context.Context) ([]ArticleRecord, error) {
+	var articles []GormArticle
+	if err := r.db.WithContext(ctx).Where("is_archived = ?", true).Find(&articles).Error; err != nil {
+		return nil, err
+	}
+
+	result := make([]ArticleRecord, len(articles))
+	for i, a := range articles {
+		result[i] = ArticleRecord{
+			ID:         a.ID,
+			Title:      a.Title,
+			ImagePath:  a.Image,
+			FilePath:   a.Article,
+			Tags:       a.Tags,
+			IsArchived: a.IsArchived,
+		}
+	}
+	return result, nil
+}
+
+func (r *GormRepository) SetArticleArchived(ctx context.Context, id int64, archived bool) error {
+	res := r.db.WithContext(ctx).
+		Model(&GormArticle{}).
+		Where("id = ?", id).
+		Update("is_archived", archived)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *GormRepository) GetAllLinks(ctx context.Context) ([]LinkRecord, error) {
