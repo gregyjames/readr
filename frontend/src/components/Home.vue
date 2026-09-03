@@ -216,6 +216,16 @@ const undoArchive = async () => {
 }
 
 
+const deleteArticle = async (id: number) => {
+  if (!confirm('Are you sure you want to permanently delete this note from the vault?')) return
+  try {
+    await axios.delete(`/api/delete/${id}`)
+    articles.value = articles.value.filter(article => article.ID !== id)
+  } catch (err) {
+    console.error('Failed to delete article', err)
+  }
+}
+
 onMounted(async () => {
   const stored = localStorage.getItem('readr_viewMode') as ViewMode | null
   if (stored === 'card' || stored === 'list' || stored === 'studio' || stored === 'ledger') {
@@ -470,18 +480,32 @@ const secondaryArticles = computed(() => {
                   <span>&rarr;</span>
                 </router-link>
 
-                <button
-                  @click="archiveArticle(leadArticle.ID)"
-                  class="inline-flex items-center gap-1.5 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 p-1 rounded transition-colors text-xs font-mono cursor-pointer"
-                  title="Archive article"
-                >
-                  <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="21 8 21 21 3 21 3 8"></polyline>
-                    <rect x="1" y="3" width="22" height="5"></rect>
-                    <line x1="10" y1="12" x2="14" y2="12"></line>
-                  </svg>
-                  <span>Archive</span>
-                </button>
+                <div class="flex items-center gap-1">
+                  <button
+                    @click="archiveArticle(leadArticle.ID)"
+                    class="p-1.5 rounded-lg text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-colors cursor-pointer"
+                    title="Archive note"
+                    aria-label="Archive note"
+                  >
+                    <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="21 8 21 21 3 21 3 8"></polyline>
+                      <rect x="1" y="3" width="22" height="5"></rect>
+                      <line x1="10" y1="12" x2="14" y2="12"></line>
+                    </svg>
+                  </button>
+
+                  <button
+                    @click="deleteArticle(leadArticle.ID)"
+                    class="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-colors cursor-pointer"
+                    title="Permanently delete note"
+                    aria-label="Permanently delete note"
+                  >
+                    <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="3 6 5 6 21 6"></polyline>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -627,22 +651,35 @@ const secondaryArticles = computed(() => {
                 <span class="w-1 h-1 rounded-full bg-emerald-500/70"></span>
                 <span>// {{ String(idx + 2).padStart(2, '0') }}</span>
               </span>
-              <div class="flex items-center gap-3">
+              <div class="flex items-center gap-2">
                 <button
                   @click="archiveArticle(article.ID)"
-                  class="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 transition-all cursor-pointer text-xs"
+                  class="opacity-0 group-hover:opacity-100 p-1 rounded-md text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-all cursor-pointer"
                   title="Archive note"
+                  aria-label="Archive note"
                 >
                   <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <polyline points="21 8 21 21 3 21 3 8"></polyline>
                     <rect x="1" y="3" width="22" height="5"></rect>
                     <line x1="10" y1="12" x2="14" y2="12"></line>
                   </svg>
-                  <span>Archive</span>
                 </button>
+
+                <button
+                  @click="deleteArticle(article.ID)"
+                  class="opacity-0 group-hover:opacity-100 p-1 rounded-md text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-all cursor-pointer"
+                  title="Permanently delete note"
+                  aria-label="Permanently delete note"
+                >
+                  <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  </svg>
+                </button>
+
                 <router-link
                   :to="`/articles/${article.ID}`"
-                  class="hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors font-medium"
+                  class="hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors font-medium ml-1"
                 >
                   Read &rarr;
                 </router-link>
@@ -768,11 +805,12 @@ const secondaryArticles = computed(() => {
             </div>
 
             <!-- Trailing Interactive Action & Delete -->
-            <div class="flex items-center gap-3 self-end md:self-center flex-shrink-0 pt-2 md:pt-0">
+            <div class="flex items-center gap-2 self-end md:self-center flex-shrink-0 pt-2 md:pt-0">
               <button
                 @click="archiveArticle(article.ID)"
-                class="opacity-0 group-hover:opacity-100 hover:text-amber-600 dark:hover:text-amber-400 text-gray-400 p-2 rounded-lg transition-all cursor-pointer text-xs font-mono"
+                class="opacity-0 group-hover:opacity-100 hover:text-amber-600 dark:hover:text-amber-400 text-gray-400 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-all cursor-pointer"
                 title="Archive note"
+                aria-label="Archive note"
               >
                 <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="21 8 21 21 3 21 3 8"></polyline>
@@ -781,10 +819,23 @@ const secondaryArticles = computed(() => {
                 </svg>
               </button>
 
+              <button
+                @click="deleteArticle(article.ID)"
+                class="opacity-0 group-hover:opacity-100 hover:text-red-500 text-gray-400 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-all cursor-pointer"
+                title="Permanently delete note"
+                aria-label="Permanently delete note"
+              >
+                <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+              </button>
+
               <router-link
                 :to="`/articles/${article.ID}`"
-                class="w-10 h-10 rounded-xl bg-gray-100 dark:bg-white/[0.05] group-hover:bg-emerald-500 text-gray-400 group-hover:text-white transition-all duration-300 flex items-center justify-center shadow-2xs group-hover:shadow-emerald-500/25 group-hover:scale-105 active:scale-95"
+                class="w-10 h-10 rounded-xl bg-gray-100 dark:bg-white/[0.05] group-hover:bg-emerald-500 text-gray-400 group-hover:text-white transition-all duration-300 flex items-center justify-center shadow-2xs group-hover:shadow-emerald-500/25 group-hover:scale-105 active:scale-95 ml-1"
                 title="Read article"
+                aria-label="Read article"
               >
                 <svg class="w-4 h-4 group-hover:translate-x-0.5 transition-transform" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <line x1="5" y1="12" x2="19" y2="12"></line>
