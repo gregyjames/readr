@@ -187,11 +187,101 @@ const dismissToast = () => {
 
 const archivingId = ref<number | null>(null)
 
+function spawnArchiveParticles(id: number) {
+  const el = document.querySelector(`[data-article-id="${id}"]`) as HTMLElement
+  if (!el) return
+
+  const rect = el.getBoundingClientRect()
+  const cx = rect.left + rect.width / 2
+  const cy = rect.top + rect.height / 2
+
+  // ── Scan line sweep ────────────────────────────────────
+  const scanLine = document.createElement('div')
+  scanLine.style.cssText = `
+    position:fixed;left:${rect.left}px;top:${rect.top}px;
+    width:${rect.width}px;height:3px;pointer-events:none;z-index:9998;
+    background:linear-gradient(90deg,transparent 0%,rgba(245,158,11,0.0) 5%,rgba(245,158,11,0.95) 30%,rgba(255,255,255,0.95) 50%,rgba(245,158,11,0.95) 70%,rgba(245,158,11,0.0) 95%,transparent 100%);
+    box-shadow:0 0 14px rgba(245,158,11,0.9),0 0 28px rgba(245,158,11,0.5),0 0 56px rgba(245,158,11,0.25);
+    border-radius:2px;
+  `
+  document.body.appendChild(scanLine)
+  scanLine.animate(
+    [
+      { top: `${rect.top - 4}px`, opacity: 0 },
+      { top: `${rect.top}px`, opacity: 1, offset: 0.04 },
+      { top: `${rect.bottom - 3}px`, opacity: 1, offset: 0.88 },
+      { top: `${rect.bottom}px`, opacity: 0 },
+    ],
+    { duration: 300, easing: 'ease-in-out', fill: 'forwards' }
+  ).onfinish = () => scanLine.remove()
+
+  // ── Expanding burst ring ───────────────────────────────
+  const ring = document.createElement('div')
+  const maxDim = Math.max(rect.width, rect.height)
+  ring.style.cssText = `
+    position:fixed;left:${cx}px;top:${cy}px;
+    width:8px;height:8px;margin-left:-4px;margin-top:-4px;
+    border-radius:50%;border:2px solid rgba(245,158,11,0.95);
+    pointer-events:none;z-index:9999;
+    box-shadow:0 0 12px rgba(245,158,11,0.7),inset 0 0 6px rgba(245,158,11,0.4);
+  `
+  document.body.appendChild(ring)
+  setTimeout(() => {
+    ring.animate(
+      [
+        { transform: 'scale(1)', opacity: 0.95, borderWidth: '2px' },
+        { transform: `scale(${maxDim / 6})`, opacity: 0, borderWidth: '1px' },
+      ],
+      { duration: 420, easing: 'ease-out', fill: 'forwards' }
+    ).onfinish = () => ring.remove()
+  }, 80)
+
+  // ── Particle shower ────────────────────────────────────
+  const palette = [
+    '#f59e0b', '#fbbf24', '#fcd34d', '#fffbeb',
+    '#10b981', '#34d399', '#6ee7b7',
+    '#ffffff', '#e5e7eb',
+  ]
+  const shapes = ['50%', '50%', '50%', '2px', '2px', '4px']
+
+  for (let i = 0; i < 22; i++) {
+    const p = document.createElement('div')
+    const size = Math.random() * 7 + 2
+    const px = rect.left + Math.random() * rect.width
+    const py = rect.top + Math.random() * rect.height
+    const color = palette[Math.floor(Math.random() * palette.length)]
+    const shape = shapes[Math.floor(Math.random() * shapes.length)]
+    const dur = 480 + Math.random() * 380
+    const dx = (Math.random() - 0.5) * 160
+    const dy = -(Math.random() * 140 + 30)
+    const rot = (Math.random() - 0.5) * 540
+    const delay = Math.random() * 120
+
+    p.style.cssText = `
+      position:fixed;left:${px}px;top:${py}px;
+      width:${size}px;height:${size}px;
+      background:${color};border-radius:${shape};
+      pointer-events:none;z-index:9999;
+      box-shadow:0 0 ${size * 2}px ${color};
+    `
+    document.body.appendChild(p)
+    setTimeout(() => {
+      p.animate(
+        [
+          { opacity: 1, transform: 'scale(1) translate(0,0) rotate(0deg)' },
+          { opacity: 0, transform: `scale(0) translate(${dx}px,${dy}px) rotate(${rot}deg)` },
+        ],
+        { duration: dur, easing: 'cubic-bezier(0.22,1,0.36,1)', fill: 'forwards' }
+      ).onfinish = () => p.remove()
+    }, delay)
+  }
+}
+
 const archiveArticle = async (id: number) => {
   const targetArticle = articles.value.find(a => a.ID === id) || null
   archivingId.value = id
-  // Wait for the CSS animation to complete (450ms)
-  await new Promise(resolve => setTimeout(resolve, 440))
+  spawnArchiveParticles(id)
+  await new Promise(resolve => setTimeout(resolve, 620))
   try {
     await axios.post(`/api/articles/${id}/archive`)
     articles.value = articles.value.filter(article => article.ID !== id)
@@ -427,7 +517,7 @@ const secondaryArticles = computed(() => {
     <div v-else-if="viewMode === 'card' || viewMode === 'studio'" class="space-y-8">
       
       <!-- Lead Spotlight Card (Hero Ingestion) -->
-      <div v-if="leadArticle" class="reveal-item" :class="{ 'archiving': archivingId === leadArticle.ID }">
+      <div v-if="leadArticle" class="reveal-item" :class="{ 'archiving': archivingId === leadArticle.ID }" :data-article-id="leadArticle.ID">
         <div class="relative group bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-300 overflow-hidden shadow-xs hover:shadow-md">
           
           <div class="flex flex-col lg:flex-row items-stretch">
@@ -555,6 +645,7 @@ const secondaryArticles = computed(() => {
           :key="article.ID"
           class="reveal-item group relative bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-300 shadow-2xs hover:shadow-md overflow-hidden flex flex-col justify-between"
           :class="{ 'archiving': archivingId === article.ID }"
+          :data-article-id="article.ID"
         >
           <!-- Top Cover Media -->
           <div class="relative h-48 w-full overflow-hidden bg-gray-100 dark:bg-[#0A0C10] border-b border-gray-100 dark:border-white/[0.06]">
@@ -704,6 +795,7 @@ const secondaryArticles = computed(() => {
           :key="article.ID"
           class="reveal-item relative group"
           :class="{ 'archiving': archivingId === article.ID }"
+          :data-article-id="article.ID"
         >
           <!-- Desktop Timestamp on Left of Spine -->
           <div class="hidden sm:flex absolute -left-[5.5rem] top-5 w-20 flex-col items-end pr-4 text-right select-none">
@@ -911,32 +1003,100 @@ const secondaryArticles = computed(() => {
 }
 
 /* ─── Archive fly-out animation ──────────────────────── */
+
+/*
+  Stage breakdown (620ms total):
+  0–6%   : Snap attention — amber border corona ignites
+  6–18%  : Chromatic glitch — brief hue-rotate flicker
+  18–40% : Horizontal press — card narrows, perspective tips back
+  40–62% : Vault collapse — scale + rise + depth rotation
+  62–82% : Sepia burn — desaturates into amber-gold ghost
+  82–100%: Final dissolve — shrinks to a point and vanishes
+*/
 @keyframes archive-out {
   0% {
     opacity: 1;
-    transform: scale(1) translateY(0) rotateX(0deg);
-    filter: brightness(1);
+    transform: perspective(800px) scale(1) translateY(0) rotateX(0deg) rotateZ(0deg);
+    filter: brightness(1) saturate(1) hue-rotate(0deg) blur(0px);
+    box-shadow:
+      0 0 0 0px rgba(245, 158, 11, 0),
+      0 0 0px rgba(245, 158, 11, 0);
+    outline: 2px solid transparent;
+    outline-offset: 0px;
   }
-  20% {
-    transform: scale(1.02) translateY(-4px);
-    filter: brightness(1.05);
+
+  /* ── Snap: amber corona fires ── */
+  6% {
+    transform: perspective(800px) scale(1.012) translateY(-3px) rotateX(0deg) rotateZ(0deg);
+    filter: brightness(1.18) saturate(1.4) hue-rotate(0deg) blur(0px);
+    box-shadow:
+      0 0 0 3px rgba(245, 158, 11, 0.95),
+      0 0 24px rgba(245, 158, 11, 0.55),
+      0 0 64px rgba(245, 158, 11, 0.25),
+      inset 0 0 30px rgba(245, 158, 11, 0.08);
+    outline: 2px solid rgba(245, 158, 11, 0.7);
+    outline-offset: 3px;
+    opacity: 1;
   }
-  60% {
-    transform: scale(0.92) translateY(-12px) rotateX(8deg);
-    filter: brightness(0.9) saturate(0.6);
-    border-color: rgba(245, 158, 11, 0.5);
-    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25), 0 8px 32px rgba(0, 0, 0, 0.15);
+
+  /* ── Glitch: chromatic aberration flicker ── */
+  12% {
+    filter: brightness(1.1) saturate(1.1) hue-rotate(30deg) blur(0px);
+    transform: perspective(800px) scale(1.008) translateY(-2px) rotateX(0deg) rotateZ(0.4deg);
+    box-shadow:
+      0 0 0 2px rgba(245, 158, 11, 0.8),
+      0 0 18px rgba(245, 158, 11, 0.4),
+      4px 0 8px rgba(239, 68, 68, 0.3),
+      -4px 0 8px rgba(16, 185, 129, 0.3);
   }
+  15% {
+    filter: brightness(1.05) saturate(1.0) hue-rotate(-10deg) blur(0px);
+    transform: perspective(800px) scale(1.0) translateY(-1px) rotateX(0deg) rotateZ(-0.3deg);
+  }
+
+  /* ── Horizontal press: folds inward ── */
+  28% {
+    transform: perspective(800px) scaleX(0.93) scaleY(1.01) translateY(-6px) rotateX(4deg) rotateZ(0deg);
+    filter: brightness(0.96) saturate(0.75) hue-rotate(0deg) blur(0px);
+    box-shadow:
+      0 0 0 1.5px rgba(245, 158, 11, 0.6),
+      0 0 12px rgba(245, 158, 11, 0.3),
+      inset 0 0 20px rgba(245, 158, 11, 0.06);
+    opacity: 0.95;
+  }
+
+  /* ── Vault collapse: depth + scale ── */
+  50% {
+    transform: perspective(800px) scale(0.78) translateY(-28px) rotateX(16deg) rotateZ(0.8deg);
+    filter: brightness(0.82) saturate(0.45) hue-rotate(8deg) blur(0.8px);
+    box-shadow:
+      0 0 0 1px rgba(245, 158, 11, 0.4),
+      0 16px 40px rgba(0, 0, 0, 0.3);
+    opacity: 0.65;
+  }
+
+  /* ── Sepia burn ── */
+  72% {
+    transform: perspective(800px) scale(0.5) translateY(-50px) rotateX(24deg) rotateZ(1.5deg);
+    filter: brightness(0.6) saturate(0.1) sepia(0.9) blur(2px);
+    box-shadow: none;
+    opacity: 0.3;
+  }
+
+  /* ── Final dissolve to nothing ── */
   100% {
+    transform: perspective(800px) scale(0.1) translateY(-70px) rotateX(32deg) rotateZ(2deg);
+    filter: brightness(0.2) saturate(0) sepia(1) blur(6px);
+    box-shadow: none;
+    outline: 2px solid transparent;
     opacity: 0;
-    transform: scale(0.82) translateY(-24px) rotateX(12deg);
-    filter: brightness(0.7) saturate(0);
   }
 }
 
 .reveal-item.archiving {
-  animation: archive-out 0.44s cubic-bezier(0.4, 0, 0.6, 1) forwards;
+  animation: archive-out 0.62s cubic-bezier(0.4, 0, 0.2, 1) forwards;
   pointer-events: none;
-  overflow: hidden;
+  transform-origin: center 60%;
+  will-change: transform, opacity, filter;
 }
 </style>
