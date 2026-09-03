@@ -216,12 +216,12 @@ const readerFontSize = ref<'sm' | 'base' | 'lg'>('base')
 
 const getProceduralGradient = (id: number) => {
   const gradients = [
-    'from-emerald-900/50 via-teal-950/70 to-slate-950 text-emerald-300',
-    'from-indigo-900/50 via-purple-950/70 to-slate-950 text-indigo-300',
-    'from-rose-900/50 via-stone-950 to-slate-950 text-rose-300',
-    'from-amber-900/50 via-orange-950/70 to-slate-950 text-amber-300',
-    'from-cyan-900/50 via-blue-950/70 to-slate-950 text-cyan-300',
-    'from-violet-900/50 via-fuchsia-950/70 to-slate-950 text-violet-300',
+    'from-emerald-50 via-teal-50/70 to-slate-100 border-emerald-200/60 text-emerald-900 dark:from-emerald-950/60 dark:via-teal-950/70 dark:to-slate-950 dark:border-white/10 dark:text-emerald-300',
+    'from-indigo-50 via-purple-50/70 to-slate-100 border-indigo-200/60 text-indigo-900 dark:from-indigo-950/60 dark:via-purple-950/70 dark:to-slate-950 dark:border-white/10 dark:text-indigo-300',
+    'from-rose-50 via-orange-50/70 to-stone-100 border-rose-200/60 text-rose-900 dark:from-rose-950/60 dark:via-stone-950 dark:to-slate-950 dark:border-white/10 dark:text-rose-300',
+    'from-amber-50 via-yellow-50/70 to-stone-100 border-amber-200/60 text-amber-900 dark:from-amber-950/60 dark:via-orange-950/70 dark:to-slate-950 dark:border-white/10 dark:text-amber-300',
+    'from-sky-50 via-blue-50/70 to-slate-100 border-sky-200/60 text-sky-900 dark:from-sky-950/60 dark:via-blue-950/70 dark:to-slate-950 dark:border-white/10 dark:text-cyan-300',
+    'from-violet-50 via-fuchsia-50/70 to-slate-100 border-violet-200/60 text-violet-900 dark:from-violet-950/60 dark:via-fuchsia-950/70 dark:to-slate-950 dark:border-white/10 dark:text-violet-300',
   ]
   return gradients[Math.abs(Number(id) || 0) % gradients.length]
 }
@@ -804,7 +804,7 @@ onBeforeUnmount(() => {
     <!-- Main Article Reading Column -->
     <div class="flex-1 min-w-0 flex justify-center px-4 sm:px-8 py-6 sm:py-10 transition-all duration-300 relative">
       <!-- Atmospheric Backdrop Glow on reading canvas -->
-      <div class="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 w-full max-w-4xl h-80 bg-gradient-to-b from-emerald-500/[0.08] dark:from-emerald-500/[0.04] to-transparent blur-3xl -z-10"></div>
+      <div class="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 w-full max-w-4xl h-80 bg-gradient-to-b from-emerald-500/[0.03] dark:from-emerald-500/[0.04] to-transparent blur-3xl -z-10"></div>
 
       <article
         ref="articleRef"
@@ -813,7 +813,7 @@ onBeforeUnmount(() => {
       >
       
       <!-- Floating Reader HUD & Companion Bar (Pinned at top) -->
-      <div class="sticky top-16 md:top-4 z-30 flex items-center justify-between gap-3 mb-8 p-2 rounded-2xl bg-white/90 dark:bg-[#12151C]/90 backdrop-blur-xl border border-gray-200/80 dark:border-white/[0.08] shadow-md transition-all">
+      <div class="sticky top-16 md:top-4 z-30 flex items-center justify-between gap-3 mb-8 p-2 rounded-2xl bg-white/80 dark:bg-[#12151C]/90 backdrop-blur-xl border border-black/[0.06] dark:border-white/[0.08] shadow-[0_8px_30px_rgba(0,0,0,0.05)] dark:shadow-md transition-all">
         <div class="flex items-center gap-2">
           <router-link
             to="/"
@@ -904,18 +904,18 @@ onBeforeUnmount(() => {
       <div v-else>
         <!-- Hero Cover Masthead (Option 1: Luminous Aura & Cinematic Framing) -->
         <div v-if="heroImage" class="relative mb-10 group isolate">
-          <!-- Ambient Luminous Glow Behind the Card (Vivid, saturated, and isolated) -->
+          <!-- Ambient Luminous Glow Behind the Card (Soft watercolor in light mode, luminous aurora in dark mode) -->
           <div class="absolute -inset-4 sm:-inset-6 -z-10 overflow-visible pointer-events-none">
             <img
               :src="heroImage"
               alt=""
               aria-hidden="true"
-              class="w-full h-full object-cover rounded-[2.5rem] filter blur-3xl opacity-80 dark:opacity-65 scale-105 sm:scale-110 transition-opacity duration-700 group-hover:opacity-100 saturate-150"
+              class="w-full h-full object-cover rounded-[2.5rem] filter blur-3xl opacity-20 dark:opacity-65 scale-105 sm:scale-110 transition-opacity duration-700 group-hover:opacity-35 dark:group-hover:opacity-95 dark:saturate-150"
             />
           </div>
 
           <!-- Cinematic Framed Container -->
-          <div class="relative rounded-[2rem] overflow-hidden border border-black/10 dark:border-white/10 shadow-xl aspect-[16/9] sm:aspect-[21/9] max-h-[460px] bg-gray-100 dark:bg-[#12151C] z-10">
+          <div class="relative rounded-[2rem] overflow-hidden border border-black/[0.07] dark:border-white/10 shadow-[0_20px_50px_-15px_rgba(0,0,0,0.08)] dark:shadow-2xl aspect-[16/9] sm:aspect-[21/9] max-h-[460px] bg-white dark:bg-[#12151C] z-10">
             <img
               :src="heroImage"
               :alt="articleTitle"
@@ -923,7 +923,7 @@ onBeforeUnmount(() => {
             />
             
             <!-- Subtle Vignette Glaze for Top/Bottom Glass Badges -->
-            <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 pointer-events-none"></div>
+            <div class="absolute inset-0 bg-gradient-to-t from-black/35 via-transparent to-black/15 dark:from-black/60 dark:to-black/20 pointer-events-none"></div>
 
             <!-- Top Left Provenance Pill -->
             <div v-if="knownProperties.source" class="absolute top-4 left-4 z-10">
@@ -931,7 +931,7 @@ onBeforeUnmount(() => {
                 :href="knownProperties.source"
                 target="_blank"
                 rel="noopener noreferrer"
-                class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/50 hover:bg-black/80 backdrop-blur-xl text-white text-xs font-mono font-medium border border-white/20 shadow-md transition-all hover:scale-105"
+                class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/40 dark:bg-black/50 hover:bg-black/60 dark:hover:bg-black/80 backdrop-blur-xl text-white text-xs font-mono font-medium border border-white/25 shadow-sm transition-all hover:scale-105"
               >
                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                 <span>{{ getHostname(knownProperties.source) }}</span>
@@ -941,7 +941,7 @@ onBeforeUnmount(() => {
 
             <!-- Bottom Right Date Pill -->
             <div v-if="knownProperties.date" class="absolute bottom-4 right-4 z-10">
-              <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/50 backdrop-blur-xl text-white/90 text-xs font-mono font-medium border border-white/20 shadow-md">
+              <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/40 dark:bg-black/50 backdrop-blur-xl text-white/95 text-xs font-mono font-medium border border-white/25 shadow-sm">
                 <svg class="w-3 h-3 text-emerald-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
                 {{ formatDisplayDate(knownProperties.date) }}
               </span>
@@ -953,16 +953,16 @@ onBeforeUnmount(() => {
         <div v-else class="relative mb-10 group isolate">
           <!-- Ambient Glow for Procedural Banner -->
           <div
-            class="absolute -inset-4 sm:-inset-6 -z-10 rounded-[2.5rem] filter blur-3xl opacity-45 dark:opacity-35 scale-105 sm:scale-110 pointer-events-none transition-opacity duration-700 bg-gradient-to-br"
+            class="absolute -inset-4 sm:-inset-6 -z-10 rounded-[2.5rem] filter blur-3xl opacity-25 dark:opacity-35 scale-105 sm:scale-110 pointer-events-none transition-opacity duration-700 bg-gradient-to-br"
             :class="getProceduralGradient(Number(getArticleId()) || 0)"
           ></div>
 
           <div
-            class="relative rounded-[2rem] overflow-hidden border border-black/10 dark:border-white/10 shadow-xl h-44 sm:h-52 flex flex-col justify-between p-6 bg-gradient-to-br z-10"
+            class="relative rounded-[2rem] overflow-hidden border shadow-[0_20px_50px_-15px_rgba(0,0,0,0.06)] dark:shadow-xl h-44 sm:h-52 flex flex-col justify-between p-6 bg-gradient-to-br z-10"
             :class="getProceduralGradient(Number(getArticleId()) || 0)"
           >
             <!-- Dot matrix pattern overlay -->
-            <div class="absolute inset-0 opacity-15 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none"></div>
+            <div class="absolute inset-0 opacity-15 bg-[radial-gradient(#000_1px,transparent_1px)] dark:bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none"></div>
 
             <!-- Top Row Badges -->
             <div class="flex items-center justify-between w-full z-10">
@@ -971,26 +971,26 @@ onBeforeUnmount(() => {
                   :href="knownProperties.source"
                   target="_blank"
                   rel="noopener noreferrer"
-                  class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-xl text-white text-xs font-mono font-medium border border-white/15 transition-all"
+                  class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/80 dark:bg-black/40 hover:bg-white dark:hover:bg-black/60 backdrop-blur-xl text-gray-800 dark:text-white text-xs font-mono font-medium border border-black/[0.08] dark:border-white/15 shadow-2xs transition-all"
                 >
-                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
                   <span>{{ getHostname(knownProperties.source) }}</span>
-                  <span class="text-white/60">&nearr;</span>
+                  <span class="text-gray-400 dark:text-white/60">&nearr;</span>
                 </a>
               </div>
-              <div v-else class="text-[10px] font-mono uppercase tracking-widest text-white/50">
+              <div v-else class="text-[10px] font-mono uppercase tracking-widest text-gray-500 dark:text-white/50 font-semibold">
                 READR VAULT
               </div>
 
-              <div v-if="knownProperties.date" class="text-xs font-mono text-white/70">
+              <div v-if="knownProperties.date" class="text-xs font-mono text-gray-500 dark:text-white/70 font-medium">
                 {{ formatDisplayDate(knownProperties.date) }}
               </div>
             </div>
 
             <!-- Monospace Watermark in bottom corner -->
             <div class="flex items-end justify-between z-10">
-              <span class="font-mono text-[10px] tracking-widest uppercase text-white/40">#DOCUMENT</span>
-              <span class="font-mono text-xs font-semibold text-white/60">{{ wordCount }} WORDS</span>
+              <span class="font-mono text-[10px] tracking-widest uppercase text-gray-400 dark:text-white/40 font-semibold">#DOCUMENT</span>
+              <span class="font-mono text-xs font-semibold text-gray-600 dark:text-white/60">{{ wordCount }} WORDS</span>
             </div>
           </div>
         </div>
