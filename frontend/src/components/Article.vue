@@ -150,10 +150,14 @@ const knownProperties = computed(() => {
   for (const p of properties.value) {
     if (p.type === 'title') meta.title = p.value
     else if (p.type === 'source') meta.source = p.value
-    else if (p.type === 'tags') meta.tags = Array.isArray(p.value) ? p.value : [p.value]
+    else if (p.type === 'tags') meta.tags = Array.isArray(p.value) ? p.value : String(p.value).split(',').map((t: string) => t.trim()).filter(Boolean)
     else if (p.type === 'date') meta.date = p.value
     else if (p.type === 'image') meta.cover = p.value
     else meta.custom.push({ key: p.key, label: p.label, value: p.value })
+  }
+
+  if (meta.tags.length === 0 && currentArticle.value?.tags) {
+    meta.tags = currentArticle.value.tags.split(',').map((t: string) => t.trim()).filter(Boolean)
   }
 
   return meta
@@ -795,17 +799,6 @@ onBeforeUnmount(() => {
             <span v-else class="font-bold text-emerald-600 dark:text-emerald-400">A+</span>
           </button>
 
-          <!-- Local Orbit Graph Toggle -->
-          <button
-            @click="toggleGraphSidebar"
-            class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-mono transition-all cursor-pointer border"
-            :class="isGraphOpen ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-medium' : 'bg-gray-100/70 dark:bg-white/[0.04] border-gray-200/50 dark:border-white/[0.04] text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'"
-            title="Toggle Local Orbit Graph"
-          >
-            <span class="w-1.5 h-1.5 rounded-full" :class="isGraphOpen ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400 dark:bg-gray-500'"></span>
-            <span class="hidden sm:inline">Orbit</span>
-          </button>
-
           <!-- Copy Link -->
           <button
             @click="copyArticleLink"
@@ -1025,6 +1018,20 @@ onBeforeUnmount(() => {
             <div class="p-2.5 rounded-xl bg-gray-50 dark:bg-white/[0.02] border border-black/[0.04] dark:border-white/[0.04]">
               <span class="text-[10px] text-gray-400 block mb-0.5">WORD COUNT</span>
               <span class="font-semibold text-gray-800 dark:text-gray-200">{{ wordCount }} words</span>
+            </div>
+          </div>
+
+          <!-- Tags in Properties -->
+          <div v-if="knownProperties.tags && knownProperties.tags.length > 0" class="pt-0.5 space-y-1.5">
+            <span class="text-[10px] font-mono text-gray-400 block uppercase font-semibold">TAGS</span>
+            <div class="flex flex-wrap gap-1.5">
+              <span
+                v-for="tag in knownProperties.tags"
+                :key="tag"
+                class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-gray-100/90 dark:bg-white/[0.05] text-gray-600 dark:text-gray-300 border border-black/[0.04] dark:border-white/[0.04]"
+              >
+                #{{ tag }}
+              </span>
             </div>
           </div>
 
