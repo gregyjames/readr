@@ -313,13 +313,119 @@ const undoArchive = async () => {
 }
 
 
+
+const deletingId = ref<number | null>(null)
+
+function spawnDeleteParticles(id: number) {
+  const el = document.querySelector(`[data-article-id="${id}"]`) as HTMLElement
+  if (!el) return
+
+  const rect = el.getBoundingClientRect()
+  const cx = rect.left + rect.width / 2
+  const cy = rect.top + rect.height / 2
+
+  // ── Radial crack flash ─────────────────────────────────
+  // Two expanding rings — inner tight (red), outer wide (crimson fade)
+  ;[
+    { delay: 0, scale: rect.width / 5, color: 'rgba(239,68,68,0.95)', dur: 380 },
+    { delay: 40, scale: rect.width / 2.5, color: 'rgba(185,28,28,0.6)', dur: 480 },
+  ].forEach(({ delay, scale, color, dur }) => {
+    const ring = document.createElement('div')
+    ring.style.cssText = `
+      position:fixed;left:${cx}px;top:${cy}px;
+      width:10px;height:10px;margin-left:-5px;margin-top:-5px;
+      border-radius:50%;border:2px solid ${color};
+      pointer-events:none;z-index:9999;
+      box-shadow:0 0 16px ${color};
+    `
+    document.body.appendChild(ring)
+    setTimeout(() => {
+      ring.animate(
+        [
+          { transform: 'scale(1)', opacity: 1, borderWidth: '3px' },
+          { transform: `scale(${scale})`, opacity: 0, borderWidth: '1px' },
+        ],
+        { duration: dur, easing: 'ease-out', fill: 'forwards' }
+      ).onfinish = () => ring.remove()
+    }, delay)
+  })
+
+  // ── Flash overlay ─────────────────────────────────────
+  const flash = document.createElement('div')
+  flash.style.cssText = `
+    position:fixed;
+    left:${rect.left}px;top:${rect.top}px;
+    width:${rect.width}px;height:${rect.height}px;
+    background:radial-gradient(circle at center, rgba(239,68,68,0.35) 0%, transparent 70%);
+    border-radius:inherit;pointer-events:none;z-index:9997;
+    border:1.5px solid rgba(239,68,68,0.7);
+    box-shadow:0 0 24px rgba(239,68,68,0.5),inset 0 0 40px rgba(239,68,68,0.1);
+  `
+  document.body.appendChild(flash)
+  flash.animate(
+    [{ opacity: 1 }, { opacity: 0 }],
+    { duration: 320, easing: 'ease-out', fill: 'forwards' }
+  ).onfinish = () => flash.remove()
+
+  // ── Particle shatter ──────────────────────────────────
+  const palette = [
+    '#ef4444', '#f87171', '#fca5a5', '#fee2e2',
+    '#dc2626', '#b91c1c', '#7f1d1d',
+    '#ffffff', '#fde8e8',
+  ]
+  const shapes = ['50%', '50%', '2px', '3px', '1px 4px']
+
+  for (let i = 0; i < 26; i++) {
+    const p = document.createElement('div')
+    const size = Math.random() * 8 + 2
+    const angle = (i / 26) * Math.PI * 2 + (Math.random() - 0.5) * 0.6
+    // Start near center, scatter outward radially
+    const startR = Math.random() * (Math.min(rect.width, rect.height) * 0.4)
+    const px = cx + Math.cos(angle) * startR
+    const py = cy + Math.sin(angle) * startR
+    const color = palette[Math.floor(Math.random() * palette.length)]
+    const shape = shapes[Math.floor(Math.random() * shapes.length)]
+    const dur = 380 + Math.random() * 360
+    // Scatter radially outward — much wider than archive
+    const dist = 120 + Math.random() * 180
+    const dx = Math.cos(angle) * dist + (Math.random() - 0.5) * 60
+    const dy = Math.sin(angle) * dist - Math.random() * 80 // bias upward
+    const rot = (Math.random() - 0.5) * 720
+    const delay = Math.random() * 80
+
+    p.style.cssText = `
+      position:fixed;left:${px}px;top:${py}px;
+      width:${size}px;height:${size}px;
+      background:${color};border-radius:${shape};
+      pointer-events:none;z-index:9999;
+      box-shadow:0 0 ${size * 2}px ${color};
+    `
+    document.body.appendChild(p)
+    setTimeout(() => {
+      p.animate(
+        [
+          { opacity: 1, transform: 'scale(1) translate(0,0) rotate(0deg)' },
+          { opacity: 0.8, transform: `scale(1.4) translate(${dx * 0.4}px,${dy * 0.4}px) rotate(${rot * 0.4}deg)`, offset: 0.25 },
+          { opacity: 0, transform: `scale(0) translate(${dx}px,${dy}px) rotate(${rot}deg)` },
+        ],
+        { duration: dur, easing: 'cubic-bezier(0.22,1,0.36,1)', fill: 'forwards' }
+      ).onfinish = () => p.remove()
+    }, delay)
+  }
+}
+
 const deleteArticle = async (id: number) => {
   if (!confirm('Are you sure you want to permanently delete this note from the vault?')) return
+  deletingId.value = id
+  spawnDeleteParticles(id)
+  await new Promise(resolve => setTimeout(resolve, 580))
   try {
     await axios.delete(`/api/delete/${id}`)
     articles.value = articles.value.filter(article => article.ID !== id)
   } catch (err) {
     console.error('Failed to delete article', err)
+  } finally {
+    deletingId.value = null
   }
 }
 
@@ -517,7 +623,7 @@ const secondaryArticles = computed(() => {
     <div v-else-if="viewMode === 'card' || viewMode === 'studio'" class="space-y-8">
       
       <!-- Lead Spotlight Card (Hero Ingestion) -->
-      <div v-if="leadArticle" class="reveal-item" :class="{ 'archiving': archivingId === leadArticle.ID }" :data-article-id="leadArticle.ID">
+      <div v-if="leadArticle" class="reveal-item" :class="{ 'archiving': archivingId === leadArticle.ID, 'deleting': deletingId === leadArticle.ID }" :data-article-id="leadArticle.ID">
         <div class="relative group bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-300 overflow-hidden shadow-xs hover:shadow-md">
           
           <div class="flex flex-col lg:flex-row items-stretch">
@@ -644,7 +750,7 @@ const secondaryArticles = computed(() => {
           v-for="(article, idx) in secondaryArticles"
           :key="article.ID"
           class="reveal-item group relative bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-300 shadow-2xs hover:shadow-md overflow-hidden flex flex-col justify-between"
-          :class="{ 'archiving': archivingId === article.ID }"
+          :class="{ 'archiving': archivingId === article.ID, 'deleting': deletingId === article.ID }"
           :data-article-id="article.ID"
         >
           <!-- Top Cover Media -->
@@ -794,7 +900,7 @@ const secondaryArticles = computed(() => {
           v-for="(article, idx) in filteredArticles"
           :key="article.ID"
           class="reveal-item relative group"
-          :class="{ 'archiving': archivingId === article.ID }"
+          :class="{ 'archiving': archivingId === article.ID, 'deleting': deletingId === article.ID }"
           :data-article-id="article.ID"
         >
           <!-- Desktop Timestamp on Left of Spine -->
@@ -1097,6 +1203,92 @@ const secondaryArticles = computed(() => {
   animation: archive-out 0.62s cubic-bezier(0.4, 0, 0.2, 1) forwards;
   pointer-events: none;
   transform-origin: center 60%;
+  will-change: transform, opacity, filter;
+}
+
+/* ─── Delete shatter animation ───────────────────────── */
+
+/*
+  Stage breakdown (580ms total):
+  0–5%   : Red corona flash — border ignites crimson
+  5–18%  : Violent shake — rapid left-right jitter (can't escape)
+  18–35% : Crack inward — scaleX crush, red tint floods in
+  35–55% : Implosion — collapses toward center point
+  55–80% : Burn — red-to-black filter drain
+  80–100%: Annihilation — shrinks to nothing
+*/
+@keyframes delete-out {
+  0% {
+    opacity: 1;
+    transform: perspective(800px) scale(1) translateX(0) rotateZ(0deg);
+    filter: brightness(1) saturate(1) hue-rotate(0deg) blur(0px);
+    box-shadow: 0 0 0 0px rgba(239, 68, 68, 0);
+    outline: 2px solid transparent;
+  }
+
+  /* ── Red corona ignites ── */
+  5% {
+    transform: perspective(800px) scale(1.01) translateX(0) rotateZ(0deg);
+    filter: brightness(1.2) saturate(1.6) hue-rotate(-15deg) blur(0px);
+    box-shadow:
+      0 0 0 3px rgba(239, 68, 68, 1),
+      0 0 20px rgba(239, 68, 68, 0.7),
+      0 0 60px rgba(239, 68, 68, 0.35),
+      inset 0 0 30px rgba(239, 68, 68, 0.12);
+    outline: 2px solid rgba(239, 68, 68, 0.8);
+    outline-offset: 2px;
+    opacity: 1;
+  }
+
+  /* ── Violent shake — can't escape ── */
+  8%  { transform: perspective(800px) scale(1.01) translateX(-6px) rotateZ(-0.8deg); filter: brightness(1.15) saturate(1.5) hue-rotate(-10deg); }
+  11% { transform: perspective(800px) scale(1.01) translateX(7px)  rotateZ(0.9deg);  filter: brightness(1.2) saturate(1.6) hue-rotate(-20deg); }
+  14% { transform: perspective(800px) scale(1.01) translateX(-5px) rotateZ(-0.6deg); filter: brightness(1.1) saturate(1.4) hue-rotate(-5deg); }
+  17% { transform: perspective(800px) scale(1.01) translateX(4px)  rotateZ(0.5deg);  filter: brightness(1.05) saturate(1.2) hue-rotate(0deg); }
+
+  /* ── Crack inward — X-axis crush ── */
+  30% {
+    transform: perspective(800px) scaleX(0.88) scaleY(1.04) translateX(0) rotateZ(0deg);
+    filter: brightness(0.9) saturate(0.8) hue-rotate(-5deg) blur(0.5px);
+    box-shadow:
+      0 0 0 2px rgba(239, 68, 68, 0.7),
+      0 0 14px rgba(239, 68, 68, 0.4),
+      inset 0 0 40px rgba(239, 68, 68, 0.15);
+    opacity: 0.9;
+  }
+
+  /* ── Implosion toward center ── */
+  50% {
+    transform: perspective(800px) scale(0.72) translateY(10px) rotateZ(1deg);
+    filter: brightness(0.7) saturate(0.5) hue-rotate(-20deg) blur(1px);
+    box-shadow:
+      0 0 0 1px rgba(239, 68, 68, 0.5),
+      0 8px 32px rgba(0, 0, 0, 0.4);
+    opacity: 0.6;
+  }
+
+  /* ── Crimson burn ── */
+  72% {
+    transform: perspective(800px) scale(0.45) translateY(16px) rotateZ(2deg);
+    filter: brightness(0.4) saturate(0.2) hue-rotate(-30deg) blur(3px);
+    box-shadow: none;
+    opacity: 0.25;
+  }
+
+  /* ── Annihilation ── */
+  100% {
+    transform: perspective(800px) scale(0.05) translateY(20px) rotateZ(3deg);
+    filter: brightness(0) saturate(0) hue-rotate(0deg) blur(8px);
+    box-shadow: none;
+    outline: 2px solid transparent;
+    opacity: 0;
+  }
+}
+
+.reveal-item.deleting {
+  animation: delete-out 0.58s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: none;
+  transform-origin: center center;
   will-change: transform, opacity, filter;
 }
 </style>
