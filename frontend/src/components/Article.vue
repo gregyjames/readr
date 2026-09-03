@@ -833,34 +833,46 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-else>
-        <!-- Hero Cover Masthead -->
-        <div
-          v-if="heroImage"
-          class="relative mb-8 rounded-[2rem] overflow-hidden border border-gray-200/80 dark:border-white/[0.08] shadow-sm max-h-[420px] group"
-        >
-          <img
-            :src="heroImage"
-            :alt="articleTitle"
-            class="w-full h-full object-cover max-h-[420px] group-hover:scale-102 transition-transform duration-700 ease-out"
-          />
-          <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-black/15 to-transparent pointer-events-none"></div>
+        <!-- Hero Cover Masthead (Option 1: Luminous Aura & Cinematic Framing) -->
+        <div v-if="heroImage" class="relative mb-10 group">
+          <!-- Ambient Luminous Glow Behind the Card -->
+          <div
+            class="absolute -inset-3 sm:-inset-4 rounded-[2.5rem] bg-cover bg-center filter blur-3xl opacity-35 dark:opacity-30 -z-10 scale-95 pointer-events-none transition-opacity duration-700 group-hover:opacity-50"
+            :style="{ backgroundImage: `url(${heroImage})` }"
+          ></div>
 
-          <!-- Floating Inset Provenance Pill -->
-          <div class="absolute bottom-4 left-4 right-4 flex items-center justify-between pointer-events-none z-10">
-            <a
-              v-if="knownProperties.source"
-              :href="knownProperties.source"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="pointer-events-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md text-white/95 text-xs font-mono font-medium border border-white/15 hover:bg-black/80 transition-all shadow-sm"
-            >
-              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-              <span>{{ getHostname(knownProperties.source) }}</span>
-              <span class="text-white/60">&nearr;</span>
-            </a>
-            <span v-if="knownProperties.date" class="text-xs font-mono text-white/80 drop-shadow-sm font-medium">
-              {{ formatDisplayDate(knownProperties.date) }}
-            </span>
+          <!-- Cinematic Framed Container -->
+          <div class="relative rounded-[2rem] overflow-hidden border border-black/10 dark:border-white/10 shadow-lg aspect-[16/9] sm:aspect-[21/9] max-h-[460px] bg-gray-100 dark:bg-[#12151C]">
+            <img
+              :src="heroImage"
+              :alt="articleTitle"
+              class="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-1000 ease-out"
+            />
+            
+            <!-- Subtle Vignette Glaze for Top/Bottom Glass Badges -->
+            <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 pointer-events-none"></div>
+
+            <!-- Top Left Provenance Pill -->
+            <div v-if="knownProperties.source" class="absolute top-4 left-4 z-10">
+              <a
+                :href="knownProperties.source"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/40 hover:bg-black/70 backdrop-blur-xl text-white text-xs font-mono font-medium border border-white/20 shadow-md transition-all hover:scale-105"
+              >
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>{{ getHostname(knownProperties.source) }}</span>
+                <span class="text-white/60">&nearr;</span>
+              </a>
+            </div>
+
+            <!-- Bottom Right Date Pill -->
+            <div v-if="knownProperties.date" class="absolute bottom-4 right-4 z-10">
+              <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/40 backdrop-blur-xl text-white/90 text-xs font-mono font-medium border border-white/20 shadow-md">
+                <svg class="w-3 h-3 text-emerald-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                {{ formatDisplayDate(knownProperties.date) }}
+              </span>
+            </div>
           </div>
         </div>
 
