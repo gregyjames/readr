@@ -1002,29 +1002,65 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Graph Canvas Pane -->
-      <div class="flex-1 min-h-[320px] relative bg-gray-50/30 dark:bg-black/20">
+      <div class="h-[280px] xl:h-[320px] relative bg-gray-50/30 dark:bg-black/20 flex-shrink-0 border-b border-black/[0.06] dark:border-white/[0.06]">
         <div ref="localGraphContainer" class="absolute inset-0 w-full h-full"></div>
       </div>
 
-      <!-- Obsidian-Style Backlinks / Connected Notes Section -->
-      <div class="border-t border-black/[0.06] dark:border-white/[0.06] flex flex-col max-h-60 flex-shrink-0 bg-white dark:bg-[#0C0E14]">
-        <div class="px-3.5 py-2 border-b border-black/[0.06] dark:border-white/[0.06] bg-gray-50/50 dark:bg-white/[0.01] flex items-center justify-between text-[10px] font-mono text-gray-400 uppercase tracking-wider font-semibold">
-          <span>Linked Mentions</span>
-          <span>{{ backlinks.length }}</span>
-        </div>
-        <div class="overflow-y-auto p-2 space-y-1">
-          <div v-if="backlinks.length === 0" class="text-xs text-gray-400 font-mono py-4 text-center">
-            No incoming backlinks
+      <!-- Scrollable Document Metadata & Backlinks Section -->
+      <div class="flex-1 overflow-y-auto divide-y divide-black/[0.06] dark:divide-white/[0.06]">
+        <!-- Document Properties -->
+        <div class="p-3.5 space-y-3 bg-white dark:bg-[#0C0E14]">
+          <div class="flex items-center justify-between text-[10px] font-mono text-gray-400 uppercase tracking-wider font-semibold">
+            <span>Properties</span>
+            <span v-if="knownProperties.date" class="text-gray-400 font-normal">
+              {{ formatDisplayDate(knownProperties.date) }}
+            </span>
           </div>
-          <router-link
-            v-for="link in backlinks"
-            :key="link.ID"
-            :to="`/articles/${link.ID}`"
-            class="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-gray-700 dark:text-gray-300 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-white/[0.04] transition-all group"
-          >
-            <span class="truncate pr-2 font-medium">{{ link.title }}</span>
-            <span class="text-gray-400 text-[10px] group-hover:translate-x-0.5 transition-transform">&rarr;</span>
-          </router-link>
+
+          <div class="grid grid-cols-2 gap-2 text-xs font-mono">
+            <div class="p-2.5 rounded-xl bg-gray-50 dark:bg-white/[0.02] border border-black/[0.04] dark:border-white/[0.04]">
+              <span class="text-[10px] text-gray-400 block mb-0.5">READ TIME</span>
+              <span class="font-semibold text-gray-800 dark:text-gray-200">{{ estimatedReadingTime }}</span>
+            </div>
+            <div class="p-2.5 rounded-xl bg-gray-50 dark:bg-white/[0.02] border border-black/[0.04] dark:border-white/[0.04]">
+              <span class="text-[10px] text-gray-400 block mb-0.5">WORD COUNT</span>
+              <span class="font-semibold text-gray-800 dark:text-gray-200">{{ wordCount }} words</span>
+            </div>
+          </div>
+
+          <div v-if="knownProperties.source" class="pt-0.5">
+            <a
+              :href="knownProperties.source"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-mono bg-gray-50 hover:bg-emerald-500/10 dark:bg-white/[0.03] dark:hover:bg-emerald-500/10 border border-black/[0.04] dark:border-white/[0.04] text-gray-700 dark:text-gray-300 hover:text-emerald-600 dark:hover:text-emerald-400 transition-all group"
+            >
+              <span class="truncate">Original Source</span>
+              <span class="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform text-[11px]">&nearr;</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- Obsidian-Style Backlinks / Connected Notes Section -->
+        <div class="flex flex-col bg-white dark:bg-[#0C0E14]">
+          <div class="px-3.5 py-2 border-b border-black/[0.06] dark:border-white/[0.06] bg-gray-50/50 dark:bg-white/[0.01] flex items-center justify-between text-[10px] font-mono text-gray-400 uppercase tracking-wider font-semibold">
+            <span>Linked Mentions</span>
+            <span>{{ backlinks.length }}</span>
+          </div>
+          <div class="p-2 space-y-1">
+            <div v-if="backlinks.length === 0" class="text-xs text-gray-400 font-mono py-4 text-center">
+              No incoming backlinks
+            </div>
+            <router-link
+              v-for="link in backlinks"
+              :key="link.ID"
+              :to="`/articles/${link.ID}`"
+              class="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-gray-700 dark:text-gray-300 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-white/[0.04] transition-all group"
+            >
+              <span class="truncate pr-2 font-medium">{{ link.title }}</span>
+              <span class="text-gray-400 text-[10px] group-hover:translate-x-0.5 transition-transform">&rarr;</span>
+            </router-link>
+          </div>
         </div>
       </div>
 
