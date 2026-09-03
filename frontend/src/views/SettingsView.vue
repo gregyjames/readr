@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { settings, saveSettingsToServer } from '../store/settings'
+import { settings, saveSettingsToServer, toggleTheme, setViewMode } from '../store/settings'
 import { authState, changePassword } from '../store/auth'
 
 // Diagnostics Tab State
@@ -156,15 +156,6 @@ const savedMessage = ref('')
 
 const isKeyConfigured = computed(() => Boolean(settings.api_key?.trim()))
 
-const toggleTheme = () => {
-  settings.theme = settings.theme === 'dark' ? 'light' : 'dark'
-  saveSettingsToServer()
-}
-
-const setViewMode = (mode: string) => {
-  settings.view_mode = mode
-  saveSettingsToServer()
-}
 
 const isLoadingModels = ref(false)
 const modelSearch = ref('')
@@ -409,44 +400,44 @@ const executeLibrarian = async () => {
 </script>
 
 <template>
-  <div class="mx-auto py-8 space-y-6 transition-all duration-300" :class="activeTab === 'diagnostics' ? 'max-w-6xl' : 'max-w-2xl'">
+  <div class="mx-auto py-6 space-y-6 transition-all duration-200" :class="activeTab === 'diagnostics' ? 'max-w-5xl' : 'max-w-2xl'">
     <!-- Header & Tab Navigation -->
     <div class="space-y-4">
       <div>
-        <h1 class="text-3xl font-bold tracking-tight text-gray-900 dark:text-gray-100">Settings</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          Configure your OpenRouter API key, AI model, background agent pipeline, and system telemetry.
+        <h1 class="text-xl font-semibold tracking-tight text-gray-900 dark:text-gray-100 font-['Outfit']">Settings</h1>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          Configure OpenRouter AI models, pipeline enrichment agents, and telemetry diagnostics.
         </p>
       </div>
 
-      <!-- Tab Buttons -->
-      <div class="flex items-center gap-2 border-b border-gray-200 dark:border-gray-800 pb-3">
+      <!-- Segmented Tab Buttons -->
+      <div class="inline-flex items-center bg-gray-100/80 dark:bg-white/[0.04] p-0.5 rounded-lg border border-gray-200/60 dark:border-white/[0.06]">
         <button
           type="button"
           @click="activeTab = 'general'"
-          class="px-4 py-2 text-xs font-semibold rounded-xl transition-all cursor-pointer flex items-center gap-2"
-          :class="activeTab === 'general' ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900 shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5'"
+          class="px-3 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5"
+          :class="activeTab === 'general' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
           </svg>
-          General Settings
+          General
         </button>
 
         <button
           type="button"
           @click="activeTab = 'diagnostics'"
-          class="px-4 py-2 text-xs font-semibold rounded-xl transition-all cursor-pointer flex items-center gap-2"
-          :class="activeTab === 'diagnostics' ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900 shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5'"
+          class="px-3 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5"
+          :class="activeTab === 'diagnostics' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
           </svg>
           Pipeline Diagnostics
           <span
             v-if="diagnosticsData && ((diagnosticsData.queue.total_in_flight ?? diagnosticsData.queue.pending_jobs) > 0)"
-            class="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500 text-white animate-pulse"
+            class="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-emerald-500 text-white"
           >
             {{ diagnosticsData.queue.total_in_flight ?? diagnosticsData.queue.pending_jobs }}
           </span>
@@ -455,24 +446,24 @@ const executeLibrarian = async () => {
     </div>
 
     <!-- General Settings Tab Content -->
-    <div v-if="activeTab === 'general'" class="space-y-8">
+    <div v-if="activeTab === 'general'" class="space-y-6">
     <!-- Main Settings Card -->
-    <div class="bg-white dark:bg-[#111] rounded-3xl border border-gray-200/70 dark:border-gray-800/70 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.2)] p-6 sm:p-8 space-y-6">
+    <div class="bg-white dark:bg-[#12151C] rounded-xl border border-gray-200/80 dark:border-white/[0.08] shadow-2xs p-5 sm:p-6 space-y-5">
       
       <!-- Section Title & Status -->
-      <div class="flex items-center justify-between pb-5 border-b border-gray-100 dark:border-gray-800">
+      <div class="flex items-center justify-between pb-4 border-b border-gray-100 dark:border-white/[0.06]">
         <div>
-          <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">OpenRouter API</h2>
+          <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">OpenRouter Integration</h2>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-            Required for chat conversations and querying your saved articles with AI.
+            Required for background document parsing, auto-tagging, and chat.
           </p>
         </div>
         <span 
-          class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium"
-          :class="isKeyConfigured ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800' : 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400 border border-amber-200 dark:border-amber-800'"
+          class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-xs font-mono"
+          :class="isKeyConfigured ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20'"
         >
           <span class="w-1.5 h-1.5 rounded-full" :class="isKeyConfigured ? 'bg-emerald-500' : 'bg-amber-500'"></span>
-          {{ isKeyConfigured ? 'Connected' : 'Not Configured' }}
+          {{ isKeyConfigured ? 'Connected' : 'Missing Key' }}
         </span>
       </div>
 

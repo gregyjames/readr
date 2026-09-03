@@ -362,18 +362,19 @@ const sendMessage = async () => {
 </script>
 
 <template>
-  <div class="h-[calc(100vh-7.5rem)] flex bg-white dark:bg-[#0e0e0e] rounded-3xl border border-gray-200/70 dark:border-gray-800/70 overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.25)]">
+  <div class="p-4 sm:p-6 w-full max-w-6xl mx-auto h-[100dvh] flex flex-col">
+    <div class="flex-1 flex bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] overflow-hidden shadow-2xs">
     
     <!-- Sidebar -->
-    <aside class="w-64 sm:w-72 flex-shrink-0 border-r border-gray-200/60 dark:border-gray-800/60 flex flex-col bg-gray-50/50 dark:bg-[#121212]/50">
+    <aside class="w-60 sm:w-64 flex-shrink-0 border-r border-gray-200/80 dark:border-white/[0.08] flex flex-col bg-gray-50/60 dark:bg-white/[0.01]">
       
       <!-- New Chat Button -->
-      <div class="p-4 border-b border-gray-200/60 dark:border-gray-800/60">
+      <div class="p-3 border-b border-gray-200/80 dark:border-white/[0.08]">
         <button
           @click="createNewChat"
-          class="w-full flex items-center justify-center gap-2 bg-[#111] dark:bg-white text-white dark:text-[#111] hover:bg-[#222] dark:hover:bg-gray-100 active:scale-[0.98] px-4 py-2.5 rounded-xl font-medium text-sm transition-all duration-200 shadow-sm cursor-pointer"
+          class="w-full flex items-center justify-center gap-1.5 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-100 text-white dark:text-gray-950 px-3 py-2 rounded-lg font-medium text-xs transition-all active:scale-[0.98] shadow-2xs cursor-pointer"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="12" y1="5" x2="12" y2="19"></line>
             <line x1="5" y1="12" x2="19" y2="12"></line>
           </svg>
@@ -382,35 +383,35 @@ const sendMessage = async () => {
       </div>
 
       <!-- Sessions List -->
-      <div class="flex-1 overflow-y-auto p-3 space-y-1">
-        <div v-if="isLoadingSessions" class="text-center py-6 text-xs text-gray-400">
+      <div class="flex-1 overflow-y-auto p-2 space-y-0.5">
+        <div v-if="isLoadingSessions" class="text-center py-6 text-xs text-gray-400 font-mono">
           Loading chats...
         </div>
 
-        <div v-else-if="sessions.length === 0" class="text-center py-8 px-4 text-xs text-gray-400 leading-relaxed">
-          No previous conversations yet.<br />Start a new chat to begin.
+        <div v-else-if="sessions.length === 0" class="text-center py-8 px-3 text-xs text-gray-400 leading-relaxed">
+          No past conversations.<br />Start a new chat to query your vault.
         </div>
 
         <div
           v-for="s in sessions"
           :key="s.id"
           @click="selectSession(s.id)"
-          class="group flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-all duration-150 cursor-pointer"
-          :class="currentSession?.id === s.id ? 'bg-white dark:bg-[#1c1c1c] text-gray-900 dark:text-gray-100 shadow-xs border border-gray-200/60 dark:border-gray-700/60 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-[#181818]'"
+          class="group flex items-center justify-between px-2.5 py-2 rounded-lg text-xs transition-colors cursor-pointer"
+          :class="currentSession?.id === s.id ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white font-medium shadow-2xs border border-gray-200/80 dark:border-white/10' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.04]'"
         >
-          <div class="flex items-center gap-2.5 truncate flex-1 min-w-0 pr-2">
-            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400 flex-shrink-0">
+          <div class="flex items-center gap-2 truncate flex-1 min-w-0 pr-1">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400 flex-shrink-0">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
             </svg>
-            <span class="truncate text-xs">{{ s.title || 'Untitled Chat' }}</span>
+            <span class="truncate">{{ s.title || 'Untitled Chat' }}</span>
           </div>
 
           <button
             @click="deleteSession(s.id, $event)"
             title="Delete conversation"
-            class="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-all"
+            class="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 rounded transition-opacity"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="3 6 5 6 21 6"></polyline>
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
             </svg>
@@ -420,37 +421,37 @@ const sendMessage = async () => {
     </aside>
 
     <!-- Main Chat Pane -->
-    <main class="flex-1 flex flex-col min-w-0 bg-white dark:bg-[#0e0e0e]">
+    <main class="flex-1 flex flex-col min-w-0 bg-white dark:bg-[#12151C]">
       
       <!-- Missing API Key Alert -->
-      <div v-if="!hasApiKey" class="px-6 py-2.5 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200/70 dark:border-amber-800/70 flex items-center justify-between text-xs text-amber-800 dark:text-amber-300">
+      <div v-if="!hasApiKey" class="px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 flex items-center justify-between text-xs text-amber-800 dark:text-amber-300">
         <div class="flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10"></circle>
             <line x1="12" y1="8" x2="12" y2="12"></line>
             <line x1="12" y1="16" x2="12.01" y2="16"></line>
           </svg>
-          <span>OpenRouter API Key not set. Chat features require an API key.</span>
+          <span>OpenRouter API Key not configured.</span>
         </div>
         <router-link to="/settings" class="font-medium underline hover:text-amber-900 dark:hover:text-amber-100">
-          Go to Settings
+          Open Settings
         </router-link>
       </div>
 
       <!-- Chat Top Header with Active Model -->
-      <div class="px-6 py-3 border-b border-gray-100 dark:border-gray-800/80 flex items-center justify-between bg-white/70 dark:bg-[#0e0e0e]/70 backdrop-blur-md sticky top-0 z-10">
+      <div class="px-5 py-2.5 border-b border-gray-100 dark:border-white/[0.06] flex items-center justify-between bg-white/80 dark:bg-[#12151C]/80 backdrop-blur-xs sticky top-0 z-10">
         <div class="flex items-center gap-2 truncate">
-          <span class="font-semibold text-sm text-gray-900 dark:text-gray-100 truncate">
+          <span class="font-medium text-xs text-gray-900 dark:text-gray-100 truncate">
             {{ currentSession?.title || 'New Conversation' }}
           </span>
         </div>
         <router-link
           to="/settings"
-          title="Change model in settings"
-          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono bg-gray-100 dark:bg-[#181818] text-gray-600 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors"
+          title="Configure model"
+          class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono bg-gray-100 dark:bg-white/[0.05] text-gray-600 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
         >
           <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-          {{ currentModel }}
+          <span>{{ currentModel }}</span>
         </router-link>
       </div>
 
@@ -561,5 +562,6 @@ const sendMessage = async () => {
         </div>
       </div>
     </main>
+    </div>
   </div>
 </template>

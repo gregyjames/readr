@@ -150,10 +150,14 @@ const knownProperties = computed(() => {
   for (const p of properties.value) {
     if (p.type === 'title') meta.title = p.value
     else if (p.type === 'source') meta.source = p.value
-    else if (p.type === 'tags') meta.tags = Array.isArray(p.value) ? p.value : [p.value]
+    else if (p.type === 'tags') meta.tags = Array.isArray(p.value) ? p.value : String(p.value).split(',').map((t: string) => t.trim()).filter(Boolean)
     else if (p.type === 'date') meta.date = p.value
     else if (p.type === 'image') meta.cover = p.value
     else meta.custom.push({ key: p.key, label: p.label, value: p.value })
+  }
+
+  if (meta.tags.length === 0 && currentArticle.value?.tags) {
+    meta.tags = currentArticle.value.tags.split(',').map((t: string) => t.trim()).filter(Boolean)
   }
 
   return meta
@@ -189,6 +193,119 @@ function getHostname(url: string): string {
     return new URL(url).hostname.replace(/^www\./, '')
   } catch {
     return url
+  }
+}
+
+const heroImage = computed(() => {
+  return knownProperties.value.cover || currentArticle.value?.image || ''
+})
+
+const wordCount = computed(() => {
+  if (!rawMarkdown.value) return 0
+  return rawMarkdown.value.trim().split(/\s+/).length
+})
+
+const estimatedReadingTime = computed(() => {
+  const words = wordCount.value
+  const minutes = Math.max(1, Math.ceil(words / 200))
+  return `${minutes} min read`
+})
+
+const readerFont = ref<'serif' | 'sans'>('serif')
+const readerFontSize = ref<'sm' | 'base' | 'lg'>('base')
+
+const getProceduralGradient = (id: number) => {
+  const gradients = [
+    'from-emerald-50 via-teal-50/70 to-slate-100 border-emerald-200/60 text-emerald-900 dark:from-emerald-950/60 dark:via-teal-950/70 dark:to-slate-950 dark:border-white/10 dark:text-emerald-300',
+    'from-indigo-50 via-purple-50/70 to-slate-100 border-indigo-200/60 text-indigo-900 dark:from-indigo-950/60 dark:via-purple-950/70 dark:to-slate-950 dark:border-white/10 dark:text-indigo-300',
+    'from-rose-50 via-orange-50/70 to-stone-100 border-rose-200/60 text-rose-900 dark:from-rose-950/60 dark:via-stone-950 dark:to-slate-950 dark:border-white/10 dark:text-rose-300',
+    'from-amber-50 via-yellow-50/70 to-stone-100 border-amber-200/60 text-amber-900 dark:from-amber-950/60 dark:via-orange-950/70 dark:to-slate-950 dark:border-white/10 dark:text-amber-300',
+    'from-sky-50 via-blue-50/70 to-slate-100 border-sky-200/60 text-sky-900 dark:from-sky-950/60 dark:via-blue-950/70 dark:to-slate-950 dark:border-white/10 dark:text-cyan-300',
+    'from-violet-50 via-fuchsia-50/70 to-slate-100 border-violet-200/60 text-violet-900 dark:from-violet-950/60 dark:via-fuchsia-950/70 dark:to-slate-950 dark:border-white/10 dark:text-violet-300',
+  ]
+  return gradients[Math.abs(Number(id) || 0) % gradients.length]
+}
+
+function removeDuplicateHeroImage(markdown: string, heroUrl: string): string {
+  if (!heroUrl || !markdown) return markdown
+
+  const cleanHero = heroUrl.trim()
+  const heroMatch = cleanHero.match(/\/images\/(\d+)\//)
+  const heroArticleId = heroMatch ? heroMatch[1] : ''
+  const heroBaseFilename = cleanHero.split('/').pop()?.split('?')[0] || ''
+
+  const isMatch = (src: string) => {
+    if (!src) return false
+    const cleanSrc = src.trim()
+    if (cleanSrc === cleanHero) return true
+    if (cleanSrc.split('?')[0] === cleanHero.split('?')[0]) return true
+
+    if (heroArticleId) {
+      const srcMatch = cleanSrc.match(/\/images\/(\d+)\//)
+      if (srcMatch && srcMatch[1] === heroArticleId) {
+        const srcFilename = cleanSrc.split('/').pop()?.split('?')[0] || ''
+        const isHeroOrCover = (name: string) => /hero|cover/i.test(name)
+        if (isHeroOrCover(srcFilename) && isHeroOrCover(heroBaseFilename)) {
+          return true
+        }
+        if (srcFilename.replace(/^cover_/, '') === heroBaseFilename.replace(/^cover_/, '')) {
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  // 1. Linked image: [![alt](src)](href)
+  markdown = markdown.replace(/\[\s*!\[([^\]]*)\]\(([^)]+)\)\s*\]\([^)]+\)/g, (fullMatch, _alt, src) => {
+    return isMatch(src) ? '' : fullMatch
+  })
+
+  // 2. Standard markdown image: ![alt](src)
+  markdown = markdown.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (fullMatch, _alt, src) => {
+    return isMatch(src) ? '' : fullMatch
+  })
+
+  // 3. HTML img: <img ... src="..." ...>
+  markdown = markdown.replace(/<img[^>]+src=["']([^"']+)["'][^>]*>/gi, (fullMatch, src) => {
+    return isMatch(src) ? '' : fullMatch
+  })
+
+  return markdown
+}
+
+const copiedLink = ref(false)
+
+const copyArticleLink = () => {
+  try {
+    navigator.clipboard.writeText(window.location.href)
+    copiedLink.value = true
+    setTimeout(() => {
+      copiedLink.value = false
+    }, 2000)
+  } catch {}
+}
+
+const isGraphOpen = ref(localStorage.getItem('readr_local_graph_open') !== 'false')
+
+const toggleGraphSidebar = () => {
+  isGraphOpen.value = !isGraphOpen.value
+  try {
+    localStorage.setItem('readr_local_graph_open', String(isGraphOpen.value))
+  } catch {}
+  
+  if (isGraphOpen.value) {
+    nextTick(() => {
+      setTimeout(() => {
+        if (!localNetwork || !localGraphContainer.value?.querySelector('canvas')) {
+          loadLocalGraph()
+        } else {
+          localNetwork.setSize('100%', '100%')
+          localNetwork.redraw()
+          localNetwork.fit({ animation: { duration: 300, easingFunction: 'easeInOutQuad' } })
+        }
+      }, 50)
+    })
   }
 }
 
@@ -304,6 +421,7 @@ const backlinks = computed(() => {
 
 let observer: MutationObserver | null = null
 const localGraphContainer = ref<HTMLElement | null>(null)
+const localGraphNodeCount = ref(0)
 let localNetwork: Network | null = null
 const { zoomIn: localZoomIn, zoomOut: localZoomOut, fitGraph: localFitView } = useGraphZoom(() => localNetwork)
 
@@ -385,46 +503,146 @@ const loadLocalGraph = async () => {
       connectedNodeIds.add(e.to)
     })
     
+    const isDark = document.documentElement.classList.contains('dark')
+    const mocNodeIds = new Set(graphData.nodes.filter((n: any) => n.group === 'moc').map((n: any) => n.id))
+
     const localNodes = graphData.nodes.filter((n: any) => connectedNodeIds.has(n.id)).map((n: any) => {
       const connections = connectedEdges.filter((e: any) => e.from === n.id || e.to === n.id).length
-      const nodeSize = Math.min(10 + (connections * 3), 35)
+      const isCurrent = n.id === currentArticleNodeId
+      const isMoc = n.group === 'moc'
+      const isTag = n.group === 'tag'
       
-      if (n.group === 'article') {
-        return { ...n, title: n.label, label: undefined, size: nodeSize }
+      let nodeSize = 8
+      let displayLabel: string | undefined = undefined
+
+      if (isMoc) {
+        nodeSize = Math.max(16, Math.min(16 + connections * 2, 28))
+        displayLabel = n.label
+      } else if (isTag) {
+        nodeSize = Math.max(6, Math.min(6 + connections * 1, 14))
+        displayLabel = n.label
+      } else {
+        nodeSize = isCurrent ? 14 : Math.max(7, Math.min(7 + connections * 1.5, 20))
+        if (isCurrent || connections >= 2) {
+          displayLabel = n.label.length > 20 ? n.label.slice(0, 18) + '…' : n.label
+        } else {
+          displayLabel = undefined
+        }
       }
-      return { ...n, size: nodeSize }
+
+      return {
+        ...n,
+        size: nodeSize,
+        label: displayLabel,
+        title: `${n.label} (${connections} connection${connections === 1 ? '' : 's'})`,
+        borderWidth: isCurrent ? 3 : (isMoc ? 2.5 : 1.5),
+        shadow: isCurrent ? { enabled: true, color: isDark ? '#34d399' : '#059669', size: 10, x: 0, y: 0 } : false
+      }
     })
-    
-    const isDark = document.documentElement.classList.contains('dark')
+
+    localGraphNodeCount.value = localNodes.length
+
+    const processedEdges = connectedEdges.map((e: any) => {
+      const isMocEdge = mocNodeIds.has(e.from) || mocNodeIds.has(e.to)
+      return {
+        ...e,
+        length: isMocEdge ? 70 : 90,
+        color: isMocEdge
+          ? (isDark ? 'rgba(245, 158, 11, 0.45)' : 'rgba(217, 119, 6, 0.45)')
+          : (isDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.1)'),
+        width: isMocEdge ? 1.5 : 1
+      }
+    })
     
     const options = {
       nodes: { 
         shape: 'dot', 
         size: 10, 
-        font: { color: isDark ? '#fff' : '#000', size: 10, face: 'Outfit' },
+        font: { 
+          color: isDark ? '#e5e7eb' : '#374151', 
+          size: 10, 
+          face: 'Outfit, sans-serif',
+          strokeWidth: 2,
+          strokeColor: isDark ? '#0a0a0a' : '#f8f9fa'
+        },
         borderWidth: 2,
         color: { border: isDark ? '#1a1a1a' : '#fff', background: '#10b981' },
         widthConstraint: { maximum: 120 }
       },
       groups: {
-        article: { color: { background: '#10b981', border: isDark ? '#059669' : '#34d399' } },
+        article: { 
+          color: { 
+            background: '#10b981', 
+            border: isDark ? '#047857' : '#34d399',
+            hover: { background: '#059669', border: '#10b981' }
+          },
+          font: {
+            color: isDark ? '#e5e7eb' : '#374151',
+            size: 10,
+            strokeWidth: 2,
+            strokeColor: isDark ? '#0a0a0a' : '#f8f9fa'
+          }
+        },
+        moc: {
+          shape: 'hexagon',
+          color: {
+            background: '#f59e0b',
+            border: isDark ? '#d97706' : '#fbbf24',
+            hover: { background: '#d97706', border: '#fbbf24' }
+          },
+          font: {
+            color: isDark ? '#fef3c7' : '#92400e',
+            size: 11,
+            bold: 'bold',
+            strokeWidth: 2,
+            strokeColor: isDark ? '#0a0a0a' : '#f8f9fa'
+          }
+        },
         tag: { 
           shape: 'box', 
-          color: { background: isDark ? '#1f2937' : '#f3f4f6', border: isDark ? '#374151' : '#e5e7eb' },
-          font: { color: isDark ? '#d1d5db' : '#4b5563', size: 9 }
+          margin: 4,
+          color: { 
+            background: isDark ? 'rgba(31, 41, 55, 0.85)' : 'rgba(243, 244, 246, 0.9)', 
+            border: isDark ? '#374151' : '#e5e7eb',
+            hover: { background: isDark ? '#374151' : '#e5e7eb', border: isDark ? '#4b5563' : '#d1d5db' }
+          },
+          font: { 
+            color: isDark ? '#9ca3af' : '#6b7280', 
+            size: 9,
+            face: 'Inter, sans-serif'
+          }
         }
       },
-      edges: { color: isDark ? '#333' : '#e2e8f0', width: 1 },
-      physics: { barnesHut: { gravitationalConstant: -800, springLength: 80, damping: 0.2 } },
+      edges: { 
+        smooth: false,
+        hoverWidth: 1.5,
+        selectionWidth: 1.5
+      },
+      physics: { 
+        solver: 'forceAtlas2Based',
+        forceAtlas2Based: {
+          gravitationalConstant: -35,
+          centralGravity: 0.015,
+          springLength: 75,
+          springConstant: 0.08,
+          damping: 0.4
+        }
+      },
       interaction: { hover: true, tooltipDelay: 200, zoomView: false }
     }
 
-    if (localNetwork) {
-      localNetwork.setData({ nodes: localNodes, edges: connectedEdges })
+    if (localNetwork && localGraphContainer.value && localGraphContainer.value.querySelector('canvas')) {
+      localNetwork.setData({ nodes: localNodes, edges: processedEdges })
       localNetwork.setOptions(options)
-      localNetwork.once('afterDrawing', () => { localNetwork?.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } }); });
+      localNetwork.setSize('100%', '100%')
+      localNetwork.redraw()
+      localNetwork.once('afterDrawing', () => { localNetwork?.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } }); });
     } else {
-      localNetwork = new Network(localGraphContainer.value, { nodes: localNodes, edges: connectedEdges }, options)
+      if (localNetwork) {
+        localNetwork.destroy()
+        localNetwork = null
+      }
+      localNetwork = new Network(localGraphContainer.value, { nodes: localNodes, edges: processedEdges }, options)
       
       localNetwork.once('stabilizationIterationsDone', () => {
         localNetwork?.fit({
@@ -506,7 +724,12 @@ const loadContent = async () => {
     })
 
     // Strip YAML frontmatter (--- ... ---) so it never renders in the article view                                                                                 
-    const strippedRaw = parsedRaw.replace(/^---[\s\S]*?---\n?/, '')  
+    let strippedRaw = parsedRaw.replace(/^---[\s\S]*?---\n?/, '')  
+
+    // Deduplicate: If hero cover image is displayed in the masthead, strip the duplicate from body
+    if (heroImage.value) {
+      strippedRaw = removeDuplicateHeroImage(strippedRaw, heroImage.value)
+    }  
 
     // Sanitize before assignment: article bodies and wikilink-injected titles are
     // untrusted, and marked passes raw HTML through.
@@ -656,179 +879,455 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <!-- Fixed Reading Progress Bar under Navbar -->
+  <!-- Reading Progress Bar -->
   <div
-    class="fixed top-20 left-0 w-full h-[2.5px] z-40 bg-gray-200/40 dark:bg-white/5 pointer-events-none overflow-hidden"
+    class="fixed top-0 md:left-16 left-0 right-0 h-[2px] z-40 bg-gray-200/50 dark:bg-white/5 pointer-events-none"
     aria-hidden="true"
   >
     <div
-      class="h-full bg-emerald-500 dark:bg-emerald-400 transition-[width] duration-75 ease-out shadow-[0_0_8px_rgba(16,185,129,0.6)]"
+      class="h-full bg-emerald-600 dark:bg-emerald-400 transition-[width] duration-100 ease-out"
       :style="{ width: `${readingProgress}%` }"
     ></div>
   </div>
 
-  <div v-if="articleError" class="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-4 text-center w-full font-medium border-b border-red-100 dark:border-red-900/30">
+  <div v-if="articleError" class="bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 p-3 text-center w-full text-xs font-mono border-b border-red-200 dark:border-red-900/40">
     {{ articleError }}
   </div>
-  <div class="flex flex-col lg:flex-row w-full max-w-7xl mx-auto items-start relative px-4 lg:px-8">
-    <article ref="articleRef" class="w-full lg:w-2/3 max-w-2xl mx-auto py-16 transition-colors duration-300">
+
+  <div class="flex w-full min-h-screen relative">
+    
+    <!-- Main Article Reading Column -->
+    <div class="flex-1 min-w-0 flex justify-center px-4 sm:px-8 py-6 sm:py-10 transition-all duration-300 relative">
+      <!-- Atmospheric Backdrop Glow on reading canvas -->
+      <div class="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 w-full max-w-4xl h-80 bg-gradient-to-b from-emerald-500/[0.03] dark:from-emerald-500/[0.04] to-transparent blur-3xl -z-10"></div>
+
+      <article
+        ref="articleRef"
+        class="w-full transition-all duration-300"
+        :class="isGraphOpen ? 'max-w-2xl' : 'max-w-3xl'"
+      >
       
-      
+      <!-- Floating Reader HUD & Companion Bar (Pinned at top) -->
+      <div class="sticky top-16 md:top-4 z-30 flex items-center justify-between gap-3 mb-8 p-2 rounded-2xl bg-white/80 dark:bg-[#12151C]/90 backdrop-blur-xl border border-black/[0.06] dark:border-white/[0.08] shadow-[0_8px_30px_rgba(0,0,0,0.05)] dark:shadow-md transition-all">
+        <div class="flex items-center gap-2">
+          <router-link
+            to="/"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-mono font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/[0.06] transition-all"
+          >
+            <span>&larr;</span>
+            <span>Vault</span>
+          </router-link>
+          <div class="h-4 w-px bg-gray-200 dark:bg-white/10 hidden sm:block"></div>
+          <span class="text-xs font-mono text-gray-400 dark:text-gray-500 hidden sm:inline truncate max-w-[180px]">
+            {{ articleTitle }}
+          </span>
+        </div>
+
+        <div class="flex items-center gap-1.5 sm:gap-2">
+          <!-- Reading Progress Pill -->
+          <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-gray-100/80 dark:bg-white/[0.04] text-[11px] font-mono text-gray-600 dark:text-gray-400 border border-gray-200/50 dark:border-white/[0.04]">
+            <div class="w-2 h-2 rounded-full border border-emerald-500/40 flex items-center justify-center relative overflow-hidden bg-emerald-500/10">
+              <div class="w-full bg-emerald-500 transition-all duration-150" :style="{ height: `${readingProgress}%` }"></div>
+            </div>
+            <span>{{ Math.round(readingProgress) }}%</span>
+          </div>
+
+          <!-- Typography Toggle: Newsreader Serif vs Geist Sans -->
+          <div class="flex items-center bg-gray-100/70 dark:bg-white/[0.04] p-0.5 rounded-xl border border-gray-200/50 dark:border-white/[0.04]">
+            <button
+              @click="readerFont = 'serif'"
+              class="px-2 py-1 rounded-lg text-xs font-serif transition-all cursor-pointer"
+              :class="readerFont === 'serif' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs font-medium' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'"
+              title="Serif typography (Newsreader)"
+            >
+              Aa
+            </button>
+            <button
+              @click="readerFont = 'sans'"
+              class="px-2 py-1 rounded-lg text-xs font-sans transition-all cursor-pointer"
+              :class="readerFont === 'sans' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs font-medium' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'"
+              title="Sans-serif typography (Geist)"
+            >
+              Aa
+            </button>
+          </div>
+
+          <!-- Font Size Adjuster -->
+          <button
+            @click="readerFontSize = readerFontSize === 'sm' ? 'base' : (readerFontSize === 'base' ? 'lg' : 'sm')"
+            class="px-2 py-1 rounded-xl text-xs font-mono text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white bg-gray-100/70 dark:bg-white/[0.04] border border-gray-200/50 dark:border-white/[0.04] transition-all cursor-pointer"
+            :title="`Text size: ${readerFontSize}`"
+          >
+            <span v-if="readerFontSize === 'sm'">A-</span>
+            <span v-else-if="readerFontSize === 'base'">A</span>
+            <span v-else class="font-bold text-emerald-600 dark:text-emerald-400">A+</span>
+          </button>
+
+          <!-- Copy Link -->
+          <button
+            @click="copyArticleLink"
+            class="p-1.5 rounded-xl text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition-all cursor-pointer"
+            :title="copiedLink ? 'Link copied to clipboard!' : 'Copy link'"
+          >
+            <svg v-if="copiedLink" class="w-3.5 h-3.5 text-emerald-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <svg v-else class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+          </button>
+
+          <!-- Edit Action -->
+          <button
+            @click="startEditing"
+            class="p-1.5 rounded-xl text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition-all cursor-pointer"
+            title="Edit markdown"
+          >
+            <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+          </button>
+        </div>
+      </div>
+
       <!-- If Editing Markdown -->
-      <div v-if="isEditing" class="mb-8 w-full animate-in fade-in slide-in-from-top-4 duration-300">
-        <textarea v-model="editContent" rows="18" class="w-full p-6 bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-gray-800 rounded-2xl text-gray-900 dark:text-gray-100 font-mono text-sm leading-relaxed focus:ring-4 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none resize-y transition-all shadow-inner"></textarea>
-        <div class="flex justify-end gap-3 mt-4">
-          <button @click="cancelEditing" :disabled="isSaving" class="px-5 py-2.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 font-bold text-sm transition-colors disabled:opacity-50">Cancel</button>
-          <button @click="saveEdit" :disabled="isSaving" class="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-sm rounded-xl transition-colors active:scale-95 shadow-sm disabled:opacity-50 flex items-center gap-2">
-            <svg v-if="isSaving" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+      <div v-if="isEditing" class="mb-8 w-full">
+        <textarea v-model="editContent" rows="18" class="w-full p-4 bg-gray-50/50 dark:bg-[#12151C] border border-gray-200 dark:border-white/10 rounded-2xl text-gray-900 dark:text-gray-100 font-mono text-sm leading-relaxed focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none resize-y transition-all"></textarea>
+        <div class="flex justify-end gap-2 mt-3">
+          <button @click="cancelEditing" :disabled="isSaving" class="px-4 py-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 text-xs font-medium transition-colors disabled:opacity-50 cursor-pointer">Cancel</button>
+          <button @click="saveEdit" :disabled="isSaving" class="px-4 py-2 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-100 text-white dark:text-gray-950 text-xs font-medium rounded-xl transition-all active:scale-[0.98] disabled:opacity-50 flex items-center gap-1.5 cursor-pointer shadow-xs">
+            <svg v-if="isSaving" class="animate-spin h-3.5 w-3.5 text-white dark:text-gray-950" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
             {{ isSaving ? 'Saving...' : 'Save Changes' }}
           </button>
         </div>
       </div>
 
       <div v-else>
-        <!-- Editorial Provenance Masthead -->
-        <header v-if="properties.length > 0" class="mb-10 pb-8 border-b border-gray-200/60 dark:border-white/10">
-          <!-- Top Row: Source Publisher, Date, and Edit Button -->
-          <div class="flex items-center justify-between gap-4">
-            <div class="flex flex-wrap items-center gap-3">
-              <!-- MOC Hub Badge -->
-              <span
-                v-if="isMOC"
-                class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 text-xs font-semibold tracking-tight shadow-sm"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-amber-500"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/><path d="M6 10h10"/></svg>
-                Map of Content (Hub)
-              </span>
+        <!-- Hero Cover Masthead (Option 1: Luminous Aura & Cinematic Framing) -->
+        <div v-if="heroImage" class="relative mb-10 group isolate">
+          <!-- Ambient Luminous Glow Behind the Card (Soft watercolor in light mode, luminous aurora in dark mode) -->
+          <div class="absolute -inset-4 sm:-inset-6 -z-10 overflow-visible pointer-events-none">
+            <img
+              :src="heroImage"
+              alt=""
+              aria-hidden="true"
+              class="w-full h-full object-cover rounded-[2.5rem] filter blur-3xl opacity-20 dark:opacity-65 scale-105 sm:scale-110 transition-opacity duration-700 group-hover:opacity-35 dark:group-hover:opacity-95 dark:saturate-150"
+            />
+          </div>
 
-              <!-- Source Badge -->
+          <!-- Cinematic Framed Container -->
+          <div class="relative rounded-[2rem] overflow-hidden border border-black/[0.07] dark:border-white/10 shadow-[0_20px_50px_-15px_rgba(0,0,0,0.08)] dark:shadow-2xl aspect-[16/9] sm:aspect-[21/9] max-h-[460px] bg-white dark:bg-[#12151C] z-10">
+            <img
+              :src="heroImage"
+              :alt="articleTitle"
+              class="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-1000 ease-out"
+            />
+            
+            <!-- Subtle Vignette Glaze for Top/Bottom Glass Badges -->
+            <div class="absolute inset-0 bg-gradient-to-t from-black/35 via-transparent to-black/15 dark:from-black/60 dark:to-black/20 pointer-events-none"></div>
+
+            <!-- Top Left Provenance Pill -->
+            <div v-if="knownProperties.source" class="absolute top-4 left-4 z-10">
               <a
-                v-if="knownProperties.source"
                 :href="knownProperties.source"
                 target="_blank"
                 rel="noopener noreferrer"
-                class="group inline-flex items-center gap-2 px-3 py-1 rounded-full bg-gray-100/80 dark:bg-white/5 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-gray-700 dark:text-gray-300 hover:text-emerald-700 dark:hover:text-emerald-300 border border-gray-200/50 dark:border-white/5 text-xs font-medium tracking-tight transition-all duration-200 active:scale-95"
+                class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/40 dark:bg-black/50 hover:bg-black/60 dark:hover:bg-black/80 backdrop-blur-xl text-white text-xs font-mono font-medium border border-white/25 shadow-sm transition-all hover:scale-105"
               >
-                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 group-hover:scale-125 transition-transform"></span>
-                <span class="font-medium">{{ getHostname(knownProperties.source) }}</span>
-                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>{{ getHostname(knownProperties.source) }}</span>
+                <span class="text-white/60">&nearr;</span>
               </a>
+            </div>
 
-              <!-- Captured Date -->
-              <div v-if="knownProperties.date" class="text-xs text-gray-400 dark:text-gray-500 font-medium flex items-center gap-1.5">
-                <span class="hidden sm:inline">Saved</span>
-                <span>{{ formatDisplayDate(knownProperties.date) }}</span>
+            <!-- Bottom Right Date Pill -->
+            <div v-if="knownProperties.date" class="absolute bottom-4 right-4 z-10">
+              <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/40 dark:bg-black/50 backdrop-blur-xl text-white/95 text-xs font-mono font-medium border border-white/25 shadow-sm">
+                <svg class="w-3 h-3 text-emerald-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                {{ formatDisplayDate(knownProperties.date) }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Procedural Aurora Banner for Articles without an image -->
+        <div v-else class="relative mb-10 group isolate">
+          <!-- Ambient Glow for Procedural Banner -->
+          <div
+            class="absolute -inset-4 sm:-inset-6 -z-10 rounded-[2.5rem] filter blur-3xl opacity-25 dark:opacity-35 scale-105 sm:scale-110 pointer-events-none transition-opacity duration-700 bg-gradient-to-br"
+            :class="getProceduralGradient(Number(getArticleId()) || 0)"
+          ></div>
+
+          <div
+            class="relative rounded-[2rem] overflow-hidden border shadow-[0_20px_50px_-15px_rgba(0,0,0,0.06)] dark:shadow-xl h-44 sm:h-52 flex flex-col justify-between p-6 bg-gradient-to-br z-10"
+            :class="getProceduralGradient(Number(getArticleId()) || 0)"
+          >
+            <!-- Dot matrix pattern overlay -->
+            <div class="absolute inset-0 opacity-15 bg-[radial-gradient(#000_1px,transparent_1px)] dark:bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none"></div>
+
+            <!-- Top Row Badges -->
+            <div class="flex items-center justify-between w-full z-10">
+              <div v-if="knownProperties.source">
+                <a
+                  :href="knownProperties.source"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/80 dark:bg-black/40 hover:bg-white dark:hover:bg-black/60 backdrop-blur-xl text-gray-800 dark:text-white text-xs font-mono font-medium border border-black/[0.08] dark:border-white/15 shadow-2xs transition-all"
+                >
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span>{{ getHostname(knownProperties.source) }}</span>
+                  <span class="text-gray-400 dark:text-white/60">&nearr;</span>
+                </a>
+              </div>
+              <div v-else class="text-[10px] font-mono uppercase tracking-widest text-gray-500 dark:text-white/50 font-semibold">
+                READR VAULT
+              </div>
+
+              <div v-if="knownProperties.date" class="text-xs font-mono text-gray-500 dark:text-white/70 font-medium">
+                {{ formatDisplayDate(knownProperties.date) }}
               </div>
             </div>
 
-            <div class="flex items-center gap-2">
-              <button
-                @click="reparseArticle"
-                :disabled="isReparsing"
-                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-white/5 transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Re-run enabled agents (Enricher, Linker) for this article"
-              >
-                <svg v-if="isReparsing" class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
-                <svg v-else xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>
-                <span>{{ isReparsing ? 'Running...' : 'Re-run Agents' }}</span>
-              </button>
-              <!-- Edit Control -->
-              <button
-                @click="startEditing"
-                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-white/5 transition-all active:scale-95 cursor-pointer"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                <span>Edit</span>
-              </button>
+            <!-- Monospace Watermark in bottom corner -->
+            <div class="flex items-end justify-between z-10">
+              <span class="font-mono text-[10px] tracking-widest uppercase text-gray-400 dark:text-white/40 font-semibold">#DOCUMENT</span>
+              <span class="font-mono text-xs font-semibold text-gray-600 dark:text-white/60">{{ wordCount }} WORDS</span>
             </div>
           </div>
+        </div>
 
-          <!-- Bottom Row: Topic tags & custom metadata -->
-          <div v-if="knownProperties.tags.length > 0 || knownProperties.custom.length > 0" class="flex flex-wrap items-center gap-2 mt-4">
-            <!-- Topic Chips -->
+        <!-- Editorial Masthead Header -->
+        <header class="mb-8 pb-6 border-b border-gray-200/60 dark:border-white/[0.06]">
+          <!-- Top Row: Eyebrow Metadata & Agent Actions -->
+          <div class="flex items-center justify-between gap-4 mb-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <span
+                v-if="isMOC"
+                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 text-xs font-mono font-semibold"
+              >
+                ★ MOC HUB
+              </span>
+              <span class="text-xs font-mono text-emerald-600 dark:text-emerald-400 font-semibold tracking-wide">
+                // VAULT ARTICLE
+              </span>
+              <span class="text-gray-300 dark:text-gray-700">•</span>
+              <span class="text-xs font-mono text-gray-400 dark:text-gray-500">
+                {{ estimatedReadingTime }} · {{ wordCount }} words
+              </span>
+            </div>
+
+            <!-- Reparse Agent Action -->
+            <button
+              @click="reparseArticle"
+              :disabled="isReparsing"
+              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-colors cursor-pointer disabled:opacity-50"
+              title="Re-run pipeline agents"
+            >
+              <svg v-if="isReparsing" class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+              <svg v-else xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>
+              <span>{{ isReparsing ? 'Agent Running...' : 'Reparse' }}</span>
+            </button>
+          </div>
+
+          <!-- Article Main Title -->
+          <h1 v-if="articleTitle" class="text-2xl sm:text-4xl font-bold tracking-tight text-gray-900 dark:text-gray-100 mb-4 font-['Outfit'] leading-tight">
+            {{ articleTitle }}
+          </h1>
+
+          <!-- Tags Bar -->
+          <div v-if="knownProperties.tags.length > 0" class="flex flex-wrap items-center gap-1.5 mt-4">
             <span
               v-for="tag in knownProperties.tags"
               :key="tag"
-              class="inline-flex items-center text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md bg-gray-100/90 dark:bg-white/5 text-gray-700 dark:text-gray-300 border border-gray-200/50 dark:border-white/5"
+              class="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-gray-100/80 dark:bg-white/[0.04] text-gray-600 dark:text-gray-400 border border-gray-200/50 dark:border-white/[0.04]"
             >
-              {{ tag }}
+              #{{ tag }}
             </span>
-
-            <!-- Custom Attributes (if any) -->
-            <div
-              v-for="custom in knownProperties.custom"
-              :key="custom.key"
-              class="inline-flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-md bg-gray-50 dark:bg-white/[0.02] border border-gray-200/40 dark:border-white/5 text-gray-600 dark:text-gray-400 font-mono"
-            >
-              <span class="text-[10px] text-gray-400 uppercase tracking-wider">{{ custom.label }}:</span>
-              <span class="font-medium text-gray-800 dark:text-gray-200">{{ custom.value }}</span>
-            </div>
           </div>
         </header>
 
-        <!-- Standalone edit button for legacy articles without frontmatter -->
-        <div v-else class="flex justify-end mb-6">
-          <button @click="startEditing" class="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-bold hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors active:scale-95">Edit Markdown</button>
-        </div>
-
-        <!-- Article Main Title -->
-        <h1 v-if="articleTitle" class="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-gray-900 dark:text-gray-50 mb-8 font-sans leading-[1.18]">
-          {{ articleTitle }}
-        </h1>
-
-        <!-- Markdown Prose Body -->
+        <!-- Markdown Prose Body with Custom Typography -->
         <div
-          class="prose prose-lg md:prose-xl dark:prose-invert prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-p:leading-relaxed prose-p:font-serif prose-headings:font-sans prose-headings:font-bold prose-headings:tracking-tight prose-headings:text-gray-900 dark:prose-headings:text-gray-50 prose-a:text-emerald-600 dark:prose-a:text-emerald-400 prose-a:no-underline hover:prose-a:underline prose-img:rounded-3xl prose-img:shadow-sm prose-pre:text-left prose-pre:bg-[#111] dark:prose-pre:bg-[#1a1a1a] prose-pre:rounded-[2rem] transition-colors duration-300"
+          :class="[
+            'prose dark:prose-invert max-w-none transition-all duration-200',
+            readerFont === 'serif' ? 'font-[\'Newsreader\'] prose-p:font-[\'Newsreader\'] prose-p:text-gray-800 dark:prose-p:text-gray-200 prose-p:leading-[1.85]' : 'font-sans prose-p:font-sans prose-p:text-gray-800 dark:prose-p:text-gray-200 prose-p:leading-relaxed',
+            readerFontSize === 'lg' ? 'text-lg sm:text-xl' : (readerFontSize === 'sm' ? 'text-sm sm:text-base' : 'text-base sm:text-lg'),
+            'prose-headings:font-[\'Outfit\'] prose-headings:font-bold prose-headings:tracking-tight',
+            'prose-a:text-emerald-600 dark:prose-a:text-emerald-400 prose-a:underline-offset-4',
+            'prose-blockquote:border-l-2 prose-blockquote:border-emerald-500 prose-blockquote:bg-emerald-500/[0.04] prose-blockquote:py-1.5 prose-blockquote:px-5 prose-blockquote:rounded-r-2xl prose-blockquote:italic',
+            'prose-img:rounded-2xl prose-img:shadow-sm',
+            'prose-pre:bg-gray-950 dark:prose-pre:bg-[#0A0C10] prose-pre:rounded-2xl prose-pre:border prose-pre:border-black/10 dark:prose-pre:border-white/10'
+          ]"
           v-html="markdownContent"
         />
       </div>
 
-      
-      <div v-if="backlinks.length > 0" class="mt-24 pt-12 border-t border-gray-200/50 dark:border-white/10">
-        <h3 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 mb-6 flex items-center gap-3">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400 dark:text-gray-500"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
-          Linked Mentions
+      <!-- Linked Mentions (Backlinks) -->
+      <div v-if="backlinks.length > 0" class="mt-16 pt-8 border-t border-gray-200/60 dark:border-white/[0.06]">
+        <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2 font-mono">
+          <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          Linked Mentions ({{ backlinks.length }})
         </h3>
         
-        <div class="overflow-hidden rounded-[2rem] border border-gray-200/50 dark:border-white/5 bg-white/50 dark:bg-[#121212]/50 backdrop-blur-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.4)]">
-          <table class="w-full text-left border-collapse">
-            <thead>
-              <tr class="border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-black/20 text-sm font-semibold text-gray-500 dark:text-gray-400 tracking-wide uppercase">
-                <th class="px-8 py-5 font-bold">Article</th>
-                <th class="px-8 py-5 font-bold text-right hidden sm:table-cell">Tags</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="link in backlinks" :key="link.ID" :data-id="link.ID" class="backlink-row group border-b last:border-0 border-gray-100 dark:border-white/5 hover:bg-gray-50/80 dark:hover:bg-white/5 transition-all duration-300 cursor-pointer active:scale-[0.99]" @click="router.push(`/articles/${link.ID}`)">
-                <td class="px-8 py-5">
-                  <span class="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">{{ link.title }}</span>
-                </td>
-                <td class="px-8 py-5 text-right hidden sm:table-cell">
-                  <div class="flex justify-end gap-2">
-                     <span v-for="tag in (link.tags ? link.tags.split(',') : []).slice(0,3)" :key="tag" class="px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest bg-gray-100/80 dark:bg-black/60 text-gray-600 dark:text-gray-400 rounded-lg group-hover:bg-emerald-50 dark:group-hover:bg-emerald-900/30 group-hover:text-emerald-700 dark:group-hover:text-emerald-300 transition-colors">
-                       {{ tag.trim() }}
-                     </span>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="rounded-2xl border border-gray-200/80 dark:border-white/[0.08] bg-white dark:bg-[#12151C] overflow-hidden shadow-2xs">
+          <div
+            v-for="link in backlinks"
+            :key="link.ID"
+            :data-id="link.ID"
+            class="backlink-row p-3.5 border-b last:border-0 border-gray-100 dark:border-white/[0.04] hover:bg-gray-50/80 dark:hover:bg-white/[0.03] transition-colors cursor-pointer flex items-center justify-between gap-4"
+            @click="router.push(`/articles/${link.ID}`)"
+          >
+            <span class="text-xs font-medium text-gray-800 dark:text-gray-200 hover:text-emerald-600 dark:hover:text-emerald-400 truncate">
+              {{ link.title }}
+            </span>
+            <div class="flex items-center gap-1.5 flex-shrink-0">
+              <span v-for="tag in (link.tags ? link.tags.split(',') : []).slice(0, 2)" :key="tag" class="text-[10px] font-mono px-2 py-0.5 rounded bg-gray-100 dark:bg-white/[0.05] text-gray-500 dark:text-gray-400">
+                #{{ tag.trim() }}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
     </article>
+    </div>
     
-    <!-- Local Graph Sidebar -->
-    <aside class="hidden lg:block w-1/3 sticky top-32 h-[420px] bg-white/40 dark:bg-black/20 backdrop-blur-3xl rounded-[2rem] border border-gray-200/50 dark:border-white/5 ml-12 overflow-hidden mt-16 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.4)]">
-      <div class="px-7 py-5 border-b border-gray-100 dark:border-white/5 font-bold tracking-tight text-gray-900 dark:text-gray-100 text-sm flex items-center gap-2">
-        <div class="w-2 h-2 rounded-full bg-emerald-500"></div>
-        Local Network
+    <!-- Obsidian-Style Dedicated Right Docked Sidebar (Full Height, Pinned / Sticky) -->
+    <aside
+      v-show="isGraphOpen"
+      class="hidden lg:flex flex-col w-80 xl:w-96 h-screen sticky top-0 right-0 border-l border-black/[0.06] dark:border-white/[0.06] bg-white/95 dark:bg-[#0C0E14]/95 backdrop-blur-xl z-30 select-none flex-shrink-0 transition-all duration-300"
+    >
+      <!-- Obsidian Sidebar Header Strip -->
+      <div class="h-12 border-b border-black/[0.06] dark:border-white/[0.06] flex items-center justify-between px-3.5 flex-shrink-0 bg-gray-50/50 dark:bg-white/[0.01]">
+        <div class="flex items-center gap-2">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span class="font-mono text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+            Local Graph
+          </span>
+          <span class="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-gray-200/60 dark:bg-white/[0.06] text-gray-500 dark:text-gray-400">
+            {{ localGraphNodeCount || backlinks.length + 1 }}
+          </span>
+        </div>
+
+        <div class="flex items-center gap-1">
+          <GraphZoomControls @zoom-in="localZoomIn" @zoom-out="localZoomOut" @fit="localFitView" />
+          <button
+            @click="toggleGraphSidebar"
+            class="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition-colors cursor-pointer"
+            title="Collapse sidebar"
+          >
+            <!-- Obsidian Sidebar Collapse Icon -->
+            <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="18" x="3" y="3" rx="2"/>
+              <path d="M15 3v18"/>
+              <path d="m8 9 3 3-3 3"/>
+            </svg>
+          </button>
+        </div>
       </div>
-      <div class="absolute bottom-4 right-4 z-10 opacity-70 hover:opacity-100 transition-opacity">
-        <GraphZoomControls @zoom-in="localZoomIn" @zoom-out="localZoomOut" @fit="localFitView" />
+
+      <!-- Graph Canvas Pane -->
+      <div class="h-[280px] xl:h-[320px] relative bg-gray-50/30 dark:bg-black/20 flex-shrink-0 border-b border-black/[0.06] dark:border-white/[0.06]">
+        <div ref="localGraphContainer" class="absolute inset-0 w-full h-full"></div>
+
+        <!-- Micro Legend Matching Main Graph -->
+        <div class="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between pointer-events-none z-10 text-[10px] font-mono">
+          <div class="flex items-center gap-2 px-2 py-1 rounded-md bg-white/85 dark:bg-black/70 backdrop-blur-md border border-black/[0.06] dark:border-white/[0.08] shadow-2xs">
+            <span class="inline-flex items-center gap-1 text-gray-600 dark:text-gray-300">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Note
+            </span>
+            <span class="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 font-semibold">
+              <span class="w-1.5 h-1.5 rotate-45 rounded-[1px] bg-amber-500"></span> MOC Hub
+            </span>
+            <span class="inline-flex items-center gap-1 text-gray-500 dark:text-gray-400">
+              <span class="w-2 h-1 rounded-[1px] bg-gray-400 dark:bg-gray-500"></span> Tag
+            </span>
+          </div>
+        </div>
       </div>
-      <div ref="localGraphContainer" class="w-full h-[360px]"></div>
+
+      <!-- Scrollable Document Metadata & Backlinks Section -->
+      <div class="flex-1 overflow-y-auto divide-y divide-black/[0.06] dark:divide-white/[0.06]">
+        <!-- Document Properties -->
+        <div class="p-3.5 space-y-3 bg-white dark:bg-[#0C0E14]">
+          <div class="flex items-center justify-between text-[10px] font-mono text-gray-400 uppercase tracking-wider font-semibold">
+            <span>Properties</span>
+            <span v-if="knownProperties.date" class="text-gray-400 font-normal">
+              {{ formatDisplayDate(knownProperties.date) }}
+            </span>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2 text-xs font-mono">
+            <div class="p-2.5 rounded-xl bg-gray-50 dark:bg-white/[0.02] border border-black/[0.04] dark:border-white/[0.04]">
+              <span class="text-[10px] text-gray-400 block mb-0.5">READ TIME</span>
+              <span class="font-semibold text-gray-800 dark:text-gray-200">{{ estimatedReadingTime }}</span>
+            </div>
+            <div class="p-2.5 rounded-xl bg-gray-50 dark:bg-white/[0.02] border border-black/[0.04] dark:border-white/[0.04]">
+              <span class="text-[10px] text-gray-400 block mb-0.5">WORD COUNT</span>
+              <span class="font-semibold text-gray-800 dark:text-gray-200">{{ wordCount }} words</span>
+            </div>
+          </div>
+
+          <!-- Tags in Properties -->
+          <div v-if="knownProperties.tags && knownProperties.tags.length > 0" class="pt-0.5 space-y-1.5">
+            <span class="text-[10px] font-mono text-gray-400 block uppercase font-semibold">TAGS</span>
+            <div class="flex flex-wrap gap-1.5">
+              <span
+                v-for="tag in knownProperties.tags"
+                :key="tag"
+                class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-gray-100/90 dark:bg-white/[0.05] text-gray-600 dark:text-gray-300 border border-black/[0.04] dark:border-white/[0.04]"
+              >
+                #{{ tag }}
+              </span>
+            </div>
+          </div>
+
+          <div v-if="knownProperties.source" class="pt-0.5">
+            <a
+              :href="knownProperties.source"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-mono bg-gray-50 hover:bg-emerald-500/10 dark:bg-white/[0.03] dark:hover:bg-emerald-500/10 border border-black/[0.04] dark:border-white/[0.04] text-gray-700 dark:text-gray-300 hover:text-emerald-600 dark:hover:text-emerald-400 transition-all group"
+            >
+              <span class="truncate">Original Source</span>
+              <span class="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform text-[11px]">&nearr;</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- Obsidian-Style Backlinks / Connected Notes Section -->
+        <div class="flex flex-col bg-white dark:bg-[#0C0E14]">
+          <div class="px-3.5 py-2 border-b border-black/[0.06] dark:border-white/[0.06] bg-gray-50/50 dark:bg-white/[0.01] flex items-center justify-between text-[10px] font-mono text-gray-400 uppercase tracking-wider font-semibold">
+            <span>Linked Mentions</span>
+            <span>{{ backlinks.length }}</span>
+          </div>
+          <div class="p-2 space-y-1">
+            <div v-if="backlinks.length === 0" class="text-xs text-gray-400 font-mono py-4 text-center">
+              No incoming backlinks
+            </div>
+            <router-link
+              v-for="link in backlinks"
+              :key="link.ID"
+              :to="`/articles/${link.ID}`"
+              class="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-gray-700 dark:text-gray-300 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-white/[0.04] transition-all group"
+            >
+              <span class="truncate pr-2 font-medium">{{ link.title }}</span>
+              <span class="text-gray-400 text-[10px] group-hover:translate-x-0.5 transition-transform">&rarr;</span>
+            </router-link>
+          </div>
+        </div>
+      </div>
+
     </aside>
+
+    <!-- Obsidian-Style Collapsed Edge Button (Desktop) -->
+    <button
+      v-show="!isGraphOpen"
+      @click="toggleGraphSidebar"
+      class="hidden lg:flex fixed right-4 top-4 z-30 items-center gap-1.5 p-2 rounded-xl bg-white/90 dark:bg-[#0C0E14]/90 backdrop-blur-xl border border-black/[0.06] dark:border-white/[0.06] shadow-sm hover:border-emerald-500/40 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-all cursor-pointer group"
+      title="Expand Local Graph (Obsidian Sidebar)"
+    >
+      <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect width="18" height="18" x="3" y="3" rx="2"/>
+        <path d="M15 3v18"/>
+        <path d="m11 15-3-3 3-3"/>
+      </svg>
+      <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+    </button>
 
     <div 
       v-if="showLinker" 

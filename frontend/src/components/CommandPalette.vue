@@ -3,13 +3,13 @@
     <div
       v-if="isOpen"
       @click.self="close"
-      class="fixed inset-0 bg-[#0a0a0a]/60 backdrop-blur-md flex justify-center items-start pt-[15vh] z-[100] p-4 transition-all duration-300"
+      class="fixed inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-xs flex justify-center items-start pt-[12vh] z-[100] p-4 transition-all duration-200"
     >
-      <div class="bg-white dark:bg-[#111] rounded-2xl shadow-[0_16px_64px_rgba(0,0,0,0.15)] dark:shadow-[0_16px_64px_rgba(0,0,0,0.5)] border border-gray-100 dark:border-gray-800 w-full max-w-2xl overflow-hidden flex flex-col transform transition-all duration-300">
+      <div class="bg-white dark:bg-[#12151C] rounded-xl shadow-xl border border-gray-200/80 dark:border-white/[0.08] w-full max-w-xl overflow-hidden flex flex-col">
         
         <!-- Search Input -->
-        <div class="flex items-center px-4 py-3 border-b border-gray-100 dark:border-gray-800">
-          <svg class="w-5 h-5 text-gray-400 dark:text-gray-500 mr-3 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <div class="flex items-center px-4 py-3 border-b border-gray-100 dark:border-white/[0.06]">
+          <svg class="w-4 h-4 text-gray-400 dark:text-gray-500 mr-3 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
@@ -21,12 +21,11 @@
             @keydown.enter.prevent="goToSelected"
             @keydown.esc.prevent="close"
             type="text"
-            class="flex-1 bg-transparent border-none focus:outline-none text-gray-900 dark:text-gray-100 text-lg placeholder:text-gray-400 dark:placeholder:text-gray-600"
-            placeholder="Search articles..."
+            class="flex-1 bg-transparent border-none focus:outline-none text-gray-900 dark:text-gray-100 text-sm placeholder:text-gray-400 font-sans"
+            placeholder="Search vault notes, tags, and articles..."
           />
-          <div class="flex items-center gap-1.5 ml-3 shrink-0 text-xs text-gray-400 dark:text-gray-500 font-mono">
-            <kbd class="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">ESC</kbd>
-            <span>to close</span>
+          <div class="flex items-center gap-1 ml-3 shrink-0 text-[11px] text-gray-400 dark:text-gray-500 font-mono">
+            <kbd class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.06] border border-gray-200/80 dark:border-white/10">ESC</kbd>
           </div>
         </div>
 
