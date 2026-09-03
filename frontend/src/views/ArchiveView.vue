@@ -73,12 +73,12 @@ const fetchArchivedArticles = async () => {
       ...article,
       parsedTags: article.tags ? article.tags.split(',').map((tag: string) => tag.trim()) : []
     }))
-    await nextTick()
-    initReveal()
   } catch (err) {
     console.error('Failed to load archived articles', err)
   } finally {
     isLoading.value = false
+    await nextTick()
+    initReveal()
   }
 }
 
@@ -190,7 +190,7 @@ watch(() => settings.view_mode, (newMode) => {
   }
 })
 
-watch([viewMode, sortOrder, selectedTag, searchQuery], () => {
+watch([articles, viewMode, sortOrder, selectedTag, searchQuery], () => {
   nextTick(initReveal)
 })
 
