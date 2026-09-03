@@ -215,15 +215,6 @@ const undoArchive = async () => {
   }
 }
 
-const deleteArticle = async (id: number) => {
-  if (!confirm('Are you sure you want to permanently delete this note from the vault?')) return
-  try {
-    await axios.delete(`/api/delete/${id}`)
-    articles.value = articles.value.filter(article => article.ID !== id)
-  } catch (err) {
-    console.error('Failed to delete article', err)
-  }
-}
 
 onMounted(async () => {
   const stored = localStorage.getItem('readr_viewMode') as ViewMode | null
