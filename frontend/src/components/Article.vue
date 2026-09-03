@@ -228,16 +228,20 @@ const toggleGraphSidebar = () => {
   try {
     localStorage.setItem('readr_local_graph_open', String(isGraphOpen.value))
   } catch {}
-  nextTick(() => {
-    if (isGraphOpen.value) {
-      if (localNetwork) {
-        localNetwork.redraw()
-        localNetwork.fit()
-      } else {
-        loadLocalGraph()
-      }
-    }
-  })
+  
+  if (isGraphOpen.value) {
+    nextTick(() => {
+      setTimeout(() => {
+        if (!localNetwork || !localGraphContainer.value?.querySelector('canvas')) {
+          loadLocalGraph()
+        } else {
+          localNetwork.setSize('100%', '100%')
+          localNetwork.redraw()
+          localNetwork.fit({ animation: { duration: 300, easingFunction: 'easeInOutQuad' } })
+        }
+      }, 50)
+    })
+  }
 }
 
 type NotificationState = 'idle' | 'running' | 'completed' | 'error'
@@ -467,11 +471,17 @@ const loadLocalGraph = async () => {
       interaction: { hover: true, tooltipDelay: 200, zoomView: false }
     }
 
-    if (localNetwork) {
+    if (localNetwork && localGraphContainer.value && localGraphContainer.value.querySelector('canvas')) {
       localNetwork.setData({ nodes: localNodes, edges: connectedEdges })
       localNetwork.setOptions(options)
-      localNetwork.once('afterDrawing', () => { localNetwork?.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } }); });
+      localNetwork.setSize('100%', '100%')
+      localNetwork.redraw()
+      localNetwork.once('afterDrawing', () => { localNetwork?.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } }); });
     } else {
+      if (localNetwork) {
+        localNetwork.destroy()
+        localNetwork = null
+      }
       localNetwork = new Network(localGraphContainer.value, { nodes: localNodes, edges: connectedEdges }, options)
       
       localNetwork.once('stabilizationIterationsDone', () => {
@@ -959,7 +969,7 @@ onBeforeUnmount(() => {
     
     <!-- Obsidian-Style Dedicated Right Docked Sidebar (Full Height, Pinned / Sticky) -->
     <aside
-      v-if="isGraphOpen"
+      v-show="isGraphOpen"
       class="hidden lg:flex flex-col w-80 xl:w-96 h-screen sticky top-0 right-0 border-l border-black/[0.06] dark:border-white/[0.06] bg-white/95 dark:bg-[#0C0E14]/95 backdrop-blur-xl z-30 select-none flex-shrink-0 transition-all duration-300"
     >
       <!-- Obsidian Sidebar Header Strip -->
@@ -1022,7 +1032,7 @@ onBeforeUnmount(() => {
 
     <!-- Obsidian-Style Collapsed Edge Button (Desktop) -->
     <button
-      v-else
+      v-show="!isGraphOpen"
       @click="toggleGraphSidebar"
       class="hidden lg:flex fixed right-4 top-4 z-30 items-center gap-1.5 p-2 rounded-xl bg-white/90 dark:bg-[#0C0E14]/90 backdrop-blur-xl border border-black/[0.06] dark:border-white/[0.06] shadow-sm hover:border-emerald-500/40 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-all cursor-pointer group"
       title="Expand Local Graph (Obsidian Sidebar)"
