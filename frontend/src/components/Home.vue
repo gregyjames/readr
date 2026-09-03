@@ -143,13 +143,289 @@ function getDomain(article: Article): string {
 }
 
 
+interface ToastNotification {
+  visible: boolean
+  message: string
+  articleId: number | null
+  article: Article | null
+  timer: any
+}
+
+const toast = ref<ToastNotification>({
+  visible: false,
+  message: '',
+  articleId: null,
+  article: null,
+  timer: null
+})
+
+const showToast = (message: string, articleId: number, article: Article | null) => {
+  if (toast.value.timer) {
+    clearTimeout(toast.value.timer)
+  }
+  toast.value = {
+    visible: true,
+    message,
+    articleId,
+    article,
+    timer: setTimeout(() => {
+      toast.value.visible = false
+      toast.value.articleId = null
+      toast.value.article = null
+    }, 6000)
+  }
+}
+
+const dismissToast = () => {
+  if (toast.value.timer) {
+    clearTimeout(toast.value.timer)
+  }
+  toast.value.visible = false
+  toast.value.articleId = null
+  toast.value.article = null
+}
+
+const archivingId = ref<number | null>(null)
+
+function spawnArchiveParticles(id: number) {
+  const el = document.querySelector(`[data-article-id="${id}"]`) as HTMLElement
+  if (!el) return
+
+  const rect = el.getBoundingClientRect()
+  const cx = rect.left + rect.width / 2
+  const cy = rect.top + rect.height / 2
+
+  // ── Scan line sweep ────────────────────────────────────
+  const scanLine = document.createElement('div')
+  scanLine.style.cssText = `
+    position:fixed;left:${rect.left}px;top:${rect.top}px;
+    width:${rect.width}px;height:3px;pointer-events:none;z-index:9998;
+    background:linear-gradient(90deg,transparent 0%,rgba(245,158,11,0.0) 5%,rgba(245,158,11,0.95) 30%,rgba(255,255,255,0.95) 50%,rgba(245,158,11,0.95) 70%,rgba(245,158,11,0.0) 95%,transparent 100%);
+    box-shadow:0 0 14px rgba(245,158,11,0.9),0 0 28px rgba(245,158,11,0.5),0 0 56px rgba(245,158,11,0.25);
+    border-radius:2px;
+  `
+  document.body.appendChild(scanLine)
+  scanLine.animate(
+    [
+      { top: `${rect.top - 4}px`, opacity: 0 },
+      { top: `${rect.top}px`, opacity: 1, offset: 0.04 },
+      { top: `${rect.bottom - 3}px`, opacity: 1, offset: 0.88 },
+      { top: `${rect.bottom}px`, opacity: 0 },
+    ],
+    { duration: 300, easing: 'ease-in-out', fill: 'forwards' }
+  ).onfinish = () => scanLine.remove()
+
+  // ── Expanding burst ring ───────────────────────────────
+  const ring = document.createElement('div')
+  const maxDim = Math.max(rect.width, rect.height)
+  ring.style.cssText = `
+    position:fixed;left:${cx}px;top:${cy}px;
+    width:8px;height:8px;margin-left:-4px;margin-top:-4px;
+    border-radius:50%;border:2px solid rgba(245,158,11,0.95);
+    pointer-events:none;z-index:9999;
+    box-shadow:0 0 12px rgba(245,158,11,0.7),inset 0 0 6px rgba(245,158,11,0.4);
+  `
+  document.body.appendChild(ring)
+  setTimeout(() => {
+    ring.animate(
+      [
+        { transform: 'scale(1)', opacity: 0.95, borderWidth: '2px' },
+        { transform: `scale(${maxDim / 6})`, opacity: 0, borderWidth: '1px' },
+      ],
+      { duration: 420, easing: 'ease-out', fill: 'forwards' }
+    ).onfinish = () => ring.remove()
+  }, 80)
+
+  // ── Particle shower ────────────────────────────────────
+  const palette = [
+    '#f59e0b', '#fbbf24', '#fcd34d', '#fffbeb',
+    '#10b981', '#34d399', '#6ee7b7',
+    '#ffffff', '#e5e7eb',
+  ]
+  const shapes = ['50%', '50%', '50%', '2px', '2px', '4px']
+
+  for (let i = 0; i < 22; i++) {
+    const p = document.createElement('div')
+    const size = Math.random() * 7 + 2
+    const px = rect.left + Math.random() * rect.width
+    const py = rect.top + Math.random() * rect.height
+    const color = palette[Math.floor(Math.random() * palette.length)]
+    const shape = shapes[Math.floor(Math.random() * shapes.length)]
+    const dur = 480 + Math.random() * 380
+    const dx = (Math.random() - 0.5) * 160
+    const dy = -(Math.random() * 140 + 30)
+    const rot = (Math.random() - 0.5) * 540
+    const delay = Math.random() * 120
+
+    p.style.cssText = `
+      position:fixed;left:${px}px;top:${py}px;
+      width:${size}px;height:${size}px;
+      background:${color};border-radius:${shape};
+      pointer-events:none;z-index:9999;
+      box-shadow:0 0 ${size * 2}px ${color};
+    `
+    document.body.appendChild(p)
+    setTimeout(() => {
+      p.animate(
+        [
+          { opacity: 1, transform: 'scale(1) translate(0,0) rotate(0deg)' },
+          { opacity: 0, transform: `scale(0) translate(${dx}px,${dy}px) rotate(${rot}deg)` },
+        ],
+        { duration: dur, easing: 'cubic-bezier(0.22,1,0.36,1)', fill: 'forwards' }
+      ).onfinish = () => p.remove()
+    }, delay)
+  }
+}
+
+const archiveArticle = async (id: number) => {
+  const targetArticle = articles.value.find(a => a.ID === id) || null
+  archivingId.value = id
+  spawnArchiveParticles(id)
+  await new Promise(resolve => setTimeout(resolve, 620))
+  try {
+    await axios.post(`/api/articles/${id}/archive`)
+    articles.value = articles.value.filter(article => article.ID !== id)
+    showToast('Article moved to archive', id, targetArticle)
+  } catch (err) {
+    console.error('Failed to archive article', err)
+  } finally {
+    archivingId.value = null
+  }
+}
+
+const undoArchive = async () => {
+  const id = toast.value.articleId
+  const cachedArticle = toast.value.article
+  dismissToast()
+  if (!id) return
+
+  try {
+    await axios.post(`/api/articles/${id}/unarchive`)
+    if (cachedArticle && !articles.value.some(a => a.ID === id)) {
+      articles.value = [cachedArticle, ...articles.value]
+      nextTick(initReveal)
+    } else {
+      await fetchArticles()
+    }
+  } catch (err) {
+    console.error('Failed to unarchive article', err)
+  }
+}
+
+
+
+const deletingId = ref<number | null>(null)
+
+function spawnDeleteParticles(id: number) {
+  const el = document.querySelector(`[data-article-id="${id}"]`) as HTMLElement
+  if (!el) return
+
+  const rect = el.getBoundingClientRect()
+  const cx = rect.left + rect.width / 2
+  const cy = rect.top + rect.height / 2
+
+  // ── Radial crack flash ─────────────────────────────────
+  // Two expanding rings — inner tight (red), outer wide (crimson fade)
+  ;[
+    { delay: 0, scale: rect.width / 5, color: 'rgba(239,68,68,0.95)', dur: 380 },
+    { delay: 40, scale: rect.width / 2.5, color: 'rgba(185,28,28,0.6)', dur: 480 },
+  ].forEach(({ delay, scale, color, dur }) => {
+    const ring = document.createElement('div')
+    ring.style.cssText = `
+      position:fixed;left:${cx}px;top:${cy}px;
+      width:10px;height:10px;margin-left:-5px;margin-top:-5px;
+      border-radius:50%;border:2px solid ${color};
+      pointer-events:none;z-index:9999;
+      box-shadow:0 0 16px ${color};
+    `
+    document.body.appendChild(ring)
+    setTimeout(() => {
+      ring.animate(
+        [
+          { transform: 'scale(1)', opacity: 1, borderWidth: '3px' },
+          { transform: `scale(${scale})`, opacity: 0, borderWidth: '1px' },
+        ],
+        { duration: dur, easing: 'ease-out', fill: 'forwards' }
+      ).onfinish = () => ring.remove()
+    }, delay)
+  })
+
+  // ── Flash overlay ─────────────────────────────────────
+  const flash = document.createElement('div')
+  flash.style.cssText = `
+    position:fixed;
+    left:${rect.left}px;top:${rect.top}px;
+    width:${rect.width}px;height:${rect.height}px;
+    background:radial-gradient(circle at center, rgba(239,68,68,0.35) 0%, transparent 70%);
+    border-radius:inherit;pointer-events:none;z-index:9997;
+    border:1.5px solid rgba(239,68,68,0.7);
+    box-shadow:0 0 24px rgba(239,68,68,0.5),inset 0 0 40px rgba(239,68,68,0.1);
+  `
+  document.body.appendChild(flash)
+  flash.animate(
+    [{ opacity: 1 }, { opacity: 0 }],
+    { duration: 320, easing: 'ease-out', fill: 'forwards' }
+  ).onfinish = () => flash.remove()
+
+  // ── Particle shatter ──────────────────────────────────
+  const palette = [
+    '#ef4444', '#f87171', '#fca5a5', '#fee2e2',
+    '#dc2626', '#b91c1c', '#7f1d1d',
+    '#ffffff', '#fde8e8',
+  ]
+  const shapes = ['50%', '50%', '2px', '3px', '1px 4px']
+
+  for (let i = 0; i < 26; i++) {
+    const p = document.createElement('div')
+    const size = Math.random() * 8 + 2
+    const angle = (i / 26) * Math.PI * 2 + (Math.random() - 0.5) * 0.6
+    // Start near center, scatter outward radially
+    const startR = Math.random() * (Math.min(rect.width, rect.height) * 0.4)
+    const px = cx + Math.cos(angle) * startR
+    const py = cy + Math.sin(angle) * startR
+    const color = palette[Math.floor(Math.random() * palette.length)]
+    const shape = shapes[Math.floor(Math.random() * shapes.length)]
+    const dur = 380 + Math.random() * 360
+    // Scatter radially outward — much wider than archive
+    const dist = 120 + Math.random() * 180
+    const dx = Math.cos(angle) * dist + (Math.random() - 0.5) * 60
+    const dy = Math.sin(angle) * dist - Math.random() * 80 // bias upward
+    const rot = (Math.random() - 0.5) * 720
+    const delay = Math.random() * 80
+
+    p.style.cssText = `
+      position:fixed;left:${px}px;top:${py}px;
+      width:${size}px;height:${size}px;
+      background:${color};border-radius:${shape};
+      pointer-events:none;z-index:9999;
+      box-shadow:0 0 ${size * 2}px ${color};
+    `
+    document.body.appendChild(p)
+    setTimeout(() => {
+      p.animate(
+        [
+          { opacity: 1, transform: 'scale(1) translate(0,0) rotate(0deg)' },
+          { opacity: 0.8, transform: `scale(1.4) translate(${dx * 0.4}px,${dy * 0.4}px) rotate(${rot * 0.4}deg)`, offset: 0.25 },
+          { opacity: 0, transform: `scale(0) translate(${dx}px,${dy}px) rotate(${rot}deg)` },
+        ],
+        { duration: dur, easing: 'cubic-bezier(0.22,1,0.36,1)', fill: 'forwards' }
+      ).onfinish = () => p.remove()
+    }, delay)
+  }
+}
+
 const deleteArticle = async (id: number) => {
   if (!confirm('Are you sure you want to permanently delete this note from the vault?')) return
+  deletingId.value = id
+  spawnDeleteParticles(id)
+  await new Promise(resolve => setTimeout(resolve, 580))
   try {
     await axios.delete(`/api/delete/${id}`)
     articles.value = articles.value.filter(article => article.ID !== id)
   } catch (err) {
     console.error('Failed to delete article', err)
+  } finally {
+    deletingId.value = null
   }
 }
 
@@ -165,6 +441,9 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  if (toast.value.timer) {
+    clearTimeout(toast.value.timer)
+  }
   emitter.off('article-added', fetchArticles)
   observer?.disconnect()
 })
@@ -344,7 +623,7 @@ const secondaryArticles = computed(() => {
     <div v-else-if="viewMode === 'card' || viewMode === 'studio'" class="space-y-8">
       
       <!-- Lead Spotlight Card (Hero Ingestion) -->
-      <div v-if="leadArticle" class="reveal-item">
+      <div v-if="leadArticle" class="reveal-item" :class="{ 'archiving': archivingId === leadArticle.ID, 'deleting': deletingId === leadArticle.ID }" :data-article-id="leadArticle.ID">
         <div class="relative group bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-300 overflow-hidden shadow-xs hover:shadow-md">
           
           <div class="flex flex-col lg:flex-row items-stretch">
@@ -404,13 +683,32 @@ const secondaryArticles = computed(() => {
                   <span>&rarr;</span>
                 </router-link>
 
-                <button
-                  @click="deleteArticle(leadArticle.ID)"
-                  class="text-gray-400 hover:text-red-500 p-1 rounded transition-colors text-xs font-mono cursor-pointer"
-                  title="Delete article"
-                >
-                  Delete
-                </button>
+                <div class="flex items-center gap-1">
+                  <button
+                    @click="archiveArticle(leadArticle.ID)"
+                    class="p-1.5 rounded-lg text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-colors cursor-pointer"
+                    title="Archive note"
+                    aria-label="Archive note"
+                  >
+                    <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="21 8 21 21 3 21 3 8"></polyline>
+                      <rect x="1" y="3" width="22" height="5"></rect>
+                      <line x1="10" y1="12" x2="14" y2="12"></line>
+                    </svg>
+                  </button>
+
+                  <button
+                    @click="deleteArticle(leadArticle.ID)"
+                    class="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-colors cursor-pointer"
+                    title="Permanently delete note"
+                    aria-label="Permanently delete note"
+                  >
+                    <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="3 6 5 6 21 6"></polyline>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -452,6 +750,8 @@ const secondaryArticles = computed(() => {
           v-for="(article, idx) in secondaryArticles"
           :key="article.ID"
           class="reveal-item group relative bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-300 shadow-2xs hover:shadow-md overflow-hidden flex flex-col justify-between"
+          :class="{ 'archiving': archivingId === article.ID, 'deleting': deletingId === article.ID }"
+          :data-article-id="article.ID"
         >
           <!-- Top Cover Media -->
           <div class="relative h-48 w-full overflow-hidden bg-gray-100 dark:bg-[#0A0C10] border-b border-gray-100 dark:border-white/[0.06]">
@@ -556,20 +856,31 @@ const secondaryArticles = computed(() => {
                 <span class="w-1 h-1 rounded-full bg-emerald-500/70"></span>
                 <span>// {{ String(idx + 2).padStart(2, '0') }}</span>
               </span>
-              <div class="flex items-center gap-3">
+              <div class="flex items-center gap-2">
+                <button
+                  @click="archiveArticle(article.ID)"
+                  class="opacity-0 group-hover:opacity-100 p-1 rounded-md text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-all cursor-pointer"
+                  title="Archive note"
+                  aria-label="Archive note"
+                >
+                  <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="21 8 21 21 3 21 3 8"></polyline>
+                    <rect x="1" y="3" width="22" height="5"></rect>
+                    <line x1="10" y1="12" x2="14" y2="12"></line>
+                  </svg>
+                </button>
+
                 <button
                   @click="deleteArticle(article.ID)"
-                  class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer text-xs"
-                  title="Delete note"
+                  class="opacity-0 group-hover:opacity-100 p-1 rounded-md text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-all cursor-pointer"
+                  title="Permanently delete note"
+                  aria-label="Permanently delete note"
                 >
-                  &times; Delete
+                  <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  </svg>
                 </button>
-                <router-link
-                  :to="`/articles/${article.ID}`"
-                  class="hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors font-medium"
-                >
-                  Read &rarr;
-                </router-link>
               </div>
             </div>
           </div>
@@ -589,6 +900,8 @@ const secondaryArticles = computed(() => {
           v-for="(article, idx) in filteredArticles"
           :key="article.ID"
           class="reveal-item relative group"
+          :class="{ 'archiving': archivingId === article.ID, 'deleting': deletingId === article.ID }"
+          :data-article-id="article.ID"
         >
           <!-- Desktop Timestamp on Left of Spine -->
           <div class="hidden sm:flex absolute -left-[5.5rem] top-5 w-20 flex-col items-end pr-4 text-right select-none">
@@ -692,11 +1005,25 @@ const secondaryArticles = computed(() => {
             </div>
 
             <!-- Trailing Interactive Action & Delete -->
-            <div class="flex items-center gap-3 self-end md:self-center flex-shrink-0 pt-2 md:pt-0">
+            <div class="flex items-center gap-2 self-end md:self-center flex-shrink-0 pt-2 md:pt-0">
+              <button
+                @click="archiveArticle(article.ID)"
+                class="opacity-0 group-hover:opacity-100 hover:text-amber-600 dark:hover:text-amber-400 text-gray-400 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-all cursor-pointer"
+                title="Archive note"
+                aria-label="Archive note"
+              >
+                <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="21 8 21 21 3 21 3 8"></polyline>
+                  <rect x="1" y="3" width="22" height="5"></rect>
+                  <line x1="10" y1="12" x2="14" y2="12"></line>
+                </svg>
+              </button>
+
               <button
                 @click="deleteArticle(article.ID)"
-                class="opacity-0 group-hover:opacity-100 hover:text-red-500 text-gray-400 p-2 rounded-lg transition-all cursor-pointer text-xs font-mono"
-                title="Delete note"
+                class="opacity-0 group-hover:opacity-100 hover:text-red-500 text-gray-400 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-all cursor-pointer"
+                title="Permanently delete note"
+                aria-label="Permanently delete note"
               >
                 <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="3 6 5 6 21 6"></polyline>
@@ -706,8 +1033,9 @@ const secondaryArticles = computed(() => {
 
               <router-link
                 :to="`/articles/${article.ID}`"
-                class="w-10 h-10 rounded-xl bg-gray-100 dark:bg-white/[0.05] group-hover:bg-emerald-500 text-gray-400 group-hover:text-white transition-all duration-300 flex items-center justify-center shadow-2xs group-hover:shadow-emerald-500/25 group-hover:scale-105 active:scale-95"
+                class="w-10 h-10 rounded-xl bg-gray-100 dark:bg-white/[0.05] group-hover:bg-emerald-500 text-gray-400 group-hover:text-white transition-all duration-300 flex items-center justify-center shadow-2xs group-hover:shadow-emerald-500/25 group-hover:scale-105 active:scale-95 ml-1"
                 title="Read article"
+                aria-label="Read article"
               >
                 <svg class="w-4 h-4 group-hover:translate-x-0.5 transition-transform" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -720,6 +1048,49 @@ const secondaryArticles = computed(() => {
         </div>
       </div>
     </div>
+
+    <!-- Toast Notification (Archive Feedback with Undo) -->
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition duration-300 ease-out"
+        enter-from-class="transform translate-y-4 opacity-0 scale-95"
+        enter-to-class="transform translate-y-0 opacity-100 scale-100"
+        leave-active-class="transition duration-200 ease-in"
+        leave-from-class="transform translate-y-0 opacity-100 scale-100"
+        leave-to-class="transform translate-y-4 opacity-0 scale-95"
+      >
+        <div
+          v-if="toast.visible"
+          role="status"
+          aria-live="polite"
+          class="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl bg-gray-900/95 dark:bg-[#121620]/95 text-white shadow-xl shadow-black/20 border border-gray-800 dark:border-white/10 backdrop-blur-md text-sm font-sans"
+        >
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+            <span class="font-normal text-gray-200">{{ toast.message }}</span>
+          </div>
+
+          <div class="flex items-center gap-2 pl-2 border-l border-gray-700/80 dark:border-white/10">
+            <button
+              @click="undoArchive"
+              class="px-2.5 py-1 text-xs font-semibold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 rounded-md transition-colors cursor-pointer"
+            >
+              Undo
+            </button>
+            <button
+              @click="dismissToast"
+              class="p-1 text-gray-400 hover:text-white rounded-md transition-colors cursor-pointer"
+              title="Dismiss"
+            >
+              <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
 
   </div>
 </template>
@@ -735,5 +1106,189 @@ const secondaryArticles = computed(() => {
 .reveal-item.is-visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* ─── Archive fly-out animation ──────────────────────── */
+
+/*
+  Stage breakdown (620ms total):
+  0–6%   : Snap attention — amber border corona ignites
+  6–18%  : Chromatic glitch — brief hue-rotate flicker
+  18–40% : Horizontal press — card narrows, perspective tips back
+  40–62% : Vault collapse — scale + rise + depth rotation
+  62–82% : Sepia burn — desaturates into amber-gold ghost
+  82–100%: Final dissolve — shrinks to a point and vanishes
+*/
+@keyframes archive-out {
+  0% {
+    opacity: 1;
+    transform: perspective(800px) scale(1) translateY(0) rotateX(0deg) rotateZ(0deg);
+    filter: brightness(1) saturate(1) hue-rotate(0deg) blur(0px);
+    box-shadow:
+      0 0 0 0px rgba(245, 158, 11, 0),
+      0 0 0px rgba(245, 158, 11, 0);
+    outline: 2px solid transparent;
+    outline-offset: 0px;
+  }
+
+  /* ── Snap: amber corona fires ── */
+  6% {
+    transform: perspective(800px) scale(1.012) translateY(-3px) rotateX(0deg) rotateZ(0deg);
+    filter: brightness(1.18) saturate(1.4) hue-rotate(0deg) blur(0px);
+    box-shadow:
+      0 0 0 3px rgba(245, 158, 11, 0.95),
+      0 0 24px rgba(245, 158, 11, 0.55),
+      0 0 64px rgba(245, 158, 11, 0.25),
+      inset 0 0 30px rgba(245, 158, 11, 0.08);
+    outline: 2px solid rgba(245, 158, 11, 0.7);
+    outline-offset: 3px;
+    opacity: 1;
+  }
+
+  /* ── Glitch: chromatic aberration flicker ── */
+  12% {
+    filter: brightness(1.1) saturate(1.1) hue-rotate(30deg) blur(0px);
+    transform: perspective(800px) scale(1.008) translateY(-2px) rotateX(0deg) rotateZ(0.4deg);
+    box-shadow:
+      0 0 0 2px rgba(245, 158, 11, 0.8),
+      0 0 18px rgba(245, 158, 11, 0.4),
+      4px 0 8px rgba(239, 68, 68, 0.3),
+      -4px 0 8px rgba(16, 185, 129, 0.3);
+  }
+  15% {
+    filter: brightness(1.05) saturate(1.0) hue-rotate(-10deg) blur(0px);
+    transform: perspective(800px) scale(1.0) translateY(-1px) rotateX(0deg) rotateZ(-0.3deg);
+  }
+
+  /* ── Horizontal press: folds inward ── */
+  28% {
+    transform: perspective(800px) scaleX(0.93) scaleY(1.01) translateY(-6px) rotateX(4deg) rotateZ(0deg);
+    filter: brightness(0.96) saturate(0.75) hue-rotate(0deg) blur(0px);
+    box-shadow:
+      0 0 0 1.5px rgba(245, 158, 11, 0.6),
+      0 0 12px rgba(245, 158, 11, 0.3),
+      inset 0 0 20px rgba(245, 158, 11, 0.06);
+    opacity: 0.95;
+  }
+
+  /* ── Vault collapse: depth + scale ── */
+  50% {
+    transform: perspective(800px) scale(0.78) translateY(-28px) rotateX(16deg) rotateZ(0.8deg);
+    filter: brightness(0.82) saturate(0.45) hue-rotate(8deg) blur(0.8px);
+    box-shadow:
+      0 0 0 1px rgba(245, 158, 11, 0.4),
+      0 16px 40px rgba(0, 0, 0, 0.3);
+    opacity: 0.65;
+  }
+
+  /* ── Sepia burn ── */
+  72% {
+    transform: perspective(800px) scale(0.5) translateY(-50px) rotateX(24deg) rotateZ(1.5deg);
+    filter: brightness(0.6) saturate(0.1) sepia(0.9) blur(2px);
+    box-shadow: none;
+    opacity: 0.3;
+  }
+
+  /* ── Final dissolve to nothing ── */
+  100% {
+    transform: perspective(800px) scale(0.1) translateY(-70px) rotateX(32deg) rotateZ(2deg);
+    filter: brightness(0.2) saturate(0) sepia(1) blur(6px);
+    box-shadow: none;
+    outline: 2px solid transparent;
+    opacity: 0;
+  }
+}
+
+.reveal-item.archiving {
+  animation: archive-out 0.62s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: none;
+  transform-origin: center 60%;
+  will-change: transform, opacity, filter;
+}
+
+/* ─── Delete shatter animation ───────────────────────── */
+
+/*
+  Stage breakdown (580ms total):
+  0–5%   : Red corona flash — border ignites crimson
+  5–18%  : Violent shake — rapid left-right jitter (can't escape)
+  18–35% : Crack inward — scaleX crush, red tint floods in
+  35–55% : Implosion — collapses toward center point
+  55–80% : Burn — red-to-black filter drain
+  80–100%: Annihilation — shrinks to nothing
+*/
+@keyframes delete-out {
+  0% {
+    opacity: 1;
+    transform: perspective(800px) scale(1) translateX(0) rotateZ(0deg);
+    filter: brightness(1) saturate(1) hue-rotate(0deg) blur(0px);
+    box-shadow: 0 0 0 0px rgba(239, 68, 68, 0);
+    outline: 2px solid transparent;
+  }
+
+  /* ── Red corona ignites ── */
+  5% {
+    transform: perspective(800px) scale(1.01) translateX(0) rotateZ(0deg);
+    filter: brightness(1.2) saturate(1.6) hue-rotate(-15deg) blur(0px);
+    box-shadow:
+      0 0 0 3px rgba(239, 68, 68, 1),
+      0 0 20px rgba(239, 68, 68, 0.7),
+      0 0 60px rgba(239, 68, 68, 0.35),
+      inset 0 0 30px rgba(239, 68, 68, 0.12);
+    outline: 2px solid rgba(239, 68, 68, 0.8);
+    outline-offset: 2px;
+    opacity: 1;
+  }
+
+  /* ── Violent shake — can't escape ── */
+  8%  { transform: perspective(800px) scale(1.01) translateX(-6px) rotateZ(-0.8deg); filter: brightness(1.15) saturate(1.5) hue-rotate(-10deg); }
+  11% { transform: perspective(800px) scale(1.01) translateX(7px)  rotateZ(0.9deg);  filter: brightness(1.2) saturate(1.6) hue-rotate(-20deg); }
+  14% { transform: perspective(800px) scale(1.01) translateX(-5px) rotateZ(-0.6deg); filter: brightness(1.1) saturate(1.4) hue-rotate(-5deg); }
+  17% { transform: perspective(800px) scale(1.01) translateX(4px)  rotateZ(0.5deg);  filter: brightness(1.05) saturate(1.2) hue-rotate(0deg); }
+
+  /* ── Crack inward — X-axis crush ── */
+  30% {
+    transform: perspective(800px) scaleX(0.88) scaleY(1.04) translateX(0) rotateZ(0deg);
+    filter: brightness(0.9) saturate(0.8) hue-rotate(-5deg) blur(0.5px);
+    box-shadow:
+      0 0 0 2px rgba(239, 68, 68, 0.7),
+      0 0 14px rgba(239, 68, 68, 0.4),
+      inset 0 0 40px rgba(239, 68, 68, 0.15);
+    opacity: 0.9;
+  }
+
+  /* ── Implosion toward center ── */
+  50% {
+    transform: perspective(800px) scale(0.72) translateY(10px) rotateZ(1deg);
+    filter: brightness(0.7) saturate(0.5) hue-rotate(-20deg) blur(1px);
+    box-shadow:
+      0 0 0 1px rgba(239, 68, 68, 0.5),
+      0 8px 32px rgba(0, 0, 0, 0.4);
+    opacity: 0.6;
+  }
+
+  /* ── Crimson burn ── */
+  72% {
+    transform: perspective(800px) scale(0.45) translateY(16px) rotateZ(2deg);
+    filter: brightness(0.4) saturate(0.2) hue-rotate(-30deg) blur(3px);
+    box-shadow: none;
+    opacity: 0.25;
+  }
+
+  /* ── Annihilation ── */
+  100% {
+    transform: perspective(800px) scale(0.05) translateY(20px) rotateZ(3deg);
+    filter: brightness(0) saturate(0) hue-rotate(0deg) blur(8px);
+    box-shadow: none;
+    outline: 2px solid transparent;
+    opacity: 0;
+  }
+}
+
+.reveal-item.deleting {
+  animation: delete-out 0.58s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: none;
+  transform-origin: center center;
+  will-change: transform, opacity, filter;
 }
 </style>

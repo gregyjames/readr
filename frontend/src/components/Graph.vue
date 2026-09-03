@@ -208,8 +208,24 @@ const getFilteredData = () => {
       initialY = parentPos.y + Math.sin(angle) * dist
     }
     
+    const isArchived = Boolean(n.isArchived)
+    const nodeColor = isArchived
+      ? {
+          background: isDark ? 'rgba(75, 85, 99, 0.45)' : 'rgba(209, 213, 219, 0.55)',
+          border: isDark ? '#4b5563' : '#9ca3af',
+          hover: { background: isDark ? '#4b5563' : '#9ca3af', border: isDark ? '#6b7280' : '#6b7280' },
+          highlight: { background: isDark ? '#4b5563' : '#9ca3af', border: isDark ? '#9ca3af' : '#4b5563' }
+        }
+      : undefined
+
+    const fontColor = isArchived
+      ? (isDark ? '#9ca3af' : '#6b7280')
+      : (n.group === 'moc' ? (isDark ? '#fef3c7' : '#92400e') : (n.group === 'tag' ? (isDark ? '#9ca3af' : '#6b7280') : (isDark ? '#e5e7eb' : '#374151')))
+
     return {
       ...n,
+      color: nodeColor,
+      opacity: isArchived ? 0.7 : 1,
       label: displayLabel,
       size: nodeSize,
       mass: mass,
@@ -217,12 +233,12 @@ const getFilteredData = () => {
       y: initialY,
       font: {
         size: fontSize,
-        color: n.group === 'moc' ? (isDark ? '#fef3c7' : '#92400e') : (n.group === 'tag' ? (isDark ? '#9ca3af' : '#6b7280') : (isDark ? '#e5e7eb' : '#374151')),
+        color: fontColor,
         strokeWidth: 2,
         strokeColor: isDark ? '#0a0a0a' : '#f8f9fa',
-        bold: n.group === 'moc' || connections >= 5 ? 'bold' : undefined
+        bold: !isArchived && (n.group === 'moc' || connections >= 5) ? 'bold' : undefined
       },
-      title: `${n.label} (${connections} connection${connections === 1 ? '' : 's'})`
+      title: `${n.label}${isArchived ? ' (Archived)' : ''} (${connections} connection${connections === 1 ? '' : 's'})`
     }
   })
 
@@ -380,6 +396,10 @@ onUnmounted(() => {
       <div class="flex items-center gap-1.5">
         <span class="w-2 h-2 rounded-xs bg-gray-400 dark:bg-gray-600"></span>
         <span>Tag</span>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full border border-dashed border-gray-400 dark:border-gray-500 bg-gray-300/60 dark:bg-gray-700/60"></span>
+        <span>Archived</span>
       </div>
     </div>
 

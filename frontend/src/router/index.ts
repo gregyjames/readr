@@ -12,6 +12,7 @@ const routes = [
   { path: '/graph', name: 'graph', component: () => import('../components/Graph.vue') },
   { path: '/chat', name: 'chat', component: () => import('../views/ChatView.vue') },
   { path: '/chat/:id', name: 'chat-session', component: () => import('../views/ChatView.vue'), props: true },
+  { path: '/archive', name: 'archive', component: () => import('../views/ArchiveView.vue') },
   { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
 ]
 

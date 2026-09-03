@@ -427,8 +427,15 @@ const { zoomIn: localZoomIn, zoomOut: localZoomOut, fitGraph: localFitView } = u
 
 const fetchArticles = async () => {
   try {
-    const res = await axios.get('/api/getarticles')
-    allArticles.value = res.data
+    const [activeRes, archivedRes] = await Promise.all([
+      axios.get('/api/getarticles'),
+      axios.get('/api/getarticles?archived=true'),
+    ])
+    const active: ArticleData[] = activeRes.data || []
+    const archived: ArticleData[] = archivedRes.data || []
+    // Merge, deduplicating by ID (active takes precedence)
+    const seen = new Set(active.map((a) => a.ID))
+    allArticles.value = [...active, ...archived.filter((a) => !seen.has(a.ID))]
   } catch (err) {
     console.error('Failed to fetch articles', err)
     articleError.value = 'Failed to fetch articles'

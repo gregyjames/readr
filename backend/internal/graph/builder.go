@@ -34,9 +34,10 @@ func BuildTopology(articles []repository.ArticleRecord, links []repository.LinkR
 		}
 
 		nodes = append(nodes, Node{
-			Id:    fmt.Sprintf("article-%d", article.ID),
-			Label: article.Title,
-			Group: group,
+			Id:         fmt.Sprintf("article-%d", article.ID),
+			Label:      article.Title,
+			Group:      group,
+			IsArchived: article.IsArchived,
 		})
 
 		if article.Tags != "" {

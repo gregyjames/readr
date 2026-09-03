@@ -79,6 +79,9 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
     } else if (e.key === '3') {
       e.preventDefault()
       router.push('/chat')
+    } else if (e.key === '4') {
+      e.preventDefault()
+      router.push('/archive')
     } else if (e.key === ',') {
       e.preventDefault()
       router.push('/settings')
@@ -249,6 +252,21 @@ function removeTag(tag: string) {
             <span v-if="route.path.startsWith('/chat')" class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-4 bg-emerald-500 rounded-r-full"></span>
           </router-link>
 
+          <!-- Archive -->
+          <router-link
+            to="/archive"
+            class="relative p-2.5 rounded-xl transition-all group cursor-pointer"
+            :class="route.path === '/archive' ? 'bg-gray-100 dark:bg-white/[0.08] text-gray-950 dark:text-white shadow-2xs' : 'text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100/60 dark:hover:bg-white/[0.04]'"
+            title="Archive (⌘4)"
+          >
+            <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="20" height="5" x="2" y="3" rx="1"/>
+              <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/>
+              <path d="M10 12h4"/>
+            </svg>
+            <span v-if="route.path === '/archive'" class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-4 bg-emerald-500 rounded-r-full"></span>
+          </router-link>
+
           <!-- Search Trigger (⌘K) -->
           <button
             @click="emitter.emit('open-search')"
@@ -349,6 +367,13 @@ function removeTag(tag: string) {
       </router-link>
       <router-link to="/chat" class="p-2 text-xs flex flex-col items-center gap-0.5" :class="route.path.startsWith('/chat') ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400'">
         <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+      </router-link>
+      <router-link to="/archive" class="p-2 text-xs flex flex-col items-center gap-0.5" :class="route.path === '/archive' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400'">
+        <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect width="20" height="5" x="2" y="3" rx="1"/>
+          <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/>
+          <path d="M10 12h4"/>
+        </svg>
       </router-link>
       <router-link to="/settings" class="p-2 text-xs flex flex-col items-center gap-0.5" :class="route.path === '/settings' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400'">
         <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>

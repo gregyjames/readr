@@ -29,16 +29,46 @@
           </div>
         </div>
 
+        <!-- Navigation & Quick Commands when query is empty or matches commands -->
+        <div class="p-2 border-b border-gray-100 dark:border-white/[0.06]" v-if="filteredCommands.length > 0">
+          <div class="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-gray-400 dark:text-gray-500 font-semibold">
+            Navigation
+          </div>
+          <button
+            v-for="(cmd, index) in filteredCommands"
+            :key="cmd.name"
+            @click="executeCommand(cmd)"
+            @mouseenter="selectedCommandIndex = index; selectedIndex = -1"
+            :class="[
+              'w-full text-left px-3 py-2 rounded-lg transition-colors duration-150 flex items-center justify-between cursor-pointer',
+              selectedCommandIndex === index && selectedIndex === -1
+                ? 'bg-gray-50 dark:bg-gray-800/60 text-gray-900 dark:text-gray-100'
+                : 'hover:bg-gray-50 dark:hover:bg-gray-800/40 text-gray-700 dark:text-gray-300'
+            ]"
+          >
+            <div class="flex items-center gap-2.5">
+              <span v-html="cmd.icon" class="w-4 h-4 flex items-center justify-center text-gray-400 dark:text-gray-500"></span>
+              <span class="text-xs font-medium">{{ cmd.name }}</span>
+            </div>
+            <span class="text-[10px] font-mono text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-white/[0.06] px-1.5 py-0.5 rounded">
+              {{ cmd.shortcut }}
+            </span>
+          </button>
+        </div>
+
         <!-- Results List -->
         <div class="max-h-[60vh] overflow-y-auto p-2" v-if="results.length > 0">
+          <div class="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-gray-400 dark:text-gray-500 font-semibold">
+            Articles
+          </div>
           <button
             v-for="(result, index) in results"
             :key="result.id"
             @click="goTo(result.id)"
-            @mouseenter="selectedIndex = index"
+            @mouseenter="selectedIndex = index; selectedCommandIndex = -1"
             :class="[
               'w-full text-left p-4 rounded-xl transition-colors duration-150 flex flex-col gap-2 cursor-pointer',
-              selectedIndex === index 
+              selectedIndex === index && selectedCommandIndex === -1
                 ? 'bg-gray-50 dark:bg-gray-800/60' 
                 : 'hover:bg-gray-50 dark:hover:bg-gray-800/40'
             ]"
@@ -62,8 +92,8 @@
           </button>
         </div>
         
-        <div v-else-if="query.length > 0 && !isLoading" class="p-8 text-center text-gray-500 dark:text-gray-400">
-          No matching articles found.
+        <div v-else-if="query.length > 0 && !isLoading && filteredCommands.length === 0" class="p-8 text-center text-gray-500 dark:text-gray-400">
+          No matching articles or commands found.
         </div>
       </div>
     </div>
@@ -71,7 +101,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMagicKeys, watchDebounced } from '@vueuse/core'
 import axios from 'axios'
@@ -97,6 +127,8 @@ const openSearch = () => {
   isOpen.value = true
   query.value = ''
   results.value = []
+  selectedCommandIndex.value = 0
+  selectedIndex.value = -1
   nextTick(() => {
     searchInput.value?.focus()
   })
@@ -115,9 +147,64 @@ watch(() => route.path, (newPath) => {
     isOpen.value = false
   }
 })
+interface CommandItem {
+  name: string
+  path: string
+  shortcut: string
+  icon: string
+}
+
+const commands: CommandItem[] = [
+  {
+    name: 'Go to Library',
+    path: '/',
+    shortcut: '⌘1',
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>',
+  },
+  {
+    name: 'Go to Knowledge Graph',
+    path: '/graph',
+    shortcut: '⌘2',
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>',
+  },
+  {
+    name: 'Go to AI Chat',
+    path: '/chat',
+    shortcut: '⌘3',
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>',
+  },
+  {
+    name: 'Go to Archive',
+    path: '/archive',
+    shortcut: '⌘4',
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>',
+  },
+  {
+    name: 'Go to Settings',
+    path: '/settings',
+    shortcut: '⌘,',
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>',
+  },
+]
+
+const filteredCommands = computed(() => {
+  if (!query.value.trim()) {
+    return commands
+  }
+  const q = query.value.toLowerCase().trim()
+  return commands.filter(c => c.name.toLowerCase().includes(q) || c.path.toLowerCase().includes(q))
+})
+
+const selectedCommandIndex = ref(0)
+
+const executeCommand = (cmd: CommandItem) => {
+  isOpen.value = false
+  router.push(cmd.path)
+}
+
 const results = ref<SearchResult[]>([])
 const isLoading = ref(false)
-const selectedIndex = ref(0)
+const selectedIndex = ref(-1)
 const searchInput = ref<HTMLInputElement | null>(null)
 
 // Setup global Cmd+K listener
@@ -147,7 +234,14 @@ const close = () => {
 }
 
 const selectNext = () => {
-  if (selectedIndex.value < results.value.length - 1) {
+  if (selectedCommandIndex.value >= 0 && selectedCommandIndex.value < filteredCommands.value.length - 1) {
+    selectedCommandIndex.value++
+  } else if (selectedCommandIndex.value === filteredCommands.value.length - 1) {
+    if (results.value.length > 0) {
+      selectedCommandIndex.value = -1
+      selectedIndex.value = 0
+    }
+  } else if (selectedIndex.value >= 0 && selectedIndex.value < results.value.length - 1) {
     selectedIndex.value++
   }
 }
@@ -155,11 +249,20 @@ const selectNext = () => {
 const selectPrev = () => {
   if (selectedIndex.value > 0) {
     selectedIndex.value--
+  } else if (selectedIndex.value === 0) {
+    if (filteredCommands.value.length > 0) {
+      selectedIndex.value = -1
+      selectedCommandIndex.value = filteredCommands.value.length - 1
+    }
+  } else if (selectedCommandIndex.value > 0) {
+    selectedCommandIndex.value--
   }
 }
 
 const goToSelected = () => {
-  if (results.value.length > 0 && results.value[selectedIndex.value]) {
+  if (selectedCommandIndex.value >= 0 && filteredCommands.value[selectedCommandIndex.value]) {
+    executeCommand(filteredCommands.value[selectedCommandIndex.value])
+  } else if (selectedIndex.value >= 0 && results.value[selectedIndex.value]) {
     goTo(results.value[selectedIndex.value].id)
   }
 }
@@ -183,7 +286,16 @@ watchDebounced(query, async (newQuery) => {
       ...r,
       excerpt: DOMPurify.sanitize(r.excerpt ?? '', { ALLOWED_TAGS: ['mark'], ALLOWED_ATTR: [] })
     }))
-    selectedIndex.value = 0
+    if (filteredCommands.value.length > 0) {
+      selectedCommandIndex.value = 0
+      selectedIndex.value = -1
+    } else if (results.value.length > 0) {
+      selectedCommandIndex.value = -1
+      selectedIndex.value = 0
+    } else {
+      selectedCommandIndex.value = -1
+      selectedIndex.value = -1
+    }
   } catch (err) {
     console.error('Search failed:', err)
   } finally {
