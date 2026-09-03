@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import axios from 'axios'
-import emitter from '../event-bus.ts'
-import BookmarkIcon from '../assets/book.svg'
 import { settings, setViewMode as saveGlobalViewMode } from '../store/settings'
 
 interface Article {
@@ -14,9 +12,10 @@ interface Article {
   parsedTags: string[]
 }
 
-defineProps<{ msg?: string }>()
-
 const articles = ref<Article[]>([])
+const isLoading = ref(true)
+const feedbackMessage = ref<string | null>(null)
+let feedbackTimeout: ReturnType<typeof setTimeout> | null = null
 
 type ViewMode = 'card' | 'list' | 'studio' | 'ledger' | 'timeline'
 const initialMode = (localStorage.getItem('readr_viewMode') || settings.view_mode || 'card') as ViewMode
@@ -31,8 +30,8 @@ const changeViewMode = (mode: 'card' | 'list') => {
   nextTick(initReveal)
 }
 
+const searchQuery = ref('')
 const selectedTag = ref<string | null>(null)
-const filterMocOnly = ref(false)
 const sortOrder = ref<'latest' | 'oldest' | 'title'>('latest')
 
 const failedImages = ref<Record<number, boolean>>({})
@@ -58,17 +57,28 @@ const getProceduralGradient = (id: number) => {
   return gradients[Math.abs(Number(id) || 0) % gradients.length]
 }
 
-const fetchArticles = async () => {
+const showFeedback = (msg: string) => {
+  feedbackMessage.value = msg
+  if (feedbackTimeout) clearTimeout(feedbackTimeout)
+  feedbackTimeout = setTimeout(() => {
+    feedbackMessage.value = null
+  }, 3000)
+}
+
+const fetchArchivedArticles = async () => {
+  isLoading.value = true
   try {
-    const res = await axios.get('/api/getarticles')
-    articles.value = res.data.map((article: any) => ({
+    const res = await axios.get('/api/getarticles?archived=true')
+    articles.value = (res.data || []).map((article: any) => ({
       ...article,
       parsedTags: article.tags ? article.tags.split(',').map((tag: string) => tag.trim()) : []
     }))
     await nextTick()
     initReveal()
   } catch (err) {
-    console.error('Failed to load articles', err)
+    console.error('Failed to load archived articles', err)
+  } finally {
+    isLoading.value = false
   }
 }
 
@@ -122,15 +132,6 @@ function getReadingTime(text: string): string {
   return `${minutes} min read`
 }
 
-function isMocArticle(article: Article): boolean {
-  if (!article) return false
-  const title = (article.title || '').toLowerCase().trim()
-  if (title.startsWith('moc -') || title.startsWith('moc:') || title.startsWith('moc ') || title === 'moc') {
-    return true
-  }
-  return article.parsedTags.some(t => t.toLowerCase() === 'moc')
-}
-
 function getDomain(article: Article): string {
   if (article.image && article.image.startsWith('http')) {
     try {
@@ -142,86 +143,28 @@ function getDomain(article: Article): string {
   return 'vault note'
 }
 
-
-interface ToastNotification {
-  visible: boolean
-  message: string
-  articleId: number | null
-  article: Article | null
-  timer: any
-}
-
-const toast = ref<ToastNotification>({
-  visible: false,
-  message: '',
-  articleId: null,
-  article: null,
-  timer: null
-})
-
-const showToast = (message: string, articleId: number, article: Article | null) => {
-  if (toast.value.timer) {
-    clearTimeout(toast.value.timer)
-  }
-  toast.value = {
-    visible: true,
-    message,
-    articleId,
-    article,
-    timer: setTimeout(() => {
-      toast.value.visible = false
-      toast.value.articleId = null
-      toast.value.article = null
-    }, 6000)
-  }
-}
-
-const dismissToast = () => {
-  if (toast.value.timer) {
-    clearTimeout(toast.value.timer)
-  }
-  toast.value.visible = false
-  toast.value.articleId = null
-  toast.value.article = null
-}
-
-const archiveArticle = async (id: number) => {
-  const targetArticle = articles.value.find(a => a.ID === id) || null
+const restoreArticle = async (id: number) => {
   try {
-    await axios.post(`/api/articles/${id}/archive`)
-    articles.value = articles.value.filter(article => article.ID !== id)
-    showToast('Article moved to archive', id, targetArticle)
-  } catch (err) {
-    console.error('Failed to archive article', err)
-  }
-}
-
-const undoArchive = async () => {
-  const id = toast.value.articleId
-  const cachedArticle = toast.value.article
-  dismissToast()
-  if (!id) return
-
-  try {
-    await axios.post(`/api/articles/${id}/unarchive`)
-    if (cachedArticle && !articles.value.some(a => a.ID === id)) {
-      articles.value = [cachedArticle, ...articles.value]
-      nextTick(initReveal)
-    } else {
-      await fetchArticles()
+    const res = await axios.post(`/api/articles/${id}/unarchive`)
+    if (res.status === 200 || res.data?.success) {
+      articles.value = articles.value.filter(a => a.ID !== id)
+      showFeedback('Article restored to vault')
     }
   } catch (err) {
-    console.error('Failed to unarchive article', err)
+    console.error('Failed to restore article', err)
+    showFeedback('Failed to restore article')
   }
 }
 
-const deleteArticle = async (id: number) => {
+const deleteArticlePermanently = async (id: number) => {
   if (!confirm('Are you sure you want to permanently delete this note from the vault?')) return
   try {
     await axios.delete(`/api/delete/${id}`)
     articles.value = articles.value.filter(article => article.ID !== id)
+    showFeedback('Article permanently deleted')
   } catch (err) {
-    console.error('Failed to delete article', err)
+    console.error('Failed to permanently delete article', err)
+    showFeedback('Failed to delete article')
   }
 }
 
@@ -232,15 +175,11 @@ onMounted(async () => {
   } else if (settings.view_mode) {
     viewMode.value = (settings.view_mode === 'list' || settings.view_mode === 'ledger') ? 'list' : 'card'
   }
-  await fetchArticles()
-  emitter.on('article-added', fetchArticles)
+  await fetchArchivedArticles()
 })
 
 onBeforeUnmount(() => {
-  if (toast.value.timer) {
-    clearTimeout(toast.value.timer)
-  }
-  emitter.off('article-added', fetchArticles)
+  if (feedbackTimeout) clearTimeout(feedbackTimeout)
   observer?.disconnect()
 })
 
@@ -251,28 +190,27 @@ watch(() => settings.view_mode, (newMode) => {
   }
 })
 
-watch([viewMode, sortOrder, selectedTag, filterMocOnly], () => {
+watch([viewMode, sortOrder, selectedTag, searchQuery], () => {
   nextTick(initReveal)
 })
 
-const totalMocs = computed(() => articles.value.filter(isMocArticle).length)
-const totalNotes = computed(() => articles.value.filter(a => !isMocArticle(a)).length)
-
 const filteredArticles = computed(() => {
   let list = [...articles.value]
+
+  // Filter by search query
+  if (searchQuery.value.trim()) {
+    const q = searchQuery.value.toLowerCase().trim()
+    list = list.filter(a =>
+      (a.title && a.title.toLowerCase().includes(q)) ||
+      (a.article && a.article.toLowerCase().includes(q)) ||
+      (a.tags && a.tags.toLowerCase().includes(q))
+    )
+  }
 
   // Filter by tag
   if (selectedTag.value) {
     list = list.filter(a => a.parsedTags.includes(selectedTag.value!))
   }
-
-  // Filter MOCs: Hubs tab shows ONLY MOCs; Notes tab shows ONLY non-MOC articles
-  if (filterMocOnly.value) {
-    list = list.filter(isMocArticle)
-  } else {
-    list = list.filter(a => !isMocArticle(a))
-  }
-
 
   // Sorting
   if (sortOrder.value === 'latest') {
@@ -300,52 +238,65 @@ const secondaryArticles = computed(() => {
 <template>
   <div class="max-w-6xl mx-auto px-5 sm:px-8 py-8 md:py-10 space-y-8">
     
-    <!-- Clean Minimalist Studio Header -->
+    <!-- Feedback Toast -->
+    <transition name="fade">
+      <div
+        v-if="feedbackMessage"
+        class="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl bg-gray-950/90 dark:bg-white/95 text-white dark:text-gray-950 text-xs font-mono font-medium shadow-lg backdrop-blur-md flex items-center gap-2 border border-white/10 dark:border-black/10"
+      >
+        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+        <span>{{ feedbackMessage }}</span>
+      </div>
+    </transition>
+
+    <!-- Clean Header -->
     <header class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-black/[0.06] dark:border-white/[0.06]">
       
-      <!-- Left: Title & Filter Tabs -->
-      <div class="flex items-center gap-5">
-        <div class="flex items-baseline gap-2.5">
-          <h1 class="text-xl font-semibold tracking-tight text-gray-900 dark:text-gray-100 font-['Outfit']">
-            Vault
-          </h1>
-          <span class="text-xs font-mono text-gray-400 dark:text-gray-500 font-medium">
-            {{ filteredArticles.length }}
-          </span>
-        </div>
-
-        <!-- Filter Tabs: Notes vs Hubs -->
-        <div class="flex items-center bg-gray-100/70 dark:bg-white/[0.04] p-0.5 rounded-lg border border-gray-200/50 dark:border-white/[0.05]">
-          <button
-            @click="filterMocOnly = false"
-            :class="[
-              'px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5',
-              !filterMocOnly
-                ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs'
-                : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-            ]"
-          >
-            <span>Notes</span>
-            <span class="text-[10px] font-mono opacity-70 ml-0.5">{{ totalNotes }}</span>
-          </button>
-          <button
-            @click="filterMocOnly = true"
-            :class="[
-              'px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5',
-              filterMocOnly
-                ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs'
-                : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-            ]"
-          >
-            <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-            <span>Hubs</span>
-            <span class="text-[10px] font-mono opacity-70 ml-0.5">{{ totalMocs }}</span>
-          </button>
+      <!-- Left: Title & Counter -->
+      <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2.5">
+          <div class="p-2 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+            <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="20" height="5" x="2" y="3" rx="1"/>
+              <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/>
+              <path d="M10 12h4"/>
+            </svg>
+          </div>
+          <div>
+            <div class="flex items-baseline gap-2">
+              <h1 class="text-xl font-semibold tracking-tight text-gray-900 dark:text-gray-100 font-['Outfit']">
+                Archive
+              </h1>
+              <span class="text-xs font-mono text-gray-400 dark:text-gray-500 font-medium">
+                {{ filteredArticles.length }}
+              </span>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Archived notes from your vault</p>
+          </div>
         </div>
       </div>
 
-      <!-- Right: Sort & View Controls -->
-      <div class="flex items-center gap-2">
+      <!-- Right: Search, Sort & View Controls -->
+      <div class="flex flex-wrap items-center gap-2">
+        
+        <!-- Search input -->
+        <div class="relative flex items-center">
+          <svg class="w-3.5 h-3.5 absolute left-2.5 text-gray-400 pointer-events-none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            v-model="searchQuery"
+            type="text"
+            placeholder="Filter archive..."
+            class="pl-8 pr-3 py-1 text-xs bg-gray-100/70 dark:bg-white/[0.04] border border-gray-200/50 dark:border-white/[0.05] rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 text-gray-900 dark:text-gray-100 placeholder:text-gray-400 w-36 sm:w-44 transition-all"
+          />
+          <button
+            v-if="searchQuery"
+            @click="searchQuery = ''"
+            class="absolute right-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xs"
+          >&times;</button>
+        </div>
 
         <!-- Sort Control -->
         <div class="flex items-center bg-gray-100/70 dark:bg-white/[0.04] p-0.5 rounded-lg border border-gray-200/50 dark:border-white/[0.05]">
@@ -404,32 +355,43 @@ const secondaryArticles = computed(() => {
       </span>
     </div>
 
-    <!-- Empty Vault State -->
-    <div v-if="filteredArticles.length === 0" class="flex flex-col items-center justify-center py-32 px-4 text-center">
+    <!-- Empty Archive State -->
+    <div v-if="filteredArticles.length === 0 && !isLoading" class="flex flex-col items-center justify-center py-32 px-4 text-center">
       <div class="w-12 h-12 bg-gray-100 dark:bg-white/[0.05] rounded-xl flex items-center justify-center mb-4 border border-gray-200/80 dark:border-white/[0.08]">
-        <BookmarkIcon class="w-6 h-6 text-gray-400 dark:text-gray-500" />
+        <svg class="w-6 h-6 text-gray-400 dark:text-gray-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect width="20" height="5" x="2" y="3" rx="1"/>
+          <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/>
+          <path d="M10 12h4"/>
+        </svg>
       </div>
-      <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">No notes found</h3>
-      <p class="text-xs text-gray-500 dark:text-gray-400 max-w-xs leading-relaxed font-mono">
-        {{ selectedTag ? 'No notes have the selected tag.' : (filterMocOnly ? 'No MOC Hubs found in vault.' : 'Your vault is ready. Ingest your first article to begin.') }}
+      <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">
+        {{ searchQuery || selectedTag ? 'No matching archived notes' : 'No archived articles' }}
+      </h3>
+      <p class="text-xs text-gray-500 dark:text-gray-400 max-w-sm leading-relaxed font-mono">
+        {{ searchQuery || selectedTag ? 'Try adjusting your search query or tag filter.' : 'Notes you archive from the home screen will appear here.' }}
       </p>
+    </div>
+
+    <!-- Loading State -->
+    <div v-else-if="isLoading" class="flex flex-col items-center justify-center py-32 px-4 text-center font-mono text-xs text-gray-400">
+      Loading archived vault notes...
     </div>
 
     <!-- VIEW MODE 1: CARD VIEW -->
     <div v-else-if="viewMode === 'card' || viewMode === 'studio'" class="space-y-8">
       
-      <!-- Lead Spotlight Card (Hero Ingestion) -->
+      <!-- Lead Spotlight Card -->
       <div v-if="leadArticle" class="reveal-item">
         <div class="relative group bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-300 overflow-hidden shadow-xs hover:shadow-md">
           
           <div class="flex flex-col lg:flex-row items-stretch">
             
-            <!-- Left Editorial Text Content -->
+            <!-- Left Text Content -->
             <div class="flex-1 p-6 sm:p-8 flex flex-col justify-between">
               <div>
-                <!-- Editorial Index & Meta -->
+                <!-- Index & Meta -->
                 <div class="flex flex-wrap items-center gap-2.5 text-xs font-mono text-gray-400 dark:text-gray-500 mb-3">
-                  <span class="text-emerald-600 dark:text-emerald-400 font-semibold tracking-wide">// 01 · LATEST NOTE</span>
+                  <span class="text-amber-600 dark:text-amber-400 font-semibold tracking-wide">// ARCHIVED</span>
                   <span>•</span>
                   <span class="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-white/[0.05] text-[10px] text-gray-600 dark:text-gray-300 font-mono font-medium">{{ getDomain(leadArticle) }}</span>
                   <span>•</span>
@@ -438,14 +400,8 @@ const secondaryArticles = computed(() => {
                   <span>{{ getReadingTime(leadArticle.article) }}</span>
                 </div>
 
-                <!-- Tags / MOC Badge -->
-                <div class="flex flex-wrap items-center gap-1.5 mb-3">
-                  <span
-                    v-if="isMocArticle(leadArticle)"
-                    class="px-2 py-0.5 rounded text-[11px] font-mono bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 font-medium"
-                  >
-                    ★ MOC HUB
-                  </span>
+                <!-- Tags -->
+                <div v-if="leadArticle.parsedTags.length > 0" class="flex flex-wrap items-center gap-1.5 mb-3">
                   <button
                     v-for="tag in leadArticle.parsedTags.slice(0, 4)"
                     :key="tag"
@@ -479,18 +435,27 @@ const secondaryArticles = computed(() => {
                   <span>&rarr;</span>
                 </router-link>
 
-                <button
-                  @click="archiveArticle(leadArticle.ID)"
-                  class="inline-flex items-center gap-1.5 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 p-1 rounded transition-colors text-xs font-mono cursor-pointer"
-                  title="Archive article"
-                >
-                  <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="21 8 21 21 3 21 3 8"></polyline>
-                    <rect x="1" y="3" width="22" height="5"></rect>
-                    <line x1="10" y1="12" x2="14" y2="12"></line>
-                  </svg>
-                  <span>Archive</span>
-                </button>
+                <div class="flex items-center gap-2">
+                  <button
+                    @click="restoreArticle(leadArticle.ID)"
+                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-xs font-mono font-medium transition-colors cursor-pointer"
+                    title="Restore article to vault"
+                  >
+                    <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="9 14 4 9 9 4"/>
+                      <path d="M20 20v-7a4 4 0 0 0-4-4H4"/>
+                    </svg>
+                    <span>Restore</span>
+                  </button>
+
+                  <button
+                    @click="deleteArticlePermanently(leadArticle.ID)"
+                    class="text-gray-400 hover:text-red-500 p-1 rounded transition-colors text-xs font-mono cursor-pointer"
+                    title="Permanently delete article"
+                  >
+                    Delete Permanently
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -503,7 +468,7 @@ const secondaryArticles = computed(() => {
                 :src="leadArticle.image"
                 :alt="leadArticle.title"
                 @error="onImageError(leadArticle.ID)"
-                class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out"
+                class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out grayscale-[30%] group-hover:grayscale-0"
                 loading="lazy"
               />
               <div class="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent pointer-events-none"></div>
@@ -515,10 +480,10 @@ const secondaryArticles = computed(() => {
             >
               <div class="absolute inset-0 opacity-10 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:14px_14px]"></div>
               <div class="relative z-10 flex justify-end">
-                <span class="px-2 py-0.5 rounded-full text-[10px] font-mono text-white/70 bg-white/10 backdrop-blur-md border border-white/10">Readr Ingest</span>
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-mono text-white/70 bg-white/10 backdrop-blur-md border border-white/10">Archived</span>
               </div>
               <div class="relative z-10 font-mono text-4xl font-black text-white/10 uppercase select-none">
-                #01
+                #{{ leadArticle.ID }}
               </div>
             </div>
 
@@ -526,29 +491,26 @@ const secondaryArticles = computed(() => {
         </div>
       </div>
 
-      <!-- Secondary Articles Masonry / Grid -->
+      <!-- Secondary Articles Grid -->
       <div v-if="secondaryArticles.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <article
-          v-for="(article, idx) in secondaryArticles"
+          v-for="article in secondaryArticles"
           :key="article.ID"
           class="reveal-item group relative bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-300 shadow-2xs hover:shadow-md overflow-hidden flex flex-col justify-between"
         >
           <!-- Top Cover Media -->
           <div class="relative h-48 w-full overflow-hidden bg-gray-100 dark:bg-[#0A0C10] border-b border-gray-100 dark:border-white/[0.06]">
-            <!-- Actual Image -->
             <template v-if="hasValidImage(article)">
               <img
                 :src="article.image"
                 :alt="article.title"
                 @error="onImageError(article.ID)"
-                class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+                class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out grayscale-[30%] group-hover:grayscale-0"
                 loading="lazy"
               />
-              <!-- Subtle Cinematic Scrim -->
               <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-black/15 to-black/20 pointer-events-none"></div>
             </template>
 
-            <!-- Generative Curated Fallback Banner -->
             <div
               v-else
               class="w-full h-full p-4 flex flex-col justify-between relative bg-gradient-to-br"
@@ -557,7 +519,7 @@ const secondaryArticles = computed(() => {
               <div class="absolute inset-0 opacity-10 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:12px_12px]"></div>
               <div class="relative z-10 flex items-center justify-between">
                 <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-black/40 dark:bg-white/10 backdrop-blur-md text-white/90 border border-white/10 flex items-center gap-1">
-                  <span class="w-1 h-1 rounded-full bg-emerald-400"></span>
+                  <span class="w-1 h-1 rounded-full bg-amber-400"></span>
                   {{ getDomain(article) }}
                 </span>
                 <span class="text-[10px] font-mono text-white/70">
@@ -566,18 +528,15 @@ const secondaryArticles = computed(() => {
               </div>
               <div class="relative z-10 flex items-baseline justify-between select-none">
                 <span class="text-3xl font-bold tracking-tighter text-white/10 dark:text-white/[0.08] font-mono">
-                  #{{ String(idx + 2).padStart(2, '0') }}
-                </span>
-                <span class="text-xs font-mono uppercase tracking-widest text-emerald-400/30 font-semibold">
-                  {{ getDomain(article).split('.')[0].slice(0, 10) }}
+                  #{{ article.ID }}
                 </span>
               </div>
             </div>
 
-            <!-- Floating Overlay Badges (When Image Is Present) -->
+            <!-- Overlay Badges -->
             <div v-if="hasValidImage(article)" class="absolute inset-x-3 top-3 flex items-center justify-between pointer-events-none z-10">
               <span class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-medium bg-black/60 backdrop-blur-md text-white/95 border border-white/15 shadow-xs flex items-center gap-1.5">
-                <span class="w-1 h-1 rounded-full bg-emerald-400"></span>
+                <span class="w-1 h-1 rounded-full bg-amber-400"></span>
                 {{ getDomain(article) }}
               </span>
               <span class="px-2 py-0.5 rounded-full text-[10px] font-mono bg-black/60 backdrop-blur-md text-white/85 border border-white/15 shadow-xs">
@@ -585,13 +544,9 @@ const secondaryArticles = computed(() => {
               </span>
             </div>
 
-            <!-- Inset Bottom Bar over Image -->
             <div v-if="hasValidImage(article)" class="absolute inset-x-3 bottom-2.5 flex items-center justify-between pointer-events-none z-10">
               <span class="text-[10px] font-mono text-white/90 font-medium drop-shadow-sm">
                 {{ formatShortDate(article.ID) || `ID #${article.ID}` }}
-              </span>
-              <span class="text-[10px] font-mono text-emerald-300 font-semibold drop-shadow-sm group-hover:translate-x-0.5 transition-transform">
-                Read &rarr;
               </span>
             </div>
           </div>
@@ -599,14 +554,8 @@ const secondaryArticles = computed(() => {
           <!-- Card Content Body -->
           <div class="p-5 flex flex-col justify-between flex-1">
             <div>
-              <!-- Tags / MOC Hub Indicator -->
-              <div v-if="article.parsedTags.length > 0 || isMocArticle(article)" class="flex flex-wrap items-center gap-1.5 mb-2.5">
-                <span
-                  v-if="isMocArticle(article)"
-                  class="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 font-medium border border-amber-500/20"
-                >
-                  ★ MOC
-                </span>
+              <!-- Tags -->
+              <div v-if="article.parsedTags.length > 0" class="flex flex-wrap items-center gap-1.5 mb-2.5">
                 <button
                   v-for="tag in article.parsedTags.slice(0, 3)"
                   :key="tag"
@@ -630,24 +579,26 @@ const secondaryArticles = computed(() => {
               </p>
             </div>
 
-            <!-- Footer Action & Meta -->
+            <!-- Footer Action Bar -->
             <div class="pt-3 border-t border-gray-100 dark:border-white/[0.04] flex items-center justify-between text-[11px] font-mono text-gray-400 dark:text-gray-500">
-              <span class="flex items-center gap-1.5">
-                <span class="w-1 h-1 rounded-full bg-emerald-500/70"></span>
-                <span>// {{ String(idx + 2).padStart(2, '0') }}</span>
-              </span>
+              <button
+                @click="restoreArticle(article.ID)"
+                class="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer font-medium"
+                title="Restore article"
+              >
+                <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="9 14 4 9 9 4"/>
+                  <path d="M20 20v-7a4 4 0 0 0-4-4H4"/>
+                </svg>
+                <span>Restore</span>
+              </button>
               <div class="flex items-center gap-3">
                 <button
-                  @click="archiveArticle(article.ID)"
-                  class="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 transition-all cursor-pointer text-xs"
-                  title="Archive note"
+                  @click="deleteArticlePermanently(article.ID)"
+                  class="hover:text-red-500 transition-colors cursor-pointer text-xs"
+                  title="Permanently delete note"
                 >
-                  <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="21 8 21 21 3 21 3 8"></polyline>
-                    <rect x="1" y="3" width="22" height="5"></rect>
-                    <line x1="10" y1="12" x2="14" y2="12"></line>
-                  </svg>
-                  <span>Archive</span>
+                  &times; Delete
                 </button>
                 <router-link
                   :to="`/articles/${article.ID}`"
@@ -663,11 +614,11 @@ const secondaryArticles = computed(() => {
 
     </div>
 
-    <!-- VIEW MODE 2: BREATHTAKING VERTICAL TIMELINE STREAM -->
+    <!-- VIEW MODE 2: TIMELINE STREAM -->
     <div v-else class="max-w-4xl mx-auto relative pl-6 sm:pl-32 py-4">
 
-      <!-- Continuous Luminescent Spine -->
-      <div class="absolute left-6 sm:left-[5.5rem] top-3 bottom-6 w-[2px] bg-gradient-to-b from-emerald-500/50 via-gray-200/80 dark:via-white/[0.08] to-transparent pointer-events-none"></div>
+      <!-- Spine -->
+      <div class="absolute left-6 sm:left-[5.5rem] top-3 bottom-6 w-[2px] bg-gradient-to-b from-amber-500/50 via-gray-200/80 dark:via-white/[0.08] to-transparent pointer-events-none"></div>
 
       <div class="space-y-6 sm:space-y-8">
         <div
@@ -675,9 +626,9 @@ const secondaryArticles = computed(() => {
           :key="article.ID"
           class="reveal-item relative group"
         >
-          <!-- Desktop Timestamp on Left of Spine -->
+          <!-- Desktop Timestamp -->
           <div class="hidden sm:flex absolute -left-[5.5rem] top-5 w-20 flex-col items-end pr-4 text-right select-none">
-            <span class="text-[10px] font-mono font-bold tracking-widest text-emerald-600 dark:text-emerald-400 uppercase">
+            <span class="text-[10px] font-mono font-bold tracking-widest text-amber-600 dark:text-amber-400 uppercase">
               {{ formatTimelineDate(article.ID).month }}
             </span>
             <span class="text-xl font-bold tracking-tight text-gray-900 dark:text-gray-100 font-['Outfit'] -my-0.5">
@@ -688,22 +639,22 @@ const secondaryArticles = computed(() => {
             </span>
           </div>
 
-          <!-- Interactive Node Pin on Spine -->
-          <div class="absolute -left-[1.375rem] top-7 -translate-x-1/2 w-4 h-4 rounded-full bg-[#FAFAFA] dark:bg-[#0C0E12] border-2 border-gray-300 dark:border-white/20 group-hover:border-emerald-500 group-hover:scale-125 transition-all duration-300 flex items-center justify-center z-10 shadow-xs">
-            <div class="w-1.5 h-1.5 rounded-full bg-gray-400 dark:bg-white/40 group-hover:bg-emerald-500 group-hover:shadow-[0_0_10px_rgba(16,185,129,0.9)] transition-all duration-300"></div>
+          <!-- Interactive Node Pin -->
+          <div class="absolute -left-[1.375rem] top-7 -translate-x-1/2 w-4 h-4 rounded-full bg-[#FAFAFA] dark:bg-[#0C0E12] border-2 border-gray-300 dark:border-white/20 group-hover:border-amber-500 group-hover:scale-125 transition-all duration-300 flex items-center justify-center z-10 shadow-xs">
+            <div class="w-1.5 h-1.5 rounded-full bg-gray-400 dark:bg-white/40 group-hover:bg-amber-500 group-hover:shadow-[0_0_10px_rgba(245,158,11,0.9)] transition-all duration-300"></div>
           </div>
 
-          <!-- Timeline Content Capsule (Double-Bezel Hardware Aesthetic) -->
-          <div class="ml-2 sm:ml-4 relative bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 hover:shadow-xl hover:shadow-emerald-500/[0.03] transition-all duration-300 p-4 sm:p-5 flex flex-col md:flex-row items-start md:items-center gap-4 sm:gap-5 group-hover:-translate-y-0.5">
+          <!-- Capsule -->
+          <div class="ml-2 sm:ml-4 relative bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 hover:shadow-xl transition-all duration-300 p-4 sm:p-5 flex flex-col md:flex-row items-start md:items-center gap-4 sm:gap-5 group-hover:-translate-y-0.5">
             
-            <!-- Thumbnail Visual Preview -->
+            <!-- Thumbnail -->
             <div class="w-full md:w-36 h-36 md:h-24 rounded-xl overflow-hidden bg-gray-100 dark:bg-[#0A0C10] border border-gray-100 dark:border-white/[0.06] flex-shrink-0 relative group/thumb">
               <template v-if="hasValidImage(article)">
                 <img
                   :src="article.image"
                   :alt="article.title"
                   @error="onImageError(article.ID)"
-                  class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+                  class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out grayscale-[30%]"
                   loading="lazy"
                 />
                 <div class="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent pointer-events-none"></div>
@@ -714,7 +665,7 @@ const secondaryArticles = computed(() => {
                 :class="getProceduralGradient(article.ID)"
               >
                 <div class="absolute inset-0 opacity-10 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:10px_10px]"></div>
-                <span class="relative z-10 text-[9px] font-mono text-emerald-400/70 font-semibold tracking-wider uppercase truncate">
+                <span class="relative z-10 text-[9px] font-mono text-amber-400/70 font-semibold tracking-wider uppercase truncate">
                   {{ getDomain(article).split('.')[0] }}
                 </span>
                 <span class="relative z-10 font-mono text-2xl font-bold text-white/10 select-none">
@@ -725,34 +676,21 @@ const secondaryArticles = computed(() => {
 
             <!-- Content Details -->
             <div class="flex-grow min-w-0 pr-2">
-              <!-- Eyebrow Meta -->
               <div class="flex flex-wrap items-center gap-2 mb-1.5 text-xs font-mono">
-                <!-- Mobile Date Pill (hidden on desktop) -->
-                <span class="sm:hidden text-emerald-600 dark:text-emerald-400 font-semibold">
+                <span class="sm:hidden text-amber-600 dark:text-amber-400 font-semibold">
                   {{ formatShortDate(article.ID) }}
                 </span>
                 <span class="sm:hidden text-gray-300 dark:text-gray-600">•</span>
 
-                <!-- Domain Pill -->
                 <span class="px-2 py-0.5 rounded-full text-[10px] bg-gray-100 dark:bg-white/[0.05] text-gray-600 dark:text-gray-300 border border-gray-200/60 dark:border-white/[0.06] flex items-center gap-1.5 font-medium">
-                  <span class="w-1 h-1 rounded-full bg-emerald-500"></span>
+                  <span class="w-1 h-1 rounded-full bg-amber-500"></span>
                   {{ getDomain(article) }}
                 </span>
 
-                <!-- Reading Time -->
                 <span class="text-[11px] text-gray-400 dark:text-gray-500 font-mono">
                   {{ getReadingTime(article.article) }}
                 </span>
 
-                <!-- MOC Badge -->
-                <span
-                  v-if="isMocArticle(article)"
-                  class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-700 dark:text-amber-300 font-medium border border-amber-500/20"
-                >
-                  ★ MOC
-                </span>
-
-                <!-- Tags -->
                 <button
                   v-for="tag in article.parsedTags.slice(0, 2)"
                   :key="tag"
@@ -763,30 +701,39 @@ const secondaryArticles = computed(() => {
                 </button>
               </div>
 
-              <!-- Title -->
               <h3 class="text-base sm:text-lg font-semibold tracking-tight text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors mb-1.5 leading-snug font-['Outfit']">
                 <router-link :to="`/articles/${article.ID}`">
                   {{ article.title }}
                 </router-link>
               </h3>
 
-              <!-- Excerpt -->
               <p class="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed font-normal">
                 {{ article.article }}
               </p>
             </div>
 
-            <!-- Trailing Interactive Action & Delete -->
+            <!-- Trailing Interactive Actions -->
             <div class="flex items-center gap-3 self-end md:self-center flex-shrink-0 pt-2 md:pt-0">
               <button
-                @click="archiveArticle(article.ID)"
-                class="opacity-0 group-hover:opacity-100 hover:text-amber-600 dark:hover:text-amber-400 text-gray-400 p-2 rounded-lg transition-all cursor-pointer text-xs font-mono"
-                title="Archive note"
+                @click="restoreArticle(article.ID)"
+                class="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-xs font-mono font-medium transition-all cursor-pointer"
+                title="Restore note to vault"
               >
                 <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="21 8 21 21 3 21 3 8"></polyline>
-                  <rect x="1" y="3" width="22" height="5"></rect>
-                  <line x1="10" y1="12" x2="14" y2="12"></line>
+                  <polyline points="9 14 4 9 9 4"/>
+                  <path d="M20 20v-7a4 4 0 0 0-4-4H4"/>
+                </svg>
+                <span class="hidden sm:inline">Restore</span>
+              </button>
+
+              <button
+                @click="deleteArticlePermanently(article.ID)"
+                class="hover:text-red-500 text-gray-400 p-2 rounded-lg transition-all cursor-pointer text-xs font-mono"
+                title="Permanently delete note"
+              >
+                <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                 </svg>
               </button>
 
@@ -807,49 +754,6 @@ const secondaryArticles = computed(() => {
       </div>
     </div>
 
-    <!-- Toast Notification (Archive Feedback with Undo) -->
-    <Teleport to="body">
-      <Transition
-        enter-active-class="transition duration-300 ease-out"
-        enter-from-class="transform translate-y-4 opacity-0 scale-95"
-        enter-to-class="transform translate-y-0 opacity-100 scale-100"
-        leave-active-class="transition duration-200 ease-in"
-        leave-from-class="transform translate-y-0 opacity-100 scale-100"
-        leave-to-class="transform translate-y-4 opacity-0 scale-95"
-      >
-        <div
-          v-if="toast.visible"
-          role="status"
-          aria-live="polite"
-          class="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl bg-gray-900/95 dark:bg-[#121620]/95 text-white shadow-xl shadow-black/20 border border-gray-800 dark:border-white/10 backdrop-blur-md text-sm font-sans"
-        >
-          <div class="flex items-center gap-2">
-            <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-            <span class="font-normal text-gray-200">{{ toast.message }}</span>
-          </div>
-
-          <div class="flex items-center gap-2 pl-2 border-l border-gray-700/80 dark:border-white/10">
-            <button
-              @click="undoArchive"
-              class="px-2.5 py-1 text-xs font-semibold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 rounded-md transition-colors cursor-pointer"
-            >
-              Undo
-            </button>
-            <button
-              @click="dismissToast"
-              class="p-1 text-gray-400 hover:text-white rounded-md transition-colors cursor-pointer"
-              title="Dismiss"
-            >
-              <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
-            </button>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
-
   </div>
 </template>
 
@@ -864,5 +768,15 @@ const secondaryArticles = computed(() => {
 .reveal-item.is-visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

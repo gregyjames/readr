@@ -183,10 +183,17 @@ async function initLocalGraph() {
         initialY = parentPos.y + Math.sin(angle) * dist;
       }
 
+      const isArchived = Boolean((node as any).isArchived);
+      if (isArchived && !isCurrent) {
+        bg = colors.isDark ? 'rgba(75, 85, 99, 0.45)' : 'rgba(209, 213, 219, 0.55)';
+        border = colors.isDark ? '#4b5563' : '#9ca3af';
+        highlight = colors.isDark ? '#4b5563' : '#9ca3af';
+      }
+
       return {
         id: node.id,
         label: displayLabel,
-        title: `${node.label} (${connections} connection${connections === 1 ? '' : 's'})`,
+        title: `${node.label}${isArchived ? ' (Archived)' : ''} (${connections} connection${connections === 1 ? '' : 's'})`,
         shape: isMOC ? 'hexagon' : (isArticle ? 'dot' : 'box'),
         size: nodeSize,
         mass: mass,
@@ -202,17 +209,20 @@ async function initLocalGraph() {
           },
           highlight: {
             background: highlight,
-            border: '#34d399',
+            border: isArchived ? border : '#34d399',
           }
         },
+        opacity: isArchived && !isCurrent ? 0.7 : 1,
         font: {
-          color: isMOC ? (colors.isDark ? '#fef3c7' : '#92400e') : (colors.isDark ? '#e5e7eb' : '#374151'),
+          color: isArchived
+            ? (colors.isDark ? '#9ca3af' : '#6b7280')
+            : (isMOC ? (colors.isDark ? '#fef3c7' : '#92400e') : (colors.isDark ? '#e5e7eb' : '#374151')),
           size: fontSize,
           face: 'Inter, system-ui, sans-serif',
           strokeWidth: 3,
           strokeColor: colors.isDark ? '#0a0a0a' : '#f8f9fa',
           vadjust: isArticle || isMOC ? 2 : 0,
-          bold: isCurrent || isMOC ? 'bold' : undefined,
+          bold: isCurrent || (isMOC && !isArchived) ? 'bold' : undefined,
         },
         borderWidth: isCurrent ? 2.5 : 1.5,
       };

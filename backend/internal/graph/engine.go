@@ -38,6 +38,9 @@ func (e *GraphEngine) BuildGlobalGraph(ctx context.Context) (*GraphData, error) 
 	if err != nil {
 		return nil, fmt.Errorf("fetch articles failed: %w", err)
 	}
+	if archivedArticles, err := e.repo.GetArchivedArticles(ctx); err == nil && len(archivedArticles) > 0 {
+		articles = append(articles, archivedArticles...)
+	}
 
 	links, err := e.repo.GetAllLinks(ctx)
 	if err != nil {

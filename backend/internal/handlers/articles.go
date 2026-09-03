@@ -81,7 +81,15 @@ func resolveArticleFromRecord(dataDir, recordArticlePath string) (string, error)
 func RegisterArticles(router fiber.Router, h *HandlerContext) {
 	router.Get("/getarticles", func(c *fiber.Ctx) error {
 		var articles []repository.GormArticle
-		if err := h.DB.Find(&articles).Error; err != nil {
+		archivedParam := c.Query("archived")
+		isArchived := archivedParam == "true"
+
+		query := h.DB.Where("is_archived = ?", isArchived)
+		if !isArchived {
+			query = h.DB.Where("is_archived = ? OR is_archived IS NULL", false)
+		}
+
+		if err := query.Find(&articles).Error; err != nil {
 			if h.Logger != nil {
 				h.Logger.Error("Failed to retrieve articles from DB", zap.Error(err))
 			}
@@ -286,6 +294,94 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		dispatchArticleJobs(article.ID, apiKey, settings)
 
 		return c.JSON(fiber.Map{"status": "ok", "message": "Agents triggered"})
+	})
+
+	router.Post("/articles/:id/archive", func(c *fiber.Ctx) error {
+		idParam := c.Params("id")
+		id, err := strconv.ParseInt(idParam, 10, 64)
+		if err != nil || id <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid article ID"})
+		}
+
+		if h.Repo != nil {
+			if err := h.Repo.SetArticleArchived(c.Context(), id, true); err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Article not found"})
+				}
+				if h.Logger != nil {
+					h.Logger.Error("Failed to archive article via repo", zap.Int64("id", id), zap.Error(err))
+				}
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to archive article"})
+			}
+		} else {
+			res := h.DB.WithContext(c.Context()).Model(&repository.GormArticle{}).Where("id = ?", id).Update("is_archived", true)
+			if res.Error != nil {
+				if h.Logger != nil {
+					h.Logger.Error("Failed to archive article via DB", zap.Int64("id", id), zap.Error(res.Error))
+				}
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to archive article"})
+			}
+			if res.RowsAffected == 0 {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Article not found"})
+			}
+		}
+
+		if h.GraphEngine != nil {
+			h.GraphEngine.InvalidateCache()
+		}
+		if h.EventHub != nil {
+			h.EventHub.Broadcast("graph-updated")
+		}
+
+		return c.JSON(fiber.Map{
+			"success":     true,
+			"id":          id,
+			"is_archived": true,
+		})
+	})
+
+	router.Post("/articles/:id/unarchive", func(c *fiber.Ctx) error {
+		idParam := c.Params("id")
+		id, err := strconv.ParseInt(idParam, 10, 64)
+		if err != nil || id <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid article ID"})
+		}
+
+		if h.Repo != nil {
+			if err := h.Repo.SetArticleArchived(c.Context(), id, false); err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Article not found"})
+				}
+				if h.Logger != nil {
+					h.Logger.Error("Failed to unarchive article via repo", zap.Int64("id", id), zap.Error(err))
+				}
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to unarchive article"})
+			}
+		} else {
+			res := h.DB.WithContext(c.Context()).Model(&repository.GormArticle{}).Where("id = ?", id).Update("is_archived", false)
+			if res.Error != nil {
+				if h.Logger != nil {
+					h.Logger.Error("Failed to unarchive article via DB", zap.Int64("id", id), zap.Error(res.Error))
+				}
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to unarchive article"})
+			}
+			if res.RowsAffected == 0 {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Article not found"})
+			}
+		}
+
+		if h.GraphEngine != nil {
+			h.GraphEngine.InvalidateCache()
+		}
+		if h.EventHub != nil {
+			h.EventHub.Broadcast("graph-updated")
+		}
+
+		return c.JSON(fiber.Map{
+			"success":     true,
+			"id":          id,
+			"is_archived": false,
+		})
 	})
 
 	router.Post("/edit/:id", func(c *fiber.Ctx) error {
