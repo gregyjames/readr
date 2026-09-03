@@ -185,14 +185,21 @@ const dismissToast = () => {
   toast.value.article = null
 }
 
+const archivingId = ref<number | null>(null)
+
 const archiveArticle = async (id: number) => {
   const targetArticle = articles.value.find(a => a.ID === id) || null
+  archivingId.value = id
+  // Wait for the CSS animation to complete (450ms)
+  await new Promise(resolve => setTimeout(resolve, 440))
   try {
     await axios.post(`/api/articles/${id}/archive`)
     articles.value = articles.value.filter(article => article.ID !== id)
     showToast('Article moved to archive', id, targetArticle)
   } catch (err) {
     console.error('Failed to archive article', err)
+  } finally {
+    archivingId.value = null
   }
 }
 
@@ -420,7 +427,7 @@ const secondaryArticles = computed(() => {
     <div v-else-if="viewMode === 'card' || viewMode === 'studio'" class="space-y-8">
       
       <!-- Lead Spotlight Card (Hero Ingestion) -->
-      <div v-if="leadArticle" class="reveal-item">
+      <div v-if="leadArticle" class="reveal-item" :class="{ 'archiving': archivingId === leadArticle.ID }">
         <div class="relative group bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-300 overflow-hidden shadow-xs hover:shadow-md">
           
           <div class="flex flex-col lg:flex-row items-stretch">
@@ -547,6 +554,7 @@ const secondaryArticles = computed(() => {
           v-for="(article, idx) in secondaryArticles"
           :key="article.ID"
           class="reveal-item group relative bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-300 shadow-2xs hover:shadow-md overflow-hidden flex flex-col justify-between"
+          :class="{ 'archiving': archivingId === article.ID }"
         >
           <!-- Top Cover Media -->
           <div class="relative h-48 w-full overflow-hidden bg-gray-100 dark:bg-[#0A0C10] border-b border-gray-100 dark:border-white/[0.06]">
@@ -695,6 +703,7 @@ const secondaryArticles = computed(() => {
           v-for="(article, idx) in filteredArticles"
           :key="article.ID"
           class="reveal-item relative group"
+          :class="{ 'archiving': archivingId === article.ID }"
         >
           <!-- Desktop Timestamp on Left of Spine -->
           <div class="hidden sm:flex absolute -left-[5.5rem] top-5 w-20 flex-col items-end pr-4 text-right select-none">
@@ -899,5 +908,35 @@ const secondaryArticles = computed(() => {
 .reveal-item.is-visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* ─── Archive fly-out animation ──────────────────────── */
+@keyframes archive-out {
+  0% {
+    opacity: 1;
+    transform: scale(1) translateY(0) rotateX(0deg);
+    filter: brightness(1);
+  }
+  20% {
+    transform: scale(1.02) translateY(-4px);
+    filter: brightness(1.05);
+  }
+  60% {
+    transform: scale(0.92) translateY(-12px) rotateX(8deg);
+    filter: brightness(0.9) saturate(0.6);
+    border-color: rgba(245, 158, 11, 0.5);
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25), 0 8px 32px rgba(0, 0, 0, 0.15);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.82) translateY(-24px) rotateX(12deg);
+    filter: brightness(0.7) saturate(0);
+  }
+}
+
+.reveal-item.archiving {
+  animation: archive-out 0.44s cubic-bezier(0.4, 0, 0.6, 1) forwards;
+  pointer-events: none;
+  overflow: hidden;
 }
 </style>
