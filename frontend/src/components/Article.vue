@@ -225,6 +225,55 @@ const getProceduralGradient = (id: number) => {
   ]
   return gradients[Math.abs(Number(id) || 0) % gradients.length]
 }
+
+function removeDuplicateHeroImage(markdown: string, heroUrl: string): string {
+  if (!heroUrl || !markdown) return markdown
+
+  const cleanHero = heroUrl.trim()
+  const heroMatch = cleanHero.match(/\/images\/(\d+)\//)
+  const heroArticleId = heroMatch ? heroMatch[1] : ''
+  const heroBaseFilename = cleanHero.split('/').pop()?.split('?')[0] || ''
+
+  const isMatch = (src: string) => {
+    if (!src) return false
+    const cleanSrc = src.trim()
+    if (cleanSrc === cleanHero) return true
+    if (cleanSrc.split('?')[0] === cleanHero.split('?')[0]) return true
+
+    if (heroArticleId) {
+      const srcMatch = cleanSrc.match(/\/images\/(\d+)\//)
+      if (srcMatch && srcMatch[1] === heroArticleId) {
+        const srcFilename = cleanSrc.split('/').pop()?.split('?')[0] || ''
+        const isHeroOrCover = (name: string) => /hero|cover/i.test(name)
+        if (isHeroOrCover(srcFilename) && isHeroOrCover(heroBaseFilename)) {
+          return true
+        }
+        if (srcFilename.replace(/^cover_/, '') === heroBaseFilename.replace(/^cover_/, '')) {
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  // 1. Linked image: [![alt](src)](href)
+  markdown = markdown.replace(/\[\s*!\[([^\]]*)\]\(([^)]+)\)\s*\]\([^)]+\)/g, (fullMatch, _alt, src) => {
+    return isMatch(src) ? '' : fullMatch
+  })
+
+  // 2. Standard markdown image: ![alt](src)
+  markdown = markdown.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (fullMatch, _alt, src) => {
+    return isMatch(src) ? '' : fullMatch
+  })
+
+  // 3. HTML img: <img ... src="..." ...>
+  markdown = markdown.replace(/<img[^>]+src=["']([^"']+)["'][^>]*>/gi, (fullMatch, src) => {
+    return isMatch(src) ? '' : fullMatch
+  })
+
+  return markdown
+}
+
 const copiedLink = ref(false)
 
 const copyArticleLink = () => {
@@ -580,7 +629,12 @@ const loadContent = async () => {
     })
 
     // Strip YAML frontmatter (--- ... ---) so it never renders in the article view                                                                                 
-    const strippedRaw = parsedRaw.replace(/^---[\s\S]*?---\n?/, '')  
+    let strippedRaw = parsedRaw.replace(/^---[\s\S]*?---\n?/, '')  
+
+    // Deduplicate: If hero cover image is displayed in the masthead, strip the duplicate from body
+    if (heroImage.value) {
+      strippedRaw = removeDuplicateHeroImage(strippedRaw, heroImage.value)
+    }  
 
     // Sanitize before assignment: article bodies and wikilink-injected titles are
     // untrusted, and marked passes raw HTML through.
