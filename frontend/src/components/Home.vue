@@ -676,13 +676,6 @@ const secondaryArticles = computed(() => {
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                   </svg>
                 </button>
-
-                <router-link
-                  :to="`/articles/${article.ID}`"
-                  class="hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors font-medium ml-1"
-                >
-                  Read &rarr;
-                </router-link>
               </div>
             </div>
           </div>

@@ -583,29 +583,27 @@ const secondaryArticles = computed(() => {
             <div class="pt-3 border-t border-gray-100 dark:border-white/[0.04] flex items-center justify-between text-[11px] font-mono text-gray-400 dark:text-gray-500">
               <button
                 @click="restoreArticle(article.ID)"
-                class="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer font-medium"
-                title="Restore article"
+                class="p-1 rounded-md text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 transition-colors cursor-pointer"
+                title="Restore note to vault"
+                aria-label="Restore note to vault"
               >
                 <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="9 14 4 9 9 4"/>
                   <path d="M20 20v-7a4 4 0 0 0-4-4H4"/>
                 </svg>
-                <span>Restore</span>
               </button>
-              <div class="flex items-center gap-3">
+              <div class="flex items-center gap-1">
                 <button
                   @click="deleteArticlePermanently(article.ID)"
-                  class="hover:text-red-500 transition-colors cursor-pointer text-xs"
+                  class="p-1 rounded-md text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-colors cursor-pointer"
                   title="Permanently delete note"
+                  aria-label="Permanently delete note"
                 >
-                  &times; Delete
+                  <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  </svg>
                 </button>
-                <router-link
-                  :to="`/articles/${article.ID}`"
-                  class="hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors font-medium"
-                >
-                  Read &rarr;
-                </router-link>
               </div>
             </div>
           </div>
