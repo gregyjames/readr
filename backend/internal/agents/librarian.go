@@ -193,6 +193,19 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 
 	// Step 1: Reconcile / Synthesize Clusters
 	for _, cluster := range clusters {
+		clusterTag := cluster.Tag
+		mocTitle := fmt.Sprintf("MOC - %s", clusterTag)
+		if cluster.ExistingMOC != nil && cluster.ExistingMOC.Title != "" {
+			mocTitle = cluster.ExistingMOC.Title
+		}
+
+		r.logger.Info("Processing cluster candidate",
+			zap.String("topic", clusterTag),
+			zap.String("moc_title", mocTitle),
+			zap.Int("active_articles", len(cluster.Articles)),
+			zap.Bool("has_existing_moc", cluster.ExistingMOC != nil),
+		)
+
 		if cluster.ExistingMOC != nil {
 			unlinked, existingContent, err := r.getUnlinkedArticles(cluster)
 			if err != nil {
@@ -220,8 +233,18 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 			}
 			reconciledContent, linksPruned := ReconcileMOCLinks(existingContent, activeMemberTitles)
 
+			r.logger.Info("Evaluated existing MOC for updates",
+				zap.String("moc_title", mocTitle),
+				zap.Int("unlinked_count", len(unlinked)),
+				zap.Bool("links_or_sections_pruned", linksPruned),
+			)
+
 			if len(unlinked) == 0 {
 				if linksPruned {
+					r.logger.Info("Persisting reconciled MOC (pruned stale links and empty sections)",
+						zap.String("moc_title", mocTitle),
+						zap.String("tag", cluster.Tag),
+					)
 					if err := r.saveReconciledMOC(ctx, cluster, reconciledContent); err != nil {
 						r.logger.Error("Failed to save reconciled MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
 						result.Status = "partial (some clusters failed)"
@@ -230,7 +253,10 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 						result.UpdatedMOCs++
 					}
 				} else {
-					r.logger.Info(fmt.Sprintf("MOC cluster %s is up-to-date (0 new notes), skipping LLM call", cluster.Tag), zap.String("tag", cluster.Tag))
+					r.logger.Info("MOC cluster is completely up-to-date (0 new notes, 0 stale links), skipping synthesis",
+						zap.String("moc_title", mocTitle),
+						zap.String("tag", cluster.Tag),
+					)
 				}
 				continue
 			}
@@ -243,6 +269,11 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				continue
 			}
 
+			r.logger.Info("Synthesizing delta placements via LLM",
+				zap.String("moc_title", mocTitle),
+				zap.Int("new_unlinked_notes", len(unlinked)),
+			)
+
 			deltaResp, err := r.synthesizeDeltaCluster(ctx, cluster, unlinked, reconciledContent, apiKey, model, apiURL)
 			if err != nil {
 				r.logger.Error("Failed to synthesize delta MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
@@ -250,6 +281,11 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				result.Errors = append(result.Errors, fmt.Sprintf("tag %s: %v", cluster.Tag, err))
 				continue
 			}
+
+			r.logger.Info("Saving updated MOC with delta placements",
+				zap.String("moc_title", mocTitle),
+				zap.Int("placements_count", len(deltaResp.Placements)),
+			)
 
 			if err := r.saveDeltaMOC(ctx, cluster, deltaResp, reconciledContent); err != nil {
 				r.logger.Error("Failed to save delta MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
@@ -282,6 +318,11 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				continue
 			}
 
+			r.logger.Info("Synthesizing new MOC for cluster via LLM",
+				zap.String("tag", cluster.Tag),
+				zap.Int("article_count", len(cluster.Articles)),
+			)
+
 			synthesis, err := r.synthesizeCluster(ctx, cluster, apiKey, model, apiURL)
 			if err != nil {
 				r.logger.Error("Failed to synthesize MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
@@ -289,6 +330,11 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				result.Errors = append(result.Errors, fmt.Sprintf("tag %s: %v", cluster.Tag, err))
 				continue
 			}
+
+			r.logger.Info("Saving new MOC document to disk and database",
+				zap.String("topic_title", synthesis.TopicTitle),
+				zap.Int("sections_count", len(synthesis.Sections)),
+			)
 
 			if err := r.saveMOC(ctx, cluster, synthesis); err != nil {
 				r.logger.Error("Failed to save MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
@@ -424,6 +470,11 @@ func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
 		}
 
 		if memberCount > 0 || linkCount > 0 {
+			r.logger.Debug("Retaining MOC with active members or links",
+				zap.String("moc_title", moc.Title),
+				zap.Int64("member_notes_in_folder", memberCount),
+				zap.Int64("graph_link_edges", linkCount),
+			)
 			continue
 		}
 
@@ -435,12 +486,19 @@ func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
 		contentBytes, err := os.ReadFile(filePath)
 		if err == nil {
 			if HasCustomUserNotes(string(contentBytes)) {
-				r.logger.Info("Preserving empty MOC due to custom user notes in Notes & Synthesis", zap.String("title", moc.Title))
+				r.logger.Info("Preserving empty MOC due to custom user notes in Notes & Synthesis",
+					zap.String("moc_title", moc.Title),
+					zap.String("file_path", filePath),
+				)
 				continue
 			}
 		}
 
-		r.logger.Info("Pruning empty MOC with no member notes or custom user synthesis", zap.String("title", moc.Title), zap.Int64("id", moc.ID))
+		r.logger.Info("Pruning empty MOC (0 member notes, 0 active links, 0 custom user notes)",
+			zap.String("moc_title", moc.Title),
+			zap.Int64("id", moc.ID),
+			zap.String("file_path", filePath),
+		)
 		_ = os.Remove(filePath)
 
 		if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
