@@ -60,9 +60,17 @@ func (o *VaultOrganizer) FileArticle(ctx context.Context, articleID int64, topic
 	currentRel := strings.TrimPrefix(article.Article, "/")
 	currentAbs := filepath.Join(o.dataDir, currentRel)
 
-	fileName := filepath.Base(currentAbs)
-	if fileName == "" || fileName == "." || fileName == "/" || fileName == fmt.Sprintf("%d.md", articleID) {
-		fileName = ingest.SanitizeTitleFilename(article.Title, articleID) + ".md"
+	origBaseName := filepath.Base(currentAbs)
+	fileName := origBaseName
+	if fileName == "" || fileName == "." || fileName == "/" || fileName == fmt.Sprintf("%d.md", articleID) || fileName == fmt.Sprintf("%d", articleID) {
+		sanitized := ingest.SanitizeTitleFilename(article.Title, articleID)
+		if !strings.HasSuffix(strings.ToLower(sanitized), ".md") {
+			fileName = sanitized + ".md"
+		} else {
+			fileName = sanitized
+		}
+	} else if !strings.HasSuffix(strings.ToLower(fileName), ".md") {
+		fileName = fileName + ".md"
 	}
 
 	targetRel := filepath.Join("articles", topicFolder, fileName)
@@ -83,12 +91,24 @@ func (o *VaultOrganizer) FileArticle(ctx context.Context, articleID int64, topic
 		srcMovedFrom = currentAbs
 	} else {
 		// If current file wasn't found at registered path, try locating it in root articles/
-		fallbackSrc := filepath.Join(o.dataDir, "articles", fileName)
-		if _, err := os.Stat(fallbackSrc); err == nil {
-			if err := os.Rename(fallbackSrc, targetAbs); err != nil {
-				return "", fmt.Errorf("failed to move fallback article file from %s to %s: %w", fallbackSrc, targetAbs, err)
+		// First check original filename (e.g. <articleID>.md or previous name) then sanitized filename
+		fallbackCandidates := []string{
+			filepath.Join(o.dataDir, "articles", origBaseName),
+			filepath.Join(o.dataDir, "articles", fmt.Sprintf("%d.md", articleID)),
+			filepath.Join(o.dataDir, "articles", fileName),
+		}
+
+		for _, fallbackSrc := range fallbackCandidates {
+			if fallbackSrc == "" || fallbackSrc == targetAbs {
+				continue
 			}
-			srcMovedFrom = fallbackSrc
+			if _, err := os.Stat(fallbackSrc); err == nil {
+				if err := os.Rename(fallbackSrc, targetAbs); err != nil {
+					return "", fmt.Errorf("failed to move fallback article file from %s to %s: %w", fallbackSrc, targetAbs, err)
+				}
+				srcMovedFrom = fallbackSrc
+				break
+			}
 		}
 	}
 
