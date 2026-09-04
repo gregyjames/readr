@@ -208,7 +208,11 @@ func (v *DefaultVault) DeleteArticle(ctx context.Context, id int64) error {
 		if err := tx.Exec("DELETE FROM article_links WHERE source_id = ? OR target_id = ?", id, id).Error; err != nil {
 			return err
 		}
-		_ = tx.Exec("DELETE FROM articles_fts WHERE rowid = ?", id).Error
+		if err := tx.Exec("DELETE FROM articles_fts WHERE rowid = ?", id).Error; err != nil {
+			if !strings.Contains(strings.ToLower(err.Error()), "no such table") {
+				return err
+			}
+		}
 		return nil
 	})
 
@@ -217,21 +221,32 @@ func (v *DefaultVault) DeleteArticle(ctx context.Context, id int64) error {
 		return fmt.Errorf("database deletion failed: %w", err)
 	}
 
+	var cleanupErr error
+
 	// 2. Remove markdown file from disk
 	if article.Article != "" {
 		if p, err := v.ResolveFilePath(article.Article); err == nil {
-			_ = os.Remove(p)
+			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+				v.logger.Error("Failed to remove article file from disk", zap.String("path", p), zap.Error(err))
+				cleanupErr = fmt.Errorf("failed to remove article file: %w", err)
+			}
 		}
 	}
 	// Fallback check in case path was stored as id.md
 	if p, err := v.ResolveFilePath(fmt.Sprintf("%d.md", id)); err == nil {
-		_ = os.Remove(p)
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) && cleanupErr == nil {
+			v.logger.Error("Failed to remove fallback article file from disk", zap.String("path", p), zap.Error(err))
+			cleanupErr = fmt.Errorf("failed to remove fallback article file: %w", err)
+		}
 	}
 
 	// 3. Remove image attachments directory
 	imageDir := filepath.Join(v.dataDir, "images", fmt.Sprint(id))
-	if err := os.RemoveAll(imageDir); err != nil {
-		v.logger.Warn("Failed to delete article images directory", zap.Int64("id", id), zap.Error(err))
+	if err := os.RemoveAll(imageDir); err != nil && !os.IsNotExist(err) {
+		v.logger.Error("Failed to delete article images directory", zap.Int64("id", id), zap.Error(err))
+		if cleanupErr == nil {
+			cleanupErr = fmt.Errorf("failed to delete article images directory: %w", err)
+		}
 	}
 
 	// 4. Invalidate graph cache and master index
@@ -239,6 +254,10 @@ func (v *DefaultVault) DeleteArticle(ctx context.Context, id int64) error {
 		v.invalidator.InvalidateCache()
 	}
 	_ = v.organizer.UpdateMasterIndex(ctx)
+
+	if cleanupErr != nil {
+		return fmt.Errorf("article deleted from database but cleanup failed: %w", cleanupErr)
+	}
 
 	return nil
 }
