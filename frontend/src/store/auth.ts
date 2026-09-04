@@ -41,9 +41,6 @@ export async function checkAuthStatus(): Promise<boolean> {
       const data = await res.json()
       authState.isAuthConfigured = Boolean(data.auth_configured)
       authState.isAuthenticated = Boolean(data.authenticated)
-      if (data.token) {
-        setStoredToken(data.token)
-      }
       if (data.theme) {
         applyTheme(data.theme)
       }

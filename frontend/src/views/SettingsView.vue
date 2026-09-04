@@ -61,7 +61,7 @@ const createAPIKey = async () => {
       newlyCreatedKey.value = data
       newKeyName.value = ''
       showCreateKeyForm.value = false
-      bookmarkletAuthToken.value = data.key
+      bookmarkletApiKey.value = data.key
       await fetchAPIKeys()
     }
   } catch (err) {
@@ -113,17 +113,17 @@ const copyNewKeyText = async (text: string) => {
   }
 }
 
-// Bookmarklet State
+// Bookmarklet State (Configured solely via dedicated API Key)
 const bookmarkletServerUrl = ref(typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080')
-const bookmarkletAuthToken = ref(getStoredToken() || '')
-const showBookmarkletToken = ref(false)
+const bookmarkletApiKey = ref('')
+const showBookmarkletApiKey = ref(false)
 const copiedBookmarklet = ref(false)
 let copyTimer: ReturnType<typeof setTimeout> | null = null
 
 const generatedBookmarkletHref = computed(() => {
   return generateBookmarkletCode({
     serverUrl: bookmarkletServerUrl.value,
-    authToken: bookmarkletAuthToken.value || undefined,
+    apiKey: bookmarkletApiKey.value || undefined,
   })
 })
 
@@ -372,20 +372,12 @@ onMounted(async () => {
   if (!authState.isLoaded) {
     await checkAuthStatus()
   }
-  const token = getStoredToken()
-  if (token) {
-    bookmarkletAuthToken.value = token
-  }
   fetchModels()
   fetchDiagnostics()
   fetchAPIKeys()
 })
 
 watch(() => authState.isAuthenticated, () => {
-  const token = getStoredToken()
-  if (token) {
-    bookmarkletAuthToken.value = token
-  }
   fetchAPIKeys()
 })
 
@@ -1417,7 +1409,7 @@ const executeLibrarian = async () => {
             </button>
             <button
               type="button"
-              @click="bookmarkletAuthToken = newlyCreatedKey.key"
+              @click="bookmarkletApiKey = newlyCreatedKey.key"
               class="flex-1 sm:flex-initial px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-xl cursor-pointer transition-colors flex items-center justify-center gap-1.5 shadow-sm"
             >
               <span>🔖 Applied to Bookmarklet</span>
@@ -1507,23 +1499,23 @@ const executeLibrarian = async () => {
 
         <div class="space-y-2">
           <label for="bookmarklet-token" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Authentication Token (API Key or Session Token)
+            API Key
           </label>
           <div class="relative">
             <input
               id="bookmarklet-token"
-              v-model="bookmarkletAuthToken"
-              :type="showBookmarkletToken ? 'text' : 'password'"
-              placeholder="rdr_live_... or session token"
+              v-model="bookmarkletApiKey"
+              :type="showBookmarkletApiKey ? 'text' : 'password'"
+              placeholder="rdr_live_..."
               class="w-full pl-4 pr-12 py-2.5 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-xl focus:bg-white dark:focus:bg-[#1a1a1a] focus:border-emerald-500 text-gray-900 dark:text-gray-100 text-xs font-mono"
             />
             <button
               type="button"
-              @click="showBookmarkletToken = !showBookmarkletToken"
+              @click="showBookmarkletApiKey = !showBookmarkletApiKey"
               class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1.5 rounded-lg transition-colors cursor-pointer"
-              :title="showBookmarkletToken ? 'Hide token' : 'Show token'"
+              :title="showBookmarkletApiKey ? 'Hide key' : 'Show key'"
             >
-              <svg v-if="!showBookmarkletToken" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg v-if="!showBookmarkletApiKey" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
                 <circle cx="12" cy="12" r="3" />
               </svg>
@@ -1536,17 +1528,17 @@ const executeLibrarian = async () => {
             </button>
           </div>
           <p class="text-[11px] text-gray-400 dark:text-gray-500">
-            <span v-if="bookmarkletAuthToken.endsWith('...') || (bookmarkletAuthToken.startsWith('rdr_live_') && bookmarkletAuthToken.length < 25)" class="text-amber-600 dark:text-amber-400 font-medium">
+            <span v-if="bookmarkletApiKey.endsWith('...') || (bookmarkletApiKey.startsWith('rdr_live_') && bookmarkletApiKey.length < 25)" class="text-amber-600 dark:text-amber-400 font-medium">
               ⚠️ Truncated key prefix detected! Please paste the full <code>rdr_live_...</code> API key or generate a new key above.
             </span>
-            <span v-else-if="bookmarkletAuthToken.startsWith('rdr_live_')" class="text-emerald-600 dark:text-emerald-400 font-medium">
-              ✓ Full API Key loaded. Install or update your bookmarklet button below.
+            <span v-else-if="bookmarkletApiKey.startsWith('rdr_live_')" class="text-emerald-600 dark:text-emerald-400 font-medium">
+              ✓ API Key loaded. Install or update your bookmarklet button below.
             </span>
-            <span v-else-if="bookmarkletAuthToken">
-              Active session token loaded. Drag or copy the button to install.
+            <span v-else-if="bookmarkletApiKey">
+              API Key loaded. Drag or copy the button to install.
             </span>
             <span v-else>
-              No token set. If your vault is password-protected, generate an API key above or paste your token.
+              Generate an API key in the section above or paste an existing <code>rdr_live_...</code> key.
             </span>
           </p>
         </div>

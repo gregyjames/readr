@@ -106,14 +106,12 @@ func RegisterAuth(router fiber.Router, h *HandlerContext) {
 		authConfigured := current.PasswordHash != ""
 		authenticated := false
 
-		token := ""
 		if authConfigured {
 			cookieOrHeaderToken := ExtractSessionToken(c)
 			if cookieOrHeaderToken != "" {
 				valid, err := auth.VerifySession(current.SessionSecret, cookieOrHeaderToken, time.Now())
 				if err == nil && valid {
 					authenticated = true
-					token = cookieOrHeaderToken
 				}
 			}
 		}
@@ -127,7 +125,6 @@ func RegisterAuth(router fiber.Router, h *HandlerContext) {
 			"auth_configured": authConfigured,
 			"authenticated":   authenticated,
 			"theme":           theme,
-			"token":           token,
 		})
 	})
 

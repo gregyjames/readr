@@ -15,24 +15,23 @@ describe('bookmarklet generator', () => {
     expect(code).toContain('window.__READR_SERVER_URL__="https://readr.example.com";');
   });
 
-  it('injects window.__READR_AUTH_TOKEN__ when provided', () => {
+  it('injects window.__READR_API_KEY__ when provided', () => {
     const code = generateBookmarkletCode({
       serverUrl: 'http://localhost:8080',
-      authToken: 'secret-token-123',
+      apiKey: 'rdr_live_secret123',
     });
-    expect(code).toContain('window.__READR_AUTH_TOKEN__="secret-token-123";');
+    expect(code).toContain('window.__READR_API_KEY__="rdr_live_secret123";');
   });
 
-  it('omits or clears window.__READR_AUTH_TOKEN__ when empty or not provided', () => {
+  it('omits or clears window.__READR_API_KEY__ when empty or not provided', () => {
     const codeNoToken = generateBookmarkletCode({ serverUrl: 'http://localhost:8080' });
-    expect(codeNoToken).not.toContain('window.__READR_AUTH_TOKEN__="secret');
-    expect(codeNoToken).toContain('window.__READR_AUTH_TOKEN__="";');
+    expect(codeNoToken).toContain('window.__READR_API_KEY__="";');
 
     const codeEmptyToken = generateBookmarkletCode({
       serverUrl: 'http://localhost:8080',
-      authToken: '',
+      apiKey: '',
     });
-    expect(codeEmptyToken).toContain('window.__READR_AUTH_TOKEN__="";');
+    expect(codeEmptyToken).toContain('window.__READR_API_KEY__="";');
   });
 
   it('dynamically loads <serverUrl>/bookmarklet.js via document.createElement', () => {
@@ -47,14 +46,14 @@ describe('bookmarklet generator', () => {
     expect(code).toContain('+new Date().getTime()');
   });
 
-  it('handles quotes and special characters in serverUrl and authToken safely', () => {
+  it('handles quotes and special characters in serverUrl and apiKey safely', () => {
     const code = generateBookmarkletCode({
       serverUrl: 'https://readr.example.com/test"path',
-      authToken: 'token"with\'quotes\\and/slashes',
+      apiKey: 'key"with\'quotes\\and/slashes',
     });
     // JSON.stringify handles escaping quotes safely
     expect(code).toContain('window.__READR_SERVER_URL__="https://readr.example.com/test\\"path";');
-    expect(code).toContain('window.__READR_AUTH_TOKEN__="token\\"with\'quotes\\\\and/slashes";');
+    expect(code).toContain('window.__READR_API_KEY__="key\\"with\'quotes\\\\and/slashes";');
   });
 
   describe('generateInlineBookmarkletCode', () => {

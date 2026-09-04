@@ -72,11 +72,17 @@
     return 'http://localhost:8080';
   }
 
-  function getAuthToken() {
+  function getApiKey() {
+    if (window.__READR_API_KEY__) {
+      return String(window.__READR_API_KEY__).trim();
+    }
     if (window.__READR_AUTH_TOKEN__) {
       return String(window.__READR_AUTH_TOKEN__).trim();
     }
     var script = document.currentScript;
+    if (script && script.dataset && script.dataset.apiKey) {
+      return String(script.dataset.apiKey).trim();
+    }
     if (script && script.dataset && script.dataset.authToken) {
       return String(script.dataset.authToken).trim();
     }
@@ -86,7 +92,7 @@
   var initialTitle = getPageTitle();
   var initialUrl = getPageUrl();
   var serverUrl = getServerUrl();
-  var authToken = getAuthToken();
+  var apiKey = getApiKey();
 
   // 4. Create host element and attach open Shadow DOM
   var host = document.createElement('div');
@@ -554,8 +560,9 @@
     var headers = {
       'Content-Type': 'application/json'
     };
-    if (authToken) {
-      headers['Authorization'] = 'Bearer ' + authToken;
+    if (apiKey) {
+      headers['Authorization'] = 'Bearer ' + apiKey;
+      headers['X-API-Key'] = apiKey;
     }
 
     setPending(true);
@@ -568,7 +575,7 @@
     })
       .then(function (res) {
         if (res.status === 401 || res.status === 403) {
-          throw { isAuth: true, message: 'Authentication required. Please check your token in Readr Settings.' };
+          throw { isAuth: true, message: 'Authentication required. Please check your API key in Readr Settings.' };
         }
         return res.json().then(
           function (data) {

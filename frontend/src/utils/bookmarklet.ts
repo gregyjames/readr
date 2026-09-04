@@ -1,21 +1,22 @@
 export interface BookmarkletOptions {
   serverUrl: string;
-  authToken?: string;
+  apiKey?: string;
+  authToken?: string; // backwards compatibility alias
 }
 
 /**
  * Generates a clean, single-line `javascript:(function(){...})();` bookmarklet URL
  * that dynamically loads the Readr bookmarklet script from the server with cachebusting
- * and injects the necessary configuration globals (__READR_SERVER_URL__, __READR_AUTH_TOKEN__).
+ * and injects the necessary configuration globals (__READR_SERVER_URL__, __READR_API_KEY__).
  */
 export function generateBookmarkletCode(options: BookmarkletOptions): string {
   const normalizedServerUrl = (options.serverUrl || '').trim().replace(/\/+$/, '');
-  const normalizedToken = (options.authToken || '').trim();
+  const key = (options.apiKey || options.authToken || '').trim();
 
   const serverUrlJson = JSON.stringify(normalizedServerUrl);
-  const tokenJson = JSON.stringify(normalizedToken);
+  const apiKeyJson = JSON.stringify(key);
 
-  return `javascript:(function(){window.__READR_SERVER_URL__=${serverUrlJson};window.__READR_AUTH_TOKEN__=${tokenJson};var s=document.createElement('script');s.src=${serverUrlJson}+'/bookmarklet.js?_='+new Date().getTime();document.body.appendChild(s);})();`;
+  return `javascript:(function(){window.__READR_SERVER_URL__=${serverUrlJson};window.__READR_API_KEY__=${apiKeyJson};window.__READR_AUTH_TOKEN__=${apiKeyJson};var s=document.createElement('script');s.src=${serverUrlJson}+'/bookmarklet.js?_='+new Date().getTime();document.body.appendChild(s);})();`;
 }
 
 /**
