@@ -526,14 +526,19 @@
 
   function doSave() {
     if (isSubmitting) return;
-    setPending(true);
-    statusBanner.className = 'readr-banner';
-    statusBanner.innerHTML = '';
+    var rawTags = tagsInput.value.trim();
+    var tagsArray = rawTags
+      ? rawTags
+          .split(',')
+          .map(function (t) {
+            return t.trim();
+          })
+          .filter(Boolean)
+      : [];
 
-    var tags = parseTags(tagsInput.value);
     var payload = {
       url: initialUrl,
-      tags: tags
+      tags: tagsArray
     };
 
     var headers = {
@@ -543,9 +548,10 @@
       headers['Authorization'] = 'Bearer ' + authToken;
     }
 
-    var targetUrl = serverUrl + '/api/add';
+    setPending(true);
+    showStatus('info', 'Saving article to vault...');
 
-    fetch(targetUrl, {
+    fetch(serverUrl + '/api/add', {
       method: 'POST',
       headers: headers,
       body: JSON.stringify(payload)
@@ -573,25 +579,25 @@
         var articleLink = articleId ? (serverUrl + '/#/article/' + articleId) : (serverUrl + '/');
 
         if (data.status === 'exists') {
-          showStatus('warn', 'Article already in vault. <a href="' + articleLink + '" target="_blank" rel="noopener">Open in Readr &rarr;</a>', 0);
+          showStatus('warn', 'Article already in vault. <a href="' + articleLink + '" target="_blank" rel="noopener noreferrer">Open in Readr &rarr;</a>', 0);
           return;
         }
 
         if (result.ok || data.status === 'success') {
-          showStatus('success', 'Saved to Vault! <a href="' + articleLink + '" target="_blank" rel="noopener">Open in Readr &rarr;</a>', 1500);
+          showStatus('success', 'Saved to Vault! <a href="' + articleLink + '" target="_blank" rel="noopener noreferrer">Open in Readr &rarr;</a>', 1500);
           return;
         }
 
-        showStatus('error', data.message || 'Failed to save article.');
+        showStatus('error', escapeHtml(data.message) || 'Failed to save article.');
       })
       .catch(function (err) {
         setPending(false);
         if (err && err.isAuth) {
-          showStatus('error', err.message);
+          showStatus('error', escapeHtml(err.message));
         } else if (err && err.name === 'TypeError' && String(err.message).indexOf('fetch') !== -1) {
-          showStatus('error', 'Unable to reach Readr server at ' + serverUrl + '. Ensure server is running.');
+          showStatus('error', 'Unable to reach Readr server at ' + escapeHtml(serverUrl) + '. Ensure server is running.');
         } else {
-          showStatus('error', (err && err.message) || 'An unexpected error occurred while saving.');
+          showStatus('error', escapeHtml((err && err.message) || 'An unexpected error occurred while saving.'));
         }
       });
   }
@@ -608,6 +614,14 @@
       doSave();
     }
   }
+
+  tagsInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      doSave();
+    }
+  });
 
   wrapper.addEventListener('click', function (e) {
     if (e.target === wrapper) {
