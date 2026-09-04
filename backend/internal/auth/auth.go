@@ -69,3 +69,22 @@ func VerifySession(secret, token string, now time.Time) (bool, error) {
 
 	return true, nil
 }
+
+// GenerateAPIKey generates a new secure API key with 'rdr_live_' prefix and returns (fullKey, keyPrefix, keyHash, error).
+func GenerateAPIKey() (string, string, string, error) {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", "", "", err
+	}
+	randomHex := hex.EncodeToString(bytes)
+	fullKey := "rdr_live_" + randomHex
+	prefix := fullKey[:13] + "..." // e.g. "rdr_live_9a8f..."
+	hash := HashAPIKey(fullKey)
+	return fullKey, prefix, hash, nil
+}
+
+// HashAPIKey computes the SHA-256 hash of an API key for safe database storage.
+func HashAPIKey(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])
+}

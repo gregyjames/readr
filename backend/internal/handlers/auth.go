@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -14,6 +15,14 @@ func ExtractSessionToken(c *fiber.Ctx) string {
 		authHeader := c.Get("Authorization")
 		if strings.HasPrefix(authHeader, "Bearer ") {
 			token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+		} else if authHeader != "" && !strings.Contains(authHeader, " ") {
+			token = strings.TrimSpace(authHeader)
+		}
+	}
+	if token == "" {
+		token = strings.TrimSpace(c.Get("X-API-Key"))
+		if token == "" {
+			token = strings.TrimSpace(c.Get("X-Api-Key"))
 		}
 	}
 	return token
@@ -51,12 +60,28 @@ func AuthMiddleware(h *HandlerContext) fiber.Handler {
 		pwdHash := current.PasswordHash
 		secret := current.SessionSecret
 
+		token := ExtractSessionToken(c)
+
+		// Check if it's an API Key (starts with rdr_live_)
+		if strings.HasPrefix(token, "rdr_live_") {
+			if h.Repo != nil {
+				hash := auth.HashAPIKey(token)
+				apiKey, err := h.Repo.FindAPIKeyByHash(c.Context(), hash)
+				if err == nil && apiKey != nil {
+					go func(id int64) {
+						_ = h.Repo.TouchAPIKeyLastUsed(context.Background(), id, time.Now())
+					}(apiKey.ID)
+					return c.Next()
+				}
+			}
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid API key"})
+		}
+
 		// If no password is set, allow access
 		if pwdHash == "" {
 			return c.Next()
 		}
 
-		token := ExtractSessionToken(c)
 		if token == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
 		}

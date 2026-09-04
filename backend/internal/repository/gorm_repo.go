@@ -102,6 +102,21 @@ func (GormArticleLink) TableName() string {
 	return "article_links"
 }
 
+type APIKey struct {
+	ID         int64          `gorm:"primaryKey" json:"id"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
+	Name       string         `gorm:"size:100;not null" json:"name"`
+	KeyHash    string         `gorm:"size:64;uniqueIndex;not null" json:"-"`
+	KeyPrefix  string         `gorm:"size:20;not null" json:"key_prefix"`
+	LastUsedAt *time.Time     `json:"last_used_at,omitempty"`
+}
+
+func (APIKey) TableName() string {
+	return "api_keys"
+}
+
 type GormRepository struct {
 	db *gorm.DB
 }
@@ -555,4 +570,40 @@ func (r *GormRepository) GetPipelineDiagnostics(ctx context.Context, limit int) 
 	}
 
 	return &summary, metrics, nil
+}
+
+// ListAPIKeys retrieves all non-deleted API keys ordered by created_at descending.
+func (r *GormRepository) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
+	var keys []APIKey
+	if err := r.db.WithContext(ctx).Order("created_at DESC").Find(&keys).Error; err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+// CreateAPIKey creates and persists a new APIKey record.
+func (r *GormRepository) CreateAPIKey(ctx context.Context, key *APIKey) error {
+	return r.db.WithContext(ctx).Create(key).Error
+}
+
+// DeleteAPIKey soft-deletes an APIKey record by ID.
+func (r *GormRepository) DeleteAPIKey(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Delete(&APIKey{}, id).Error
+}
+
+// FindAPIKeyByHash looks up an active API key by its SHA-256 hash.
+func (r *GormRepository) FindAPIKeyByHash(ctx context.Context, keyHash string) (*APIKey, error) {
+	var key APIKey
+	if err := r.db.WithContext(ctx).Where("key_hash = ?", keyHash).First(&key).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &key, nil
+}
+
+// TouchAPIKeyLastUsed updates the last_used_at timestamp of an API key.
+func (r *GormRepository) TouchAPIKeyLastUsed(ctx context.Context, id int64, now time.Time) error {
+	return r.db.WithContext(ctx).Model(&APIKey{}).Where("id = ?", id).Update("last_used_at", now).Error
 }
