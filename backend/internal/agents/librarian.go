@@ -433,9 +433,20 @@ func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
 
 		r.logger.Info("Pruning empty MOC with no member notes or custom user synthesis", zap.String("title", moc.Title), zap.Int64("id", moc.ID))
 		_ = os.Remove(filePath)
-		r.db.WithContext(ctx).Where("source_id = ? OR target_id = ?", moc.ID, moc.ID).Delete(&repository.GormArticleLink{})
-		r.db.WithContext(ctx).Delete(&repository.GormArticle{}, moc.ID)
-		r.db.WithContext(ctx).Exec("DELETE FROM articles_fts WHERE rowid = ?", moc.ID)
+
+		if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Where("source_id = ? OR target_id = ?", moc.ID, moc.ID).Delete(&repository.GormArticleLink{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Delete(&repository.GormArticle{}, moc.ID).Error; err != nil {
+				return err
+			}
+			_ = tx.Exec("DELETE FROM articles_fts WHERE rowid = ?", moc.ID).Error
+			return nil
+		}); err != nil {
+			r.logger.Error("Failed to prune MOC database records", zap.Int64("id", moc.ID), zap.String("title", moc.Title), zap.Error(err))
+			continue
+		}
 
 		prunedCount++
 	}
