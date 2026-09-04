@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"example.com/backend/internal/auth"
+	"example.com/backend/internal/repository"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -54,6 +55,17 @@ func ClearSessionCookie(c *fiber.Ctx) {
 	c.Cookie(buildSessionCookie(c, "", -1))
 }
 
+func touchAPIKeyUsageAsync(repo *repository.GormRepository, id int64) {
+	if repo == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = repo.TouchAPIKeyLastUsed(ctx, id, time.Now())
+	}()
+}
+
 func AuthMiddleware(h *HandlerContext) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		path := c.Path()
@@ -72,9 +84,7 @@ func AuthMiddleware(h *HandlerContext) fiber.Handler {
 			if strings.HasPrefix(token, "rdr_live_") && h.Repo != nil {
 				hash := auth.HashAPIKey(token)
 				if apiKey, err := h.Repo.FindAPIKeyByHash(c.Context(), hash); err == nil && apiKey != nil {
-					go func(id int64) {
-						_ = h.Repo.TouchAPIKeyLastUsed(context.Background(), id, time.Now())
-					}(apiKey.ID)
+					touchAPIKeyUsageAsync(h.Repo, apiKey.ID)
 				}
 			}
 			return c.Next()
@@ -86,9 +96,7 @@ func AuthMiddleware(h *HandlerContext) fiber.Handler {
 				hash := auth.HashAPIKey(token)
 				apiKey, err := h.Repo.FindAPIKeyByHash(c.Context(), hash)
 				if err == nil && apiKey != nil {
-					go func(id int64) {
-						_ = h.Repo.TouchAPIKeyLastUsed(context.Background(), id, time.Now())
-					}(apiKey.ID)
+					touchAPIKeyUsageAsync(h.Repo, apiKey.ID)
 					return c.Next()
 				}
 			}
