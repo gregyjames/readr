@@ -58,10 +58,21 @@ export function stripFrontmatter(rawText: string): string {
 export function replaceWikilinks(content: string): string {
   if (!content) return '';
 
-  const maskedBlocks: string[] = [];
+  // Generate a random nonce prefix that is guaranteed not to collide with content
+  let nonce = `__CODE_SPAN_${Math.random().toString(36).slice(2, 10)}_`;
+  while (content.includes(nonce)) {
+    nonce = `__CODE_SPAN_${Math.random().toString(36).slice(2, 10)}_`;
+  }
+
+  const maskedBlocks: { token: string; snippet: string }[] = [];
   const mask = (snippet: string) => {
-    const token = `__CODE_SPAN_OR_BLOCK_${maskedBlocks.length}__`;
-    maskedBlocks.push(snippet);
+    let index = maskedBlocks.length;
+    let token = `${nonce}${index}__`;
+    while (content.includes(token)) {
+      index++;
+      token = `${nonce}${index}__`;
+    }
+    maskedBlocks.push({ token, snippet });
     return token;
   };
 
@@ -87,8 +98,8 @@ export function replaceWikilinks(content: string): string {
 
   // 5. Restore masked blocks in reverse order
   for (let i = maskedBlocks.length - 1; i >= 0; i--) {
-    const token = `__CODE_SPAN_OR_BLOCK_${i}__`;
-    text = text.replace(token, () => maskedBlocks[i]);
+    const { token, snippet } = maskedBlocks[i];
+    text = text.replace(token, () => snippet);
   }
 
   return text;

@@ -94,6 +94,19 @@ Inline code with \`[[Not A Link]]\` here.`;
     expect(html).toContain('`[[Not A Link]]`');
   });
 
+  it('safely handles content containing token-like patterns', () => {
+    const markdown = `Text with literal __CODE_SPAN_0__ here.
+\`\`\`ts
+const x = "[[Hidden In Code]]";
+\`\`\`
+And a real [[Real Note|Link]].`;
+
+    const html = replaceWikilinks(markdown);
+    expect(html).toContain('Text with literal __CODE_SPAN_0__ here.');
+    expect(html).toContain('const x = "[[Hidden In Code]]";');
+    expect(html).toContain('data-target="Real Note"');
+  });
+
   it('extracts hostnames cleanly without throwing', () => {
     expect(getHostname('https://www.witsnode.com/post/123')).toBe('witsnode.com');
     expect(getHostname('https://sub.domain.org/path')).toBe('sub.domain.org');
