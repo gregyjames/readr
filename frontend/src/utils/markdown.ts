@@ -26,7 +26,7 @@ export function parseFrontmatter(rawText: string): ArticleFrontmatter {
   const yamlContent = match[1];
   try {
     const parsed = yaml.load(yamlContent);
-    if (parsed && typeof parsed === 'object') {
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       const result = parsed as Record<string, unknown>;
       // Ensure tags is string array if present
       if (result.tags && Array.isArray(result.tags)) {

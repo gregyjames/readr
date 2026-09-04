@@ -41,6 +41,23 @@ metadata:
     expect(fm.metadata).toEqual({ nested: true, score: 9.5 });
   });
 
+  it('rejects array, scalar, or null YAML frontmatter gracefully', () => {
+    const arrayRaw = `---
+- item1
+- item2
+---
+
+# Content`;
+    expect(parseFrontmatter(arrayRaw)).toEqual({});
+
+    const scalarRaw = `---
+just a plain string
+---
+
+# Content`;
+    expect(parseFrontmatter(scalarRaw)).toEqual({});
+  });
+
   it('strips frontmatter cleanly from prose', () => {
     const stripped = stripFrontmatter(sampleMarkdown);
     expect(stripped.startsWith('# Neural Networks Overview')).toBe(true);
