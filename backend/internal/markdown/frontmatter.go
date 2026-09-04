@@ -9,12 +9,14 @@ import (
 )
 
 var frontmatterRegex = regexp.MustCompile(`(?s)^---\r?\n(.*?)\r?\n---\r?\n?(.*)$`)
+var emptyFrontmatterRegex = regexp.MustCompile(`(?s)^---\r?\n?---\r?\n?(.*)$`)
 
 // Document represents a parsed Markdown document containing frontmatter and body.
 type Document struct {
-	Frontmatter map[string]interface{}
-	RawYAML     string
-	Body        string
+	Frontmatter    map[string]interface{}
+	RawYAML        string
+	Body           string
+	HasFrontmatter bool
 }
 
 // SplitDocument parses a raw Markdown string into frontmatter metadata and markdown body.
@@ -23,9 +25,20 @@ func SplitDocument(raw string) (*Document, error) {
 
 	if !strings.HasPrefix(cleanRaw, "---") {
 		return &Document{
-			Frontmatter: make(map[string]interface{}),
-			RawYAML:     "",
-			Body:        raw,
+			Frontmatter:    make(map[string]interface{}),
+			RawYAML:        "",
+			Body:           raw,
+			HasFrontmatter: false,
+		}, nil
+	}
+
+	// Check empty frontmatter delimiters (e.g. "---\n---\n..." or "---\n---")
+	if emptyMatches := emptyFrontmatterRegex.FindStringSubmatch(cleanRaw); len(emptyMatches) >= 2 {
+		return &Document{
+			Frontmatter:    make(map[string]interface{}),
+			RawYAML:        "",
+			Body:           emptyMatches[1],
+			HasFrontmatter: true,
 		}, nil
 	}
 
@@ -33,9 +46,10 @@ func SplitDocument(raw string) (*Document, error) {
 	if len(matches) < 3 {
 		// Starts with --- but doesn't have a valid closing --- delimiter
 		return &Document{
-			Frontmatter: make(map[string]interface{}),
-			RawYAML:     "",
-			Body:        raw,
+			Frontmatter:    make(map[string]interface{}),
+			RawYAML:        "",
+			Body:           raw,
+			HasFrontmatter: false,
 		}, nil
 	}
 
@@ -53,9 +67,10 @@ func SplitDocument(raw string) (*Document, error) {
 	}
 
 	return &Document{
-		Frontmatter: fm,
-		RawYAML:     rawYAML,
-		Body:        body,
+		Frontmatter:    fm,
+		RawYAML:        rawYAML,
+		Body:           body,
+		HasFrontmatter: true,
 	}, nil
 }
 
@@ -85,6 +100,15 @@ func AssembleDocument(doc *Document) (string, error) {
 			return fmt.Sprintf("---\n%s\n---\n", doc.RawYAML), nil
 		}
 		return fmt.Sprintf("---\n%s\n---\n\n%s", doc.RawYAML, body), nil
+	}
+
+	if doc.HasFrontmatter {
+		body := strings.TrimPrefix(doc.Body, "\r\n")
+		body = strings.TrimPrefix(body, "\n")
+		if body == "" {
+			return "---\n---\n", nil
+		}
+		return fmt.Sprintf("---\n---\n\n%s", body), nil
 	}
 
 	return doc.Body, nil

@@ -84,6 +84,27 @@ Just standard markdown text without YAML frontmatter.
 		}
 	})
 
+	t.Run("document with empty frontmatter delimiters", func(t *testing.T) {
+		raw := "---\n---\n\n# Body Only\n"
+		doc, err := markdown.SplitDocument(raw)
+		if err != nil {
+			t.Fatalf("SplitDocument returned unexpected error: %v", err)
+		}
+
+		if !doc.HasFrontmatter {
+			t.Errorf("expected HasFrontmatter to be true for empty delimiters")
+		}
+
+		assembled, err := markdown.AssembleDocument(doc)
+		if err != nil {
+			t.Fatalf("AssembleDocument returned unexpected error: %v", err)
+		}
+
+		if assembled != raw {
+			t.Errorf("expected assembled empty frontmatter %q, got %q", raw, assembled)
+		}
+	})
+
 	t.Run("document with invalid YAML frontmatter", func(t *testing.T) {
 		raw := `---
 title: [invalid yaml
