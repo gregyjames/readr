@@ -67,6 +67,11 @@ func injectLinksIntoBody(body string, links []llmLink, candidates []repository.A
 			replacement = fmt.Sprintf("[[%s|%s]]", targetTitle, phrase)
 		}
 
+		// Don't inject if phrase already has a mapped replacement (deduplicate)
+		if _, exists := replacements[phrase]; exists {
+			continue
+		}
+
 		// Don't inject if already linked to this target anywhere in body
 		alreadyLinkedSimple := fmt.Sprintf("[[%s]]", targetTitle)
 		alreadyLinkedAliasedPrefix := fmt.Sprintf("[[%s|", targetTitle)
