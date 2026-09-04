@@ -573,4 +573,3 @@ func extractLinkedArticlesFromMOC(mocContent string) map[string]bool {
 	}
 	return linked
 }
-
