@@ -89,7 +89,10 @@ func DetectClustersFromArticles(articles []repository.ArticleRecord, minSize int
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
-		return len(candidates[i].Articles) > len(candidates[j].Articles)
+		if len(candidates[i].Articles) != len(candidates[j].Articles) {
+			return len(candidates[i].Articles) > len(candidates[j].Articles)
+		}
+		return candidates[i].Tag < candidates[j].Tag
 	})
 
 	return candidates
