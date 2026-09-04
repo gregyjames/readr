@@ -14,6 +14,7 @@ import (
 	"example.com/backend/internal/agents"
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
+	"example.com/backend/internal/vault"
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -81,10 +82,32 @@ func resolveArticleFromRecord(dataDir, recordArticlePath string) (string, error)
 
 func RegisterArticles(router fiber.Router, h *HandlerContext) {
 	router.Get("/getarticles", func(c *fiber.Ctx) error {
-		var articles []repository.GormArticle
 		archivedParam := c.Query("archived")
 		isArchived := archivedParam == "true"
 
+		if h.Vault != nil {
+			var isArchivedPtr *bool
+			if archivedParam != "" {
+				isArchivedPtr = &isArchived
+			} else {
+				f := false
+				isArchivedPtr = &f
+			}
+			articles, err := h.Vault.ListArticles(c.Context(), vault.ArticleFilter{
+				Archived: isArchivedPtr,
+			})
+			if err != nil {
+				if h.Logger != nil {
+					h.Logger.Error("Failed to retrieve articles from Vault", zap.Error(err))
+				}
+				return c.Status(500).JSON(fiber.Map{
+					"error": "Failed to retrieve articles",
+				})
+			}
+			return c.JSON(articles)
+		}
+
+		var articles []repository.GormArticle
 		query := h.DB.Where("is_archived = ?", isArchived)
 		if !isArchived {
 			query = h.DB.Where("is_archived = ? OR is_archived IS NULL", false)
@@ -233,15 +256,38 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 	})
 
 	router.Delete("/delete/:id", func(c *fiber.Ctx) error {
-		id := c.Params("id")
+		idStr := c.Params("id")
 		if h.Logger != nil {
-			h.Logger.Info("Attempting to delete article", zap.String("id", id))
+			h.Logger.Info("Attempting to delete article", zap.String("id", idStr))
+		}
+
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			return c.Status(400).JSON(fiber.Map{"error": "Invalid article ID"})
+		}
+
+		if h.Vault != nil {
+			if err := h.Vault.DeleteArticle(c.Context(), id); err != nil {
+				if h.Logger != nil {
+					h.Logger.Error("Failed to delete article via Vault", zap.Int64("id", id), zap.Error(err))
+				}
+				return c.Status(500).JSON(fiber.Map{
+					"error": "Failed to delete article",
+				})
+			}
+			if h.EventHub != nil {
+				h.EventHub.Broadcast("graph-updated")
+			}
+			return c.JSON(fiber.Map{
+				"status":  "success",
+				"message": fmt.Sprintf("Article %d deleted", id),
+			})
 		}
 
 		var article repository.GormArticle
 		_ = h.DB.First(&article, id).Error
 
-		err := h.DB.Transaction(func(tx *gorm.DB) error {
+		txErr := h.DB.Transaction(func(tx *gorm.DB) error {
 			if err := tx.Delete(&repository.GormArticle{}, id).Error; err != nil {
 				return err
 			}
@@ -250,9 +296,9 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			}
 			return nil
 		})
-		if err != nil {
+		if txErr != nil {
 			if h.Logger != nil {
-				h.Logger.Error("Failed to delete article from DB", zap.String("id", id), zap.Error(err))
+				h.Logger.Error("Failed to delete article from DB", zap.Int64("id", id), zap.Error(txErr))
 			}
 			return c.Status(500).JSON(fiber.Map{
 				"error": "Failed to delete article",
@@ -264,30 +310,33 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 				_ = os.Remove(p)
 			}
 		}
-		if p, err := resolveArticleFilePath(h.DataDir, fmt.Sprintf("%s.md", id)); err == nil {
+		if p, err := resolveArticleFilePath(h.DataDir, fmt.Sprintf("%d.md", id)); err == nil {
 			_ = os.Remove(p)
 		}
 
-		deleteImagesError := os.RemoveAll(filepath.Join(h.DataDir, "images", id))
+		deleteImagesError := os.RemoveAll(filepath.Join(h.DataDir, "images", idStr))
 		if deleteImagesError != nil {
 			if h.Logger != nil {
-				h.Logger.Error("Failed to delete article images", zap.String("id", id), zap.Error(deleteImagesError))
+				h.Logger.Error("Failed to delete article images", zap.Int64("id", id), zap.Error(deleteImagesError))
 			}
 			return c.Status(500).JSON(fiber.Map{
 				"error": "Failed to delete article images",
 			})
 		}
 
-		DeleteArticleFromFTS(h.DB, id, h.Logger)
+		DeleteArticleFromFTS(h.DB, idStr, h.Logger)
 		if h.GraphEngine != nil {
 			h.GraphEngine.InvalidateCache()
 		}
+		if h.EventHub != nil {
+			h.EventHub.Broadcast("graph-updated")
+		}
 		if h.Logger != nil {
-			h.Logger.Info("Article deleted successfully", zap.String("id", id))
+			h.Logger.Info("Article deleted successfully", zap.Int64("id", id))
 		}
 		return c.JSON(fiber.Map{
 			"status":  "success",
-			"message": fmt.Sprintf("Article %s deleted", id),
+			"message": fmt.Sprintf("Article %d deleted", id),
 		})
 	})
 
@@ -313,7 +362,17 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid article ID"})
 		}
 
-		if h.Repo != nil {
+		if h.Vault != nil {
+			if err := h.Vault.SetArchived(c.Context(), id, true); err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, repository.ErrNotFound) {
+					return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Article not found"})
+				}
+				if h.Logger != nil {
+					h.Logger.Error("Failed to archive article via Vault", zap.Int64("id", id), zap.Error(err))
+				}
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to archive article"})
+			}
+		} else if h.Repo != nil {
 			if err := h.Repo.SetArticleArchived(c.Context(), id, true); err != nil {
 				if errors.Is(err, repository.ErrNotFound) {
 					return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Article not found"})
@@ -357,7 +416,17 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid article ID"})
 		}
 
-		if h.Repo != nil {
+		if h.Vault != nil {
+			if err := h.Vault.SetArchived(c.Context(), id, false); err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, repository.ErrNotFound) {
+					return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Article not found"})
+				}
+				if h.Logger != nil {
+					h.Logger.Error("Failed to unarchive article via Vault", zap.Int64("id", id), zap.Error(err))
+				}
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to unarchive article"})
+			}
+		} else if h.Repo != nil {
 			if err := h.Repo.SetArticleArchived(c.Context(), id, false); err != nil {
 				if errors.Is(err, repository.ErrNotFound) {
 					return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Article not found"})

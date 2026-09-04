@@ -12,6 +12,7 @@ import (
 	"example.com/backend/internal/graph"
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
+	"example.com/backend/internal/vault"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -79,6 +80,7 @@ type HandlerContext struct {
 	DataDir          string
 	SettingsStore    *SettingsStore
 	Repo             *repository.GormRepository
+	Vault            vault.Vault
 	Ingester         *ingest.Ingester
 	GraphEngine      *graph.GraphEngine
 	ChatRepo         *chat.FileRepository
