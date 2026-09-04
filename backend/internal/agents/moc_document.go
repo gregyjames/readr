@@ -199,7 +199,13 @@ func ParseMOCDocument(raw string) (*MOCDocument, error) {
 					item.ContextNote = strings.TrimSpace(item.ContextNote)
 				}
 			} else {
-				item.ContextNote = bulletContent
+				// Bullet might be "Plain Title - Context Note"
+				if dashIdx := strings.Index(bulletContent, " - "); dashIdx != -1 {
+					item.TargetTitle = strings.TrimSpace(bulletContent[:dashIdx])
+					item.ContextNote = strings.TrimSpace(bulletContent[dashIdx+3:])
+				} else {
+					item.TargetTitle = strings.TrimSpace(bulletContent)
+				}
 			}
 
 			currentSection.Items = append(currentSection.Items, item)
@@ -237,9 +243,20 @@ func (doc *MOCDocument) Serialize() string {
 		sb.WriteString(strings.TrimSpace(doc.ExecutiveSummary) + "\n\n")
 	}
 
-	if len(doc.CuratedSections) > 0 {
+	hasCuratedItems := false
+	for _, sec := range doc.CuratedSections {
+		if len(sec.Items) > 0 {
+			hasCuratedItems = true
+			break
+		}
+	}
+
+	if hasCuratedItems {
 		sb.WriteString("## Curated Index\n\n")
 		for _, section := range doc.CuratedSections {
+			if len(section.Items) == 0 {
+				continue
+			}
 			sb.WriteString(fmt.Sprintf("### %s\n", strings.TrimSpace(section.Title)))
 			for _, item := range section.Items {
 				if item.RawLine != "" && strings.HasPrefix(strings.TrimSpace(item.RawLine), "- ") {
@@ -249,6 +266,12 @@ func (doc *MOCDocument) Serialize() string {
 						sb.WriteString(fmt.Sprintf("- %s - %s\n", item.Wikilink, item.ContextNote))
 					} else {
 						sb.WriteString(fmt.Sprintf("- %s\n", item.Wikilink))
+					}
+				} else if item.TargetTitle != "" {
+					if item.ContextNote != "" {
+						sb.WriteString(fmt.Sprintf("- %s - %s\n", item.TargetTitle, item.ContextNote))
+					} else {
+						sb.WriteString(fmt.Sprintf("- %s\n", item.TargetTitle))
 					}
 				}
 			}
@@ -301,7 +324,7 @@ func (doc *MOCDocument) ReconcileLinks(validMemberTitles map[string]bool) bool {
 	for _, sec := range doc.CuratedSections {
 		var validItems []MOCParsedItem
 		for _, item := range sec.Items {
-			if item.Wikilink == "" {
+			if item.TargetTitle == "" && item.Wikilink == "" {
 				validItems = append(validItems, item)
 				continue
 			}
@@ -315,8 +338,15 @@ func (doc *MOCDocument) ReconcileLinks(validMemberTitles map[string]bool) bool {
 				changed = true
 			}
 		}
-		sec.Items = validItems
-		updatedSections = append(updatedSections, sec)
+
+		// Only retain section if it has remaining items (prunes empty sections)
+		if len(validItems) > 0 {
+			sec.Items = validItems
+			updatedSections = append(updatedSections, sec)
+		} else if len(sec.Items) > 0 {
+			// Section had items and now has 0, mark changed
+			changed = true
+		}
 	}
 
 	doc.CuratedSections = updatedSections

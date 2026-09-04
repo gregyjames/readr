@@ -36,19 +36,24 @@ func DetectClustersFromArticles(articles []repository.ArticleRecord, minSize int
 		}
 
 		if isMOC {
-			topicKey := strings.TrimPrefix(lowerTitle, "moc - ")
-			topicKey = strings.TrimPrefix(topicKey, "moc: ")
-			topicKey = strings.TrimPrefix(topicKey, "moc ")
-			topicKey = strings.TrimSpace(topicKey)
-			existingMOCMap[topicKey] = a
-
+			mocTag := ""
 			if a.Tags != "" {
 				for _, tag := range strings.Split(a.Tags, ",") {
-					normTag := strings.ToLower(strings.TrimSpace(tag))
-					if normTag != "" && normTag != "moc" {
-						existingMOCMap[normTag] = a
+					cleaned := repository.SanitizeObsidianTag(tag)
+					if cleaned != "" && cleaned != "moc" {
+						mocTag = cleaned
+						break
 					}
 				}
+			}
+			if mocTag == "" {
+				topicKey := strings.TrimPrefix(lowerTitle, "moc - ")
+				topicKey = strings.TrimPrefix(topicKey, "moc: ")
+				topicKey = strings.TrimPrefix(topicKey, "moc ")
+				mocTag = repository.SanitizeObsidianTag(topicKey)
+			}
+			if mocTag != "" {
+				existingMOCMap[mocTag] = a
 			}
 		} else {
 			regularArticles = append(regularArticles, a)
@@ -72,19 +77,35 @@ func DetectClustersFromArticles(articles []repository.ArticleRecord, minSize int
 	}
 
 	var candidates []ClusterCandidate
-	for tag, items := range tagClusters {
-		if len(items) >= minSize {
-			var existingMOC *repository.ArticleRecord
-			if moc, found := existingMOCMap[tag]; found {
-				mocCopy := moc
-				existingMOC = &mocCopy
-			}
+	seenCandidates := make(map[string]bool)
 
+	for tag, items := range tagClusters {
+		var existingMOC *repository.ArticleRecord
+		if moc, found := existingMOCMap[tag]; found {
+			mocCopy := moc
+			existingMOC = &mocCopy
+		}
+
+		if len(items) >= minSize || existingMOC != nil {
+			seenCandidates[tag] = true
 			candidates = append(candidates, ClusterCandidate{
 				Tag:         tag,
 				Articles:    items,
 				ExistingMOC: existingMOC,
 			})
+		}
+	}
+
+	// Also ensure any existing MOCs with 0 tagged articles are reconciled
+	for tag, moc := range existingMOCMap {
+		if !seenCandidates[tag] {
+			mocCopy := moc
+			candidates = append(candidates, ClusterCandidate{
+				Tag:         tag,
+				Articles:    tagClusters[tag],
+				ExistingMOC: &mocCopy,
+			})
+			seenCandidates[tag] = true
 		}
 	}
 

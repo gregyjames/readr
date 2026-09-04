@@ -70,6 +70,13 @@ func TestMOCDocument_ReconcileLinks_PrunesStaleBulletsOnly(t *testing.T) {
 - [[Active Note]] - Kept.
 - [[Deleted Note]] - Should be pruned.
 
+### Empty Topic
+- [[Obsolete Note]] - Pruned.
+
+### Plain Title Section
+- Plain Dead Note - Describes a deleted note.
+- [[Active Note 2]] - Preserved.
+
 ## Notes & Synthesis
 *Keep this text.*
 `
@@ -78,7 +85,12 @@ func TestMOCDocument_ReconcileLinks_PrunesStaleBulletsOnly(t *testing.T) {
 		t.Fatalf("parse error: %v", err)
 	}
 
-	pruned := doc.ReconcileLinks(map[string]bool{"Active Note": true, "active note": true})
+	pruned := doc.ReconcileLinks(map[string]bool{
+		"Active Note":   true,
+		"active note":   true,
+		"Active Note 2": true,
+		"active note 2": true,
+	})
 	if !pruned {
 		t.Errorf("expected pruned to be true")
 	}
@@ -87,8 +99,14 @@ func TestMOCDocument_ReconcileLinks_PrunesStaleBulletsOnly(t *testing.T) {
 	if strings.Contains(out, "[[Deleted Note]]") {
 		t.Errorf("expected Deleted Note to be pruned from output:\n%s", out)
 	}
-	if !strings.Contains(out, "[[Active Note]]") {
-		t.Errorf("expected Active Note to remain in output:\n%s", out)
+	if strings.Contains(out, "### Empty Topic") {
+		t.Errorf("expected Empty Topic section heading to be pruned when all items are deleted:\n%s", out)
+	}
+	if strings.Contains(out, "Plain Dead Note") {
+		t.Errorf("expected Plain Dead Note to be pruned from output:\n%s", out)
+	}
+	if !strings.Contains(out, "[[Active Note]]") || !strings.Contains(out, "[[Active Note 2]]") {
+		t.Errorf("expected Active Notes to remain in output:\n%s", out)
 	}
 	if !strings.Contains(out, "*Keep this text.*") {
 		t.Errorf("expected user notes to be preserved:\n%s", out)
