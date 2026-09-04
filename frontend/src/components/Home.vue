@@ -1111,7 +1111,7 @@ const secondaryArticles = computed(() => {
 /* ─── Archive fly-out animation ──────────────────────── */
 
 /*
-  Stage breakdown (620ms total):
+  Stage breakdown (320ms total):
   0–6%   : Snap attention — amber border corona ignites
   6–18%  : Chromatic glitch — brief hue-rotate flicker
   18–40% : Horizontal press — card narrows, perspective tips back
