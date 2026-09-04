@@ -67,6 +67,19 @@ func AuthMiddleware(h *HandlerContext) fiber.Handler {
 
 		token := ExtractSessionToken(c)
 
+		// If no password is set, allow access
+		if pwdHash == "" {
+			if strings.HasPrefix(token, "rdr_live_") && h.Repo != nil {
+				hash := auth.HashAPIKey(token)
+				if apiKey, err := h.Repo.FindAPIKeyByHash(c.Context(), hash); err == nil && apiKey != nil {
+					go func(id int64) {
+						_ = h.Repo.TouchAPIKeyLastUsed(context.Background(), id, time.Now())
+					}(apiKey.ID)
+				}
+			}
+			return c.Next()
+		}
+
 		// Check if it's an API Key (starts with rdr_live_)
 		if strings.HasPrefix(token, "rdr_live_") {
 			if h.Repo != nil {
@@ -80,11 +93,6 @@ func AuthMiddleware(h *HandlerContext) fiber.Handler {
 				}
 			}
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid API key"})
-		}
-
-		// If no password is set, allow access
-		if pwdHash == "" {
-			return c.Next()
 		}
 
 		if token == "" {

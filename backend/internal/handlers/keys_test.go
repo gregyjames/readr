@@ -150,3 +150,21 @@ func TestAPIKeysCRUDAndAuth(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 }
+
+func TestAuthMiddleware_PasswordlessAllowsRequests(t *testing.T) {
+	app, _, _ := setupKeysTestApp(t)
+
+	// No password configured (PasswordHash == "")
+	// 1. Request without token
+	req := httptest.NewRequest("GET", "/api/protected-resource", nil)
+	resp, err := app.Test(req, 5000)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// 2. Request with invalid/stale API key when password is not configured
+	req = httptest.NewRequest("GET", "/api/protected-resource", nil)
+	req.Header.Set("Authorization", "Bearer rdr_live_invalidkey1234567890")
+	resp, err = app.Test(req, 5000)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
