@@ -126,7 +126,28 @@ func (v *DefaultVault) SaveArticle(ctx context.Context, input NoteInput) (*repos
 		}
 	}
 
-	sanitizedTitle := ingest.SanitizeTitleFilename(input.Title, input.ID)
+	var article repository.GormArticle
+	isNew := input.ID <= 0
+
+	// 1. Allocate / fetch DB record to establish the unique article ID
+	if isNew {
+		article = repository.GormArticle{
+			Title: input.Title,
+			Tags:  input.Tags,
+		}
+		if input.ImagePath != "" {
+			article.Image = input.ImagePath
+		}
+		if err := v.db.WithContext(ctx).Create(&article).Error; err != nil {
+			return nil, fmt.Errorf("failed to allocate article record in db: %w", err)
+		}
+	} else {
+		if err := v.db.WithContext(ctx).First(&article, input.ID).Error; err != nil {
+			article = repository.GormArticle{ID: input.ID}
+		}
+	}
+
+	sanitizedTitle := ingest.SanitizeTitleFilename(input.Title, article.ID)
 	var relPath string
 	var absPath string
 
@@ -138,30 +159,32 @@ func (v *DefaultVault) SaveArticle(ctx context.Context, input NoteInput) (*repos
 		absPath = filepath.Join(v.dataDir, "articles", sanitizedTitle)
 	}
 
-	// Write markdown file atomically
+	// 2. Write markdown file atomically
 	dir := filepath.Dir(absPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
+		if isNew {
+			_ = v.db.WithContext(ctx).Delete(&repository.GormArticle{}, article.ID)
+		}
 		return nil, fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
 	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(absPath)))
 	if err := os.WriteFile(tmpFile, []byte(input.Content), 0644); err != nil {
+		if isNew {
+			_ = v.db.WithContext(ctx).Delete(&repository.GormArticle{}, article.ID)
+		}
 		return nil, fmt.Errorf("failed to write tmp markdown: %w", err)
 	}
 	if err := os.Rename(tmpFile, absPath); err != nil {
 		_ = os.Remove(tmpFile)
+		if isNew {
+			_ = v.db.WithContext(ctx).Delete(&repository.GormArticle{}, article.ID)
+		}
 		return nil, fmt.Errorf("failed to commit markdown file: %w", err)
 	}
 
-	// Persist in DB
-	var article repository.GormArticle
+	// 3. Persist updated metadata and sync FTS
 	err := v.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if input.ID > 0 {
-			if err := tx.First(&article, input.ID).Error; err != nil {
-				article = repository.GormArticle{ID: input.ID}
-			}
-		}
-
 		article.Title = input.Title
 		article.Tags = input.Tags
 		article.Article = relPath
@@ -182,6 +205,9 @@ func (v *DefaultVault) SaveArticle(ctx context.Context, input NoteInput) (*repos
 
 	if err != nil {
 		_ = os.Remove(absPath)
+		if isNew {
+			_ = v.db.WithContext(ctx).Delete(&repository.GormArticle{}, article.ID)
+		}
 		return nil, fmt.Errorf("failed to save article record in db: %w", err)
 	}
 

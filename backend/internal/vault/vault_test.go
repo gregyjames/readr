@@ -274,3 +274,53 @@ func TestVault_SaveArticle_TransactionFailure_CleansUpFile(t *testing.T) {
 		t.Errorf("expected file %s to be cleaned up after DB transaction failure, but file still exists", expectedDiskPath)
 	}
 }
+
+func TestVault_SaveArticle_AllocatesUniqueIDsAndDistinctPaths(t *testing.T) {
+	v, _, tempDir, _ := setupTestVaultEnv(t)
+	ctx := context.Background()
+
+	// 1. Create first article with Windows reserved name "CON"
+	art1, err := v.SaveArticle(ctx, NoteInput{
+		Title:   "CON",
+		Content: "# CON 1",
+		Tags:    "reserved",
+	})
+	if err != nil {
+		t.Fatalf("failed to save first article: %v", err)
+	}
+
+	// 2. Create second article with same Windows reserved name "CON"
+	art2, err := v.SaveArticle(ctx, NoteInput{
+		Title:   "CON",
+		Content: "# CON 2",
+		Tags:    "reserved",
+	})
+	if err != nil {
+		t.Fatalf("failed to save second article: %v", err)
+	}
+
+	if art1.ID == art2.ID {
+		t.Fatalf("expected distinct IDs for both articles, got %d for both", art1.ID)
+	}
+
+	expectedPath1 := fmt.Sprintf("/articles/Article %d.md", art1.ID)
+	expectedPath2 := fmt.Sprintf("/articles/Article %d.md", art2.ID)
+
+	if art1.Article != expectedPath1 {
+		t.Errorf("expected art1 path %q, got %q", expectedPath1, art1.Article)
+	}
+	if art2.Article != expectedPath2 {
+		t.Errorf("expected art2 path %q, got %q", expectedPath2, art2.Article)
+	}
+
+	// Verify both distinct files exist on disk
+	diskPath1 := filepath.Join(tempDir, "articles", fmt.Sprintf("Article %d.md", art1.ID))
+	diskPath2 := filepath.Join(tempDir, "articles", fmt.Sprintf("Article %d.md", art2.ID))
+
+	if _, err := os.Stat(diskPath1); os.IsNotExist(err) {
+		t.Errorf("expected disk file for art1 at %s", diskPath1)
+	}
+	if _, err := os.Stat(diskPath2); os.IsNotExist(err) {
+		t.Errorf("expected disk file for art2 at %s", diskPath2)
+	}
+}
