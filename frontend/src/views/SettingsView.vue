@@ -1398,22 +1398,31 @@ const executeLibrarian = async () => {
         <p class="text-[11px] text-emerald-800 dark:text-emerald-300">
           Make sure to copy your API key now. You will not be able to see it again!
         </p>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
           <input
             readonly
             :value="newlyCreatedKey.key"
             class="flex-1 px-3 py-2 bg-white dark:bg-[#111] border border-emerald-300 dark:border-emerald-800 rounded-xl text-xs font-mono text-gray-900 dark:text-gray-100 select-all"
           />
-          <button
-            type="button"
-            @click="copyNewKeyText(newlyCreatedKey.key)"
-            class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl cursor-pointer transition-colors shrink-0 flex items-center gap-1.5 shadow-sm"
-          >
-            <svg v-if="copiedNewKey" class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-            </svg>
-            {{ copiedNewKey ? 'Copied!' : 'Copy Key' }}
-          </button>
+          <div class="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              @click="copyNewKeyText(newlyCreatedKey.key)"
+              class="flex-1 sm:flex-initial px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl cursor-pointer transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+            >
+              <svg v-if="copiedNewKey" class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+              {{ copiedNewKey ? 'Copied!' : 'Copy Key' }}
+            </button>
+            <button
+              type="button"
+              @click="bookmarkletAuthToken = newlyCreatedKey.key"
+              class="flex-1 sm:flex-initial px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-xl cursor-pointer transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+            >
+              <span>🔖 Applied to Bookmarklet</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1448,14 +1457,6 @@ const executeLibrarian = async () => {
             <div class="flex items-center gap-2 self-end sm:self-center">
               <button
                 type="button"
-                @click="bookmarkletAuthToken = key.key_prefix"
-                title="Use prefix in bookmarklet"
-                class="text-[11px] text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer mr-2"
-              >
-                Use in Bookmarklet
-              </button>
-              <button
-                type="button"
                 @click="revokeAPIKey(key.id)"
                 :disabled="revokingKeyId === key.id"
                 class="px-2.5 py-1.5 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 text-xs font-medium rounded-lg transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1"
@@ -1472,7 +1473,7 @@ const executeLibrarian = async () => {
     </div>
 
     <!-- Browser Bookmarklet Card -->
-    <div class="bg-white dark:bg-[#111] rounded-3xl border border-gray-200/70 dark:border-gray-800/70 p-6 sm:p-8 space-y-6 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.2)]">
+    <div id="browser-bookmarklet" class="bg-white dark:bg-[#111] rounded-3xl border border-gray-200/70 dark:border-gray-800/70 p-6 sm:p-8 space-y-6 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.2)]">
       <div class="flex items-start justify-between gap-4 pb-5 border-b border-gray-100 dark:border-gray-800">
         <div>
           <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
@@ -1506,14 +1507,14 @@ const executeLibrarian = async () => {
 
         <div class="space-y-2">
           <label for="bookmarklet-token" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Authentication Token (Optional)
+            Authentication Token (API Key or Session Token)
           </label>
           <div class="relative">
             <input
               id="bookmarklet-token"
               v-model="bookmarkletAuthToken"
               :type="showBookmarkletToken ? 'text' : 'password'"
-              placeholder="Bearer token (if protected)"
+              placeholder="rdr_live_... or session token"
               class="w-full pl-4 pr-12 py-2.5 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-xl focus:bg-white dark:focus:bg-[#1a1a1a] focus:border-emerald-500 text-gray-900 dark:text-gray-100 text-xs font-mono"
             />
             <button
@@ -1535,7 +1536,18 @@ const executeLibrarian = async () => {
             </button>
           </div>
           <p class="text-[11px] text-gray-400 dark:text-gray-500">
-            {{ bookmarkletAuthToken ? 'Active session token loaded. Drag or copy the button to install.' : 'No token set. If your vault is password-protected, log in or paste your token above.' }}
+            <span v-if="bookmarkletAuthToken.endsWith('...') || (bookmarkletAuthToken.startsWith('rdr_live_') && bookmarkletAuthToken.length < 25)" class="text-amber-600 dark:text-amber-400 font-medium">
+              ⚠️ Truncated key prefix detected! Please paste the full <code>rdr_live_...</code> API key or generate a new key above.
+            </span>
+            <span v-else-if="bookmarkletAuthToken.startsWith('rdr_live_')" class="text-emerald-600 dark:text-emerald-400 font-medium">
+              ✓ Full API Key loaded. Install or update your bookmarklet button below.
+            </span>
+            <span v-else-if="bookmarkletAuthToken">
+              Active session token loaded. Drag or copy the button to install.
+            </span>
+            <span v-else>
+              No token set. If your vault is password-protected, generate an API key above or paste your token.
+            </span>
           </p>
         </div>
       </div>

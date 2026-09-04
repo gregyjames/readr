@@ -10,21 +10,26 @@ import (
 )
 
 func ExtractSessionToken(c *fiber.Ctx) string {
-	token := c.Cookies("readr_session")
-	if token == "" {
-		authHeader := c.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-		} else if authHeader != "" && !strings.Contains(authHeader, " ") {
-			token = strings.TrimSpace(authHeader)
-		}
+	var token string
+	authHeader := strings.TrimSpace(c.Get("Authorization"))
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	} else if authHeader != "" && !strings.Contains(authHeader, " ") {
+		token = authHeader
 	}
+
 	if token == "" {
 		token = strings.TrimSpace(c.Get("X-API-Key"))
 		if token == "" {
 			token = strings.TrimSpace(c.Get("X-Api-Key"))
 		}
 	}
+
+	if token == "" {
+		token = strings.TrimSpace(c.Cookies("readr_session"))
+	}
+
+	token = strings.Trim(token, "\"'`")
 	return token
 }
 
