@@ -181,6 +181,7 @@ func (v *DefaultVault) SaveArticle(ctx context.Context, input NoteInput) (*repos
 	})
 
 	if err != nil {
+		_ = os.Remove(absPath)
 		return nil, fmt.Errorf("failed to save article record in db: %w", err)
 	}
 

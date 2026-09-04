@@ -249,3 +249,28 @@ func TestVault_ResolveFilePath_PathTraversalGuards(t *testing.T) {
 		}
 	}
 }
+
+func TestVault_SaveArticle_TransactionFailure_CleansUpFile(t *testing.T) {
+	v, db, tempDir, _ := setupTestVaultEnv(t)
+	ctx := context.Background()
+
+	// Drop articles table so the DB transaction fails
+	_ = db.Migrator().DropTable(&repository.GormArticle{})
+
+	input := NoteInput{
+		Title:   "Doomed Article",
+		Content: "# Doomed Article\n\nContent that should not remain on disk.",
+		Tags:    "failure-test",
+		Topic:   "Testing",
+	}
+
+	_, err := v.SaveArticle(ctx, input)
+	if err == nil {
+		t.Fatalf("expected error from SaveArticle when DB table is dropped, got nil")
+	}
+
+	expectedDiskPath := filepath.Join(tempDir, "articles", "Testing", "Doomed Article.md")
+	if _, err := os.Stat(expectedDiskPath); !os.IsNotExist(err) {
+		t.Errorf("expected file %s to be cleaned up after DB transaction failure, but file still exists", expectedDiskPath)
+	}
+}
