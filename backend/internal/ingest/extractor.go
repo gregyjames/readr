@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"codeberg.org/readeck/go-readability"
@@ -38,6 +39,9 @@ func (e *ContentExtractor) Extract(htmlBytes []byte, sourceURL *url.URL) (*Extra
 	if err != nil {
 		return nil, fmt.Errorf("html to markdown conversion failed: %w", err)
 	}
+
+	// Post-process and sanitize markdown content
+	markdownContent = cleanMarkdownContent(markdownContent)
 
 	fullDoc, _ := html.Parse(bytes.NewReader(htmlBytes))
 	metaInfo := extractHTMLMetadata(fullDoc)
@@ -80,6 +84,53 @@ func (e *ContentExtractor) Extract(htmlBytes []byte, sourceURL *url.URL) (*Extra
 		SiteName:        siteName,
 		OG:              metaInfo.og,
 	}, nil
+}
+
+var (
+	reMultipleNewlines    = regexp.MustCompile(`\n{3,}`)
+	reEmptyLinks          = regexp.MustCompile(`\[\s*\]\([^\)]*\)`)
+	reEmptyImages         = regexp.MustCompile(`!\[\s*\]\(\s*\)`)
+	reOrphanedBullets     = regexp.MustCompile(`(?m)^[-*+]\s*$`)
+	reBoilerplateHeadings = regexp.MustCompile(`(?i)^#{1,6}\s*(share\s+this(\s+article|\s+story|\s+post)?|share\s+on\s+\w+|newsletter(\s+signup)?|subscribe(\s+to\s+our\s+newsletter)?|leave\s+a\s+(reply|comment)|comments?|related\s+(articles?|posts?|stories)|advertisement|trending\s+now)\s*$`)
+)
+
+// cleanMarkdownContent removes web clutter, empty elements, boilerplate headings, and normalizes spacing.
+func cleanMarkdownContent(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+
+	// 1. Remove empty tracking images and empty links
+	cleaned := reEmptyImages.ReplaceAllString(raw, "")
+	cleaned = reEmptyLinks.ReplaceAllString(cleaned, "")
+
+	// 2. Remove orphaned bullet points and boilerplate headings
+	lines := strings.Split(cleaned, "\n")
+	filteredLines := make([]string, 0, len(lines))
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Check boilerplate headings
+		if reBoilerplateHeadings.MatchString(trimmed) {
+			continue
+		}
+
+		// Check orphaned bullet points
+		if reOrphanedBullets.MatchString(trimmed) {
+			continue
+		}
+
+		// Trim trailing whitespace per line
+		filteredLines = append(filteredLines, strings.TrimRight(line, " \t\r"))
+	}
+
+	cleaned = strings.Join(filteredLines, "\n")
+
+	// 3. Normalize multiple consecutive newlines (3+ -> 2)
+	cleaned = reMultipleNewlines.ReplaceAllString(cleaned, "\n\n")
+
+	return strings.TrimSpace(cleaned)
 }
 
 type metadataInfo struct {

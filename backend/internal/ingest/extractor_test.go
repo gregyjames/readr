@@ -48,3 +48,80 @@ func TestExtract_OpenGraphMetadata(t *testing.T) {
 		t.Errorf("OG[og:image] = %q; want https://example.com/cover.png", result.OG["og:image"])
 	}
 }
+
+func TestCleanMarkdownContent(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "collapses multiple consecutive newlines",
+			input:    "Paragraph 1.\n\n\n\n\nParagraph 2.\n\n\nParagraph 3.",
+			expected: "Paragraph 1.\n\nParagraph 2.\n\nParagraph 3.",
+		},
+		{
+			name:     "removes empty links and tracking images",
+			input:    "Read this []() and look at ![]() image.\n\nValid [link](https://example.com) and ![img](https://example.com/img.png).",
+			expected: "Read this  and look at  image.\n\nValid [link](https://example.com) and ![img](https://example.com/img.png).",
+		},
+		{
+			name: "strips boilerplate headings and orphaned bullets",
+			input: `# Main Article Title
+
+Some good content here.
+
+## Share this article
+- 
+- * 
+### Leave a comment
+
+More good content.
+
+## Related Stories
+## Newsletter Signup
+# Advertisement`,
+			expected: `# Main Article Title
+
+Some good content here.
+
+- *
+
+More good content.`,
+		},
+		{
+			name: "preserves code blocks and prose structure",
+			input: `Here is a code snippet:
+
+` + "```go" + `
+package main
+
+func main() {
+    println("Hello world")
+}
+` + "```" + `
+
+End of article.`,
+			expected: `Here is a code snippet:
+
+` + "```go" + `
+package main
+
+func main() {
+    println("Hello world")
+}
+` + "```" + `
+
+End of article.`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := cleanMarkdownContent(tt.input)
+			if actual != tt.expected {
+				t.Errorf("cleanMarkdownContent() mismatch.\nGot:\n%q\nWant:\n%q", actual, tt.expected)
+			}
+		})
+	}
+}
