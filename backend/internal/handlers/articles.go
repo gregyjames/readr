@@ -16,6 +16,7 @@ import (
 	"example.com/backend/internal/repository"
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 type RequestBody struct {
@@ -240,7 +241,16 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		var article repository.GormArticle
 		_ = h.DB.First(&article, id).Error
 
-		if err := h.DB.Delete(&repository.GormArticle{}, id).Error; err != nil {
+		err := h.DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Delete(&repository.GormArticle{}, id).Error; err != nil {
+				return err
+			}
+			if err := tx.Exec("DELETE FROM article_links WHERE source_id = ? OR target_id = ?", id, id).Error; err != nil {
+				return err
+			}
+			return nil
+		})
+		if err != nil {
 			if h.Logger != nil {
 				h.Logger.Error("Failed to delete article from DB", zap.String("id", id), zap.Error(err))
 			}

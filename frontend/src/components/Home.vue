@@ -212,7 +212,7 @@ function spawnArchiveParticles(id: number) {
       { top: `${rect.bottom - 3}px`, opacity: 1, offset: 0.88 },
       { top: `${rect.bottom}px`, opacity: 0 },
     ],
-    { duration: 300, easing: 'ease-in-out', fill: 'forwards' }
+    { duration: 180, easing: 'ease-in-out', fill: 'forwards' }
   ).onfinish = () => scanLine.remove()
 
   // ── Expanding burst ring ───────────────────────────────
@@ -232,9 +232,9 @@ function spawnArchiveParticles(id: number) {
         { transform: 'scale(1)', opacity: 0.95, borderWidth: '2px' },
         { transform: `scale(${maxDim / 6})`, opacity: 0, borderWidth: '1px' },
       ],
-      { duration: 420, easing: 'ease-out', fill: 'forwards' }
+      { duration: 240, easing: 'ease-out', fill: 'forwards' }
     ).onfinish = () => ring.remove()
-  }, 80)
+  }, 40)
 
   // ── Particle shower ────────────────────────────────────
   const palette = [
@@ -251,11 +251,11 @@ function spawnArchiveParticles(id: number) {
     const py = rect.top + Math.random() * rect.height
     const color = palette[Math.floor(Math.random() * palette.length)]
     const shape = shapes[Math.floor(Math.random() * shapes.length)]
-    const dur = 480 + Math.random() * 380
+    const dur = 240 + Math.random() * 200
     const dx = (Math.random() - 0.5) * 160
     const dy = -(Math.random() * 140 + 30)
     const rot = (Math.random() - 0.5) * 540
-    const delay = Math.random() * 120
+    const delay = Math.random() * 50
 
     p.style.cssText = `
       position:fixed;left:${px}px;top:${py}px;
@@ -281,7 +281,7 @@ const archiveArticle = async (id: number) => {
   const targetArticle = articles.value.find(a => a.ID === id) || null
   archivingId.value = id
   spawnArchiveParticles(id)
-  await new Promise(resolve => setTimeout(resolve, 620))
+  await new Promise(resolve => setTimeout(resolve, 320))
   try {
     await axios.post(`/api/articles/${id}/archive`)
     articles.value = articles.value.filter(article => article.ID !== id)
@@ -327,8 +327,8 @@ function spawnDeleteParticles(id: number) {
   // ── Radial crack flash ─────────────────────────────────
   // Two expanding rings — inner tight (red), outer wide (crimson fade)
   ;[
-    { delay: 0, scale: rect.width / 5, color: 'rgba(239,68,68,0.95)', dur: 380 },
-    { delay: 40, scale: rect.width / 2.5, color: 'rgba(185,28,28,0.6)', dur: 480 },
+    { delay: 0, scale: rect.width / 5, color: 'rgba(239,68,68,0.95)', dur: 220 },
+    { delay: 20, scale: rect.width / 2.5, color: 'rgba(185,28,28,0.6)', dur: 280 },
   ].forEach(({ delay, scale, color, dur }) => {
     const ring = document.createElement('div')
     ring.style.cssText = `
@@ -364,7 +364,7 @@ function spawnDeleteParticles(id: number) {
   document.body.appendChild(flash)
   flash.animate(
     [{ opacity: 1 }, { opacity: 0 }],
-    { duration: 320, easing: 'ease-out', fill: 'forwards' }
+    { duration: 200, easing: 'ease-out', fill: 'forwards' }
   ).onfinish = () => flash.remove()
 
   // ── Particle shatter ──────────────────────────────────
@@ -385,13 +385,13 @@ function spawnDeleteParticles(id: number) {
     const py = cy + Math.sin(angle) * startR
     const color = palette[Math.floor(Math.random() * palette.length)]
     const shape = shapes[Math.floor(Math.random() * shapes.length)]
-    const dur = 380 + Math.random() * 360
+    const dur = 220 + Math.random() * 200
     // Scatter radially outward — much wider than archive
     const dist = 120 + Math.random() * 180
     const dx = Math.cos(angle) * dist + (Math.random() - 0.5) * 60
     const dy = Math.sin(angle) * dist - Math.random() * 80 // bias upward
     const rot = (Math.random() - 0.5) * 720
-    const delay = Math.random() * 80
+    const delay = Math.random() * 40
 
     p.style.cssText = `
       position:fixed;left:${px}px;top:${py}px;
@@ -418,7 +418,7 @@ const deleteArticle = async (id: number) => {
   if (!confirm('Are you sure you want to permanently delete this note from the vault?')) return
   deletingId.value = id
   spawnDeleteParticles(id)
-  await new Promise(resolve => setTimeout(resolve, 580))
+  await new Promise(resolve => setTimeout(resolve, 300))
   try {
     await axios.delete(`/api/delete/${id}`)
     articles.value = articles.value.filter(article => article.ID !== id)
@@ -1111,7 +1111,7 @@ const secondaryArticles = computed(() => {
 /* ─── Archive fly-out animation ──────────────────────── */
 
 /*
-  Stage breakdown (620ms total):
+  Stage breakdown (320ms total):
   0–6%   : Snap attention — amber border corona ignites
   6–18%  : Chromatic glitch — brief hue-rotate flicker
   18–40% : Horizontal press — card narrows, perspective tips back
@@ -1200,7 +1200,7 @@ const secondaryArticles = computed(() => {
 }
 
 .reveal-item.archiving {
-  animation: archive-out 0.62s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation: archive-out 0.32s cubic-bezier(0.4, 0, 0.2, 1) forwards;
   pointer-events: none;
   transform-origin: center 60%;
   will-change: transform, opacity, filter;
@@ -1209,7 +1209,7 @@ const secondaryArticles = computed(() => {
 /* ─── Delete shatter animation ───────────────────────── */
 
 /*
-  Stage breakdown (580ms total):
+  Stage breakdown (300ms total):
   0–5%   : Red corona flash — border ignites crimson
   5–18%  : Violent shake — rapid left-right jitter (can't escape)
   18–35% : Crack inward — scaleX crush, red tint floods in
@@ -1286,7 +1286,7 @@ const secondaryArticles = computed(() => {
 }
 
 .reveal-item.deleting {
-  animation: delete-out 0.58s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation: delete-out 0.30s cubic-bezier(0.4, 0, 0.2, 1) forwards;
   pointer-events: none;
   transform-origin: center center;
   will-change: transform, opacity, filter;
