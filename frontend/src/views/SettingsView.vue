@@ -1,7 +1,35 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { settings, saveSettingsToServer, toggleTheme, setViewMode } from '../store/settings'
-import { authState, changePassword } from '../store/auth'
+import { authState, changePassword, getStoredToken } from '../store/auth'
+import { generateBookmarkletCode } from '../utils/bookmarklet'
+
+// Bookmarklet State
+const bookmarkletServerUrl = ref(typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080')
+const bookmarkletAuthToken = ref(getStoredToken() || '')
+const copiedBookmarklet = ref(false)
+let copyTimer: ReturnType<typeof setTimeout> | null = null
+
+const generatedBookmarkletHref = computed(() => {
+  return generateBookmarkletCode({
+    serverUrl: bookmarkletServerUrl.value,
+    authToken: bookmarkletAuthToken.value || undefined,
+  })
+})
+
+const copyBookmarkletCode = async () => {
+  try {
+    await navigator.clipboard.writeText(generatedBookmarkletHref.value)
+    copiedBookmarklet.value = true
+    if (copyTimer) clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => {
+      copiedBookmarklet.value = false
+      copyTimer = null
+    }, 2500)
+  } catch (err) {
+    console.error('Failed to copy bookmarklet code:', err)
+  }
+}
 
 // Diagnostics Tab State
 const activeTab = ref<'general' | 'diagnostics'>('general')
@@ -243,6 +271,10 @@ onUnmounted(() => {
   if (passwordTimer) {
     clearTimeout(passwordTimer)
     passwordTimer = null
+  }
+  if (copyTimer) {
+    clearTimeout(copyTimer)
+    copyTimer = null
   }
   stopDiagnosticsPolling()
 })
@@ -1155,6 +1187,130 @@ const executeLibrarian = async () => {
           </svg>
           {{ isCleaningLinks ? 'Scanning Vault...' : 'Clean Broken Links' }}
         </button>
+      </div>
+    </div>
+
+    <!-- Browser Bookmarklet Card -->
+    <div class="bg-white dark:bg-[#111] rounded-3xl border border-gray-200/70 dark:border-gray-800/70 p-6 sm:p-8 space-y-6 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.2)]">
+      <div class="flex items-start justify-between gap-4 pb-5 border-b border-gray-100 dark:border-gray-800">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+            <span class="text-lg" aria-hidden="true">🔖</span>
+            Browser Bookmarklet
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400">1-Click Save</span>
+          </h2>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            Save articles, blog posts, and documentation directly into your Readr vault from any webpage with custom tags.
+          </p>
+        </div>
+      </div>
+
+      <!-- Config Inputs -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="space-y-2">
+          <label for="bookmarklet-server-url" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Server URL
+          </label>
+          <input
+            id="bookmarklet-server-url"
+            v-model="bookmarkletServerUrl"
+            type="text"
+            placeholder="http://localhost:8080"
+            class="w-full px-4 py-2.5 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-xl focus:bg-white dark:focus:bg-[#1a1a1a] focus:border-emerald-500 text-gray-900 dark:text-gray-100 text-xs font-mono"
+          />
+          <p class="text-[11px] text-gray-400 dark:text-gray-500">
+            Address of your Readr instance reachable from your browser.
+          </p>
+        </div>
+
+        <div class="space-y-2">
+          <label for="bookmarklet-token" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Authentication Token (Optional)
+          </label>
+          <input
+            id="bookmarklet-token"
+            v-model="bookmarkletAuthToken"
+            type="password"
+            placeholder="Bearer token (if protected)"
+            class="w-full px-4 py-2.5 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-xl focus:bg-white dark:focus:bg-[#1a1a1a] focus:border-emerald-500 text-gray-900 dark:text-gray-100 text-xs font-mono"
+          />
+          <p class="text-[11px] text-gray-400 dark:text-gray-500">
+            Pre-filled with your current active session token if logged in.
+          </p>
+        </div>
+      </div>
+
+      <!-- Interactive Bookmarklet Actions -->
+      <div class="p-5 rounded-2xl bg-gradient-to-br from-emerald-50/50 to-teal-50/30 dark:from-emerald-950/20 dark:to-teal-950/10 border border-emerald-200/60 dark:border-emerald-800/40 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div class="space-y-1 text-center sm:text-left">
+          <div class="text-xs font-semibold uppercase tracking-wider text-emerald-800 dark:text-emerald-400">
+            Install Bookmarklet
+          </div>
+          <p class="text-xs text-gray-600 dark:text-gray-300">
+            Drag the button to your browser bookmarks bar, or click to copy the JavaScript code.
+          </p>
+        </div>
+
+        <div class="flex items-center gap-3 shrink-0">
+          <!-- Draggable Link Button -->
+          <a
+            :href="generatedBookmarkletHref"
+            @click.prevent="copyBookmarkletCode"
+            title="Drag to your bookmarks bar"
+            class="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-md hover:shadow-lg transition-all transform active:scale-95 cursor-grab select-none"
+          >
+            <span>📚</span>
+            <span>Save to Readr</span>
+          </a>
+
+          <!-- Copy Button -->
+          <button
+            type="button"
+            @click="copyBookmarkletCode"
+            class="px-3.5 py-2.5 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
+          >
+            <svg v-if="copiedBookmarklet" class="w-4 h-4 text-emerald-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+            <svg v-else class="w-4 h-4 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+            </svg>
+            {{ copiedBookmarklet ? 'Copied Code!' : 'Copy Code' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Quick Setup Instructions -->
+      <div class="space-y-3 pt-2">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+          Browser Installation Guide
+        </h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs text-gray-600 dark:text-gray-400">
+          <div class="p-3 bg-gray-50 dark:bg-[#161616] rounded-xl border border-gray-200/50 dark:border-gray-800/50">
+            <span class="font-semibold text-gray-800 dark:text-gray-200">Chrome / Brave</span>
+            <p class="mt-1 text-[11px] leading-relaxed">
+              Press <kbd class="px-1 py-0.5 bg-gray-200 dark:bg-gray-800 rounded font-mono">Cmd+Shift+B</kbd> to show bookmarks bar, then drag the button above into it.
+            </p>
+          </div>
+          <div class="p-3 bg-gray-50 dark:bg-[#161616] rounded-xl border border-gray-200/50 dark:border-gray-800/50">
+            <span class="font-semibold text-gray-800 dark:text-gray-200">Safari</span>
+            <p class="mt-1 text-[11px] leading-relaxed">
+              Press <kbd class="px-1 py-0.5 bg-gray-200 dark:bg-gray-800 rounded font-mono">Cmd+Shift+B</kbd> for Favorites Bar, then drag the button into Favorites.
+            </p>
+          </div>
+          <div class="p-3 bg-gray-50 dark:bg-[#161616] rounded-xl border border-gray-200/50 dark:border-gray-800/50">
+            <span class="font-semibold text-gray-800 dark:text-gray-200">Firefox</span>
+            <p class="mt-1 text-[11px] leading-relaxed">
+              Right-click the bookmarks toolbar &rarr; Bookmarks Toolbar &rarr; Always Show. Drag the button directly onto it.
+            </p>
+          </div>
+          <div class="p-3 bg-gray-50 dark:bg-[#161616] rounded-xl border border-gray-200/50 dark:border-gray-800/50">
+            <span class="font-semibold text-gray-800 dark:text-gray-200">Edge</span>
+            <p class="mt-1 text-[11px] leading-relaxed">
+              Press <kbd class="px-1 py-0.5 bg-gray-200 dark:bg-gray-800 rounded font-mono">Ctrl+Shift+B</kbd> to show favorites bar, then drag the button onto the bar.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
     </div> <!-- closes activeTab === 'general' -->
