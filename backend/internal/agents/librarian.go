@@ -431,11 +431,17 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 			for _, a := range cluster.Articles {
 				activeMemberTitles[a.Title] = true
 				activeMemberTitles[strings.ToLower(a.Title)] = true
+				displayTitle := strings.ReplaceAll(a.Title, "|", "—")
+				activeMemberTitles[displayTitle] = true
+				activeMemberTitles[strings.ToLower(displayTitle)] = true
 				if a.FilePath != "" {
 					base := strings.TrimSuffix(filepath.Base(a.FilePath), ".md")
 					activeMemberTitles[base] = true
 					activeMemberTitles[strings.ToLower(base)] = true
 				}
+				sanitized := ingest.SanitizeTitleFilename(a.Title, a.ID)
+				activeMemberTitles[sanitized] = true
+				activeMemberTitles[strings.ToLower(sanitized)] = true
 			}
 			reconciledContent, linksPruned := ReconcileMOCLinks(existingContent, activeMemberTitles)
 
@@ -574,7 +580,7 @@ func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
 			continue
 		}
 
-		// 1. Extract tag from MOC
+		// 1. Extract tag and topic folder from MOC
 		tag := ""
 		tagParts := strings.Split(moc.Tags, ",")
 		for _, tp := range tagParts {
@@ -588,19 +594,31 @@ func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
 			tag = repository.SanitizeObsidianTag(strings.TrimPrefix(moc.Title, "MOC - "))
 		}
 
-		// 2. Count active non-MOC member notes with this tag or in this folder
+		// Determine the topic folder name from the MOC's file path (e.g. /articles/Amazon/MOC - Amazon.md -> Amazon)
+		topicFolder := ""
+		relArticle := strings.TrimPrefix(moc.Article, "/")
+		parts := strings.Split(relArticle, "/")
+		if len(parts) >= 2 && parts[0] == "articles" {
+			topicFolder = parts[1]
+		}
+		if topicFolder == "" && tag != "" {
+			topicFolder = tag
+		}
+
+		// 2. Count active non-MOC member notes residing in this topic folder
 		var memberCount int64
-		if tag != "" {
+		if topicFolder != "" {
+			folderPattern := "%/articles/" + topicFolder + "/%"
 			if err := r.db.WithContext(ctx).Model(&repository.GormArticle{}).
 				Where("deleted_at IS NULL AND (is_archived = false OR is_archived IS NULL) AND id != ?", moc.ID).
-				Where("tags LIKE ? OR article LIKE ?", "%"+tag+"%", "%/articles/"+tag+"/%").
+				Where("article LIKE ? AND title NOT LIKE 'MOC - %' AND title NOT LIKE 'MOC %' AND title NOT LIKE 'MOC:%'", folderPattern).
 				Count(&memberCount).Error; err != nil {
 				r.logger.Error("Failed to count member notes for MOC pruning", zap.Int64("id", moc.ID), zap.Error(err))
 				continue
 			}
 		}
 
-		// Also check article_links
+		// Also check article_links to any active non-archived target notes
 		var linkCount int64
 		if err := r.db.WithContext(ctx).Table("article_links").
 			Joins("JOIN articles ON articles.id = article_links.target_id").
@@ -1066,7 +1084,7 @@ func ReconcileMOCLinks(mocContent string, validMemberTitles map[string]bool) (st
 	changed := false
 
 	// Matches [[Target]] or [[Target|Alias]]
-	reWikilink := regexp.MustCompile(`\[\[([^\]\|]+)(?:\|[^\]]+)?\]\]`)
+	reWikilink := regexp.MustCompile(`\[\[([^\]\|]+)(?:\|([^\]]+))?\]\]`)
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -1080,6 +1098,13 @@ func ReconcileMOCLinks(mocContent string, validMemberTitles map[string]bool) (st
 					if validMemberTitles[targetTitle] || validMemberTitles[strings.ToLower(targetTitle)] {
 						hasValidLink = true
 						break
+					}
+					if len(m) > 2 && m[2] != "" {
+						alias := strings.TrimSpace(m[2])
+						if validMemberTitles[alias] || validMemberTitles[strings.ToLower(alias)] {
+							hasValidLink = true
+							break
+						}
 					}
 				}
 				if !hasValidLink {
