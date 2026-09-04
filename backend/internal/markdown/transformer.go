@@ -11,7 +11,7 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
-var summaryBlockRegex = regexp.MustCompile(`(?m)^>\s*(?:💡\s*)?(?:\*\*)?(?:AI\s+)?Summary:(?:\*\*)?.*(?:\n>.*)*`)
+var summaryBlockRegex = regexp.MustCompile(`(?m)^>\s*(?:💡\s*)?(?:\*\*)?(?:AI\s+)?Summary:(?:\*\*)?.*(?:\r?\n>.*)*`)
 
 // ApplySummaryBlock adds, updates, or removes a callout summary block at the beginning of the markdown body.
 func ApplySummaryBlock(body string, summary string) string {
@@ -78,7 +78,7 @@ func InjectWikilinks(body string, replacements map[string]string) string {
 		}
 
 		switch n.Kind() {
-		case ast.KindFencedCodeBlock, ast.KindCodeBlock, ast.KindCodeSpan, ast.KindHTMLBlock, ast.KindAutoLink:
+		case ast.KindFencedCodeBlock, ast.KindCodeBlock, ast.KindCodeSpan, ast.KindHTMLBlock, ast.KindAutoLink, ast.KindLink, ast.KindImage:
 			return ast.WalkSkipChildren, nil
 		case ast.KindText:
 			if t, ok := n.(*ast.Text); ok {
