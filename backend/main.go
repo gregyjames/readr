@@ -267,6 +267,9 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		}
 	}
 
+	hCtx.DistDir = distDir
+	handlers.RegisterBookmarklet(app, hCtx)
+
 	if distDir != "" {
 		if info, err := os.Stat(distDir); err == nil && info.IsDir() {
 			logger.Info("Serving static frontend files from", zap.String("distDir", distDir))
