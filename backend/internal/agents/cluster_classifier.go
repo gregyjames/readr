@@ -67,7 +67,7 @@ func DetectClustersFromArticles(articles []repository.ArticleRecord, minSize int
 		}
 		seenInArticle := make(map[string]bool)
 		for _, tag := range strings.Split(a.Tags, ",") {
-			normTag := strings.ToLower(strings.TrimSpace(tag))
+			normTag := repository.SanitizeObsidianTag(tag)
 			if normTag == "" || normTag == "moc" || seenInArticle[normTag] {
 				continue
 			}
