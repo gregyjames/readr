@@ -1,93 +1,33 @@
 package agents
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
 	"example.com/backend/internal/vault"
-	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
-	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
 
-type MOCArticleInfo struct {
-	ID       int64
-	Title    string
-	FilePath string
-}
-
-func formatMOCArticleWikilink(info MOCArticleInfo) string {
-	fileBase := ""
-	if info.FilePath != "" {
-		fileBase = strings.TrimSuffix(filepath.Base(info.FilePath), ".md")
-	}
-	if fileBase == "" || fileBase == fmt.Sprint(info.ID) {
-		fileBase = ingest.SanitizeTitleFilename(info.Title, info.ID)
-	}
-
-	cleanTitle := strings.TrimSpace(info.Title)
-	if cleanTitle == "" {
-		cleanTitle = fileBase
-	}
-
-	if fileBase == cleanTitle {
-		return fmt.Sprintf("[[%s]]", fileBase)
-	}
-
-	displayTitle := strings.ReplaceAll(cleanTitle, "|", "—")
-	return fmt.Sprintf("[[%s|%s]]", fileBase, displayTitle)
-}
-
-type MOCItem struct {
-	ArticleID   int64  `json:"article_id"`
-	ContextNote string `json:"context_note"`
-}
-
-type MOCSection struct {
-	Title string    `json:"title"`
-	Items []MOCItem `json:"items"`
-}
-
-type MOCSynthesisResponse struct {
-	TopicTitle       string       `json:"topic_title"`
-	ExecutiveSummary string       `json:"executive_summary"`
-	Sections         []MOCSection `json:"sections"`
-}
-
-type MOCDeltaPlacement struct {
-	ArticleID     int64  `json:"article_id"`
-	TargetSection string `json:"target_section"`
-	ContextNote   string `json:"context_note"`
-}
-
-type MOCDeltaResponse struct {
-	Placements []MOCDeltaPlacement `json:"placements"`
-}
-
-type ClusterCandidate struct {
-	Tag         string
-	Articles    []repository.ArticleRecord
-	ExistingMOC *repository.ArticleRecord
+type LibrarianStatus struct {
+	Enabled        bool                `json:"enabled"`
+	CronExpression string              `json:"cron_expression"`
+	MinClusterSize int                 `json:"min_cluster_size"`
+	NextRun        *time.Time          `json:"next_run,omitempty"`
+	LastRunResult  *LibrarianRunResult `json:"last_run_result,omitempty"`
 }
 
 type LibrarianRunResult struct {
-	Status           string   `json:"status"`
-	Trigger          string   `json:"trigger"`
+	Status           string   `json:"status"`  // "success", "partial", "failed", "skipped"
+	Trigger          string   `json:"trigger"` // "cron", "manual"
 	ScannedArticles  int      `json:"scanned_articles"`
 	ClustersDetected int      `json:"clusters_detected"`
 	CreatedMOCs      int      `json:"created_mocs"`
@@ -97,26 +37,15 @@ type LibrarianRunResult struct {
 	Errors           []string `json:"errors,omitempty"`
 }
 
-type LibrarianStatus struct {
-	Enabled        bool                `json:"enabled"`
-	Cron           string              `json:"cron"`
-	MinClusterSize int                 `json:"min_cluster_size"`
-	LastRun        *time.Time          `json:"last_run,omitempty"`
-	NextRun        *time.Time          `json:"next_run,omitempty"`
-	IsRunning      bool                `json:"is_running"`
-	LastResult     *LibrarianRunResult `json:"last_result,omitempty"`
-}
-
 type LibrarianRunner struct {
-	mu            sync.Mutex
 	logger        *zap.Logger
 	db            *gorm.DB
 	repo          repository.Repository
 	dataDir       string
 	organizer     *vault.VaultOrganizer
 	onGraphUpdate func()
-	lastRun       *time.Time
 	lastResult    *LibrarianRunResult
+	mu            sync.Mutex
 	isRunning     bool
 }
 
@@ -136,16 +65,23 @@ func NewLibrarianRunner(logger *zap.Logger, db *gorm.DB, repo repository.Reposit
 
 func (r *LibrarianRunner) GetStatus(enabled bool, cronExpr string, minClusterSize int, nextRun *time.Time) LibrarianStatus {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	var lastResult *LibrarianRunResult
+	if r.lastResult != nil {
+		copyRes := *r.lastResult
+		if r.lastResult.Errors != nil {
+			copyRes.Errors = make([]string, len(r.lastResult.Errors))
+			copy(copyRes.Errors, r.lastResult.Errors)
+		}
+		lastResult = &copyRes
+	}
+	r.mu.Unlock()
 
 	return LibrarianStatus{
 		Enabled:        enabled,
-		Cron:           cronExpr,
+		CronExpression: cronExpr,
 		MinClusterSize: minClusterSize,
-		LastRun:        r.lastRun,
 		NextRun:        nextRun,
-		IsRunning:      r.isRunning,
-		LastResult:     r.lastResult,
+		LastRunResult:  lastResult,
 	}
 }
 
@@ -160,179 +96,7 @@ func (r *LibrarianRunner) DetectClusters(ctx context.Context, minSize int) ([]Cl
 		return nil, fmt.Errorf("failed to get articles: %w", err)
 	}
 
-	// Separate existing MOCs from regular articles
-	var regularArticles []repository.ArticleRecord
-	existingMOCMap := make(map[string]repository.ArticleRecord) // normalized tag/topic -> MOC article
-
-	for _, a := range articles {
-		lowerTitle := strings.ToLower(strings.TrimSpace(a.Title))
-		isMOC := strings.HasPrefix(lowerTitle, "moc - ") || strings.HasPrefix(lowerTitle, "moc:") || strings.HasPrefix(lowerTitle, "moc ") || lowerTitle == "moc"
-		if !isMOC && a.Tags != "" {
-			for _, tag := range strings.Split(a.Tags, ",") {
-				if strings.TrimSpace(strings.ToLower(tag)) == "moc" {
-					isMOC = true
-					break
-				}
-			}
-		}
-
-		if isMOC {
-			topicKey := strings.TrimPrefix(lowerTitle, "moc - ")
-			topicKey = strings.TrimPrefix(topicKey, "moc: ")
-			topicKey = strings.TrimPrefix(topicKey, "moc ")
-			topicKey = strings.TrimSpace(topicKey)
-			existingMOCMap[topicKey] = a
-
-			if a.Tags != "" {
-				for _, tag := range strings.Split(a.Tags, ",") {
-					normTag := strings.ToLower(strings.TrimSpace(tag))
-					if normTag != "" && normTag != "moc" {
-						existingMOCMap[normTag] = a
-					}
-				}
-			}
-		} else {
-			regularArticles = append(regularArticles, a)
-		}
-	}
-
-	// Group regular articles by primary tags
-	tagClusters := make(map[string][]repository.ArticleRecord)
-	for _, a := range regularArticles {
-		if a.Tags == "" {
-			continue
-		}
-		seenInArticle := make(map[string]bool)
-		for _, tag := range strings.Split(a.Tags, ",") {
-			normTag := strings.ToLower(strings.TrimSpace(tag))
-			if normTag == "" || normTag == "moc" || seenInArticle[normTag] {
-				continue
-			}
-			seenInArticle[normTag] = true
-			tagClusters[normTag] = append(tagClusters[normTag], a)
-		}
-	}
-
-	var candidates []ClusterCandidate
-	for tag, items := range tagClusters {
-		if len(items) >= minSize {
-			var existingMOC *repository.ArticleRecord
-			if moc, found := existingMOCMap[tag]; found {
-				mocCopy := moc
-				existingMOC = &mocCopy
-			}
-
-			candidates = append(candidates, ClusterCandidate{
-				Tag:         tag,
-				Articles:    items,
-				ExistingMOC: existingMOC,
-			})
-		}
-	}
-
-	sort.Slice(candidates, func(i, j int) bool {
-		return len(candidates[i].Articles) > len(candidates[j].Articles)
-	})
-
-	return candidates, nil
-}
-
-// titleContainsTopic checks if an article's title contains the topic/tag name (case-insensitive and trimmed).
-// For multi-word topics ("distributed systems"), checks substring match.
-// For single-word topics ("google", "ai"), checks whole word boundaries to prevent false matches.
-func titleContainsTopic(title, topic string) bool {
-	cleanTitle := strings.ToLower(strings.TrimSpace(title))
-	cleanTopic := strings.ToLower(strings.TrimSpace(topic))
-	if cleanTitle == "" || cleanTopic == "" {
-		return false
-	}
-	cleanTopic = strings.ReplaceAll(cleanTopic, "-", " ")
-	cleanTopic = strings.ReplaceAll(cleanTopic, "_", " ")
-	cleanTitle = strings.ReplaceAll(cleanTitle, "-", " ")
-	cleanTitle = strings.ReplaceAll(cleanTitle, "_", " ")
-
-	if strings.Contains(cleanTopic, " ") {
-		return strings.Contains(cleanTitle, cleanTopic)
-	}
-
-	words := strings.FieldsFunc(cleanTitle, func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
-	})
-	for _, w := range words {
-		if w == cleanTopic {
-			return true
-		}
-	}
-	return false
-}
-
-// DeterminePrimaryTopicFolders determines the single primary topic folder for each article.
-// Resolution Priority:
-// 1. Title Keyword Match (Highest): If the article title explicitly mentions the topic/tag name.
-// 2. Tag Position Priority (Medium): Tags placed earlier in frontmatter (first-tagged = primary intent).
-// 3. Cluster Specificity Fallback (Lowest): Most specific cluster (smallest article count).
-func DeterminePrimaryTopicFolders(clusters []ClusterCandidate) map[int64]string {
-	primaryTopics := make(map[int64]string)
-	articleBestTitleMatch := make(map[int64]bool)
-	articleTagIndex := make(map[int64]int)
-	articleClusterSizes := make(map[int64]int)
-
-	for _, cluster := range clusters {
-		clusterSize := len(cluster.Articles)
-		topicFolder := cluster.Tag
-		if cluster.ExistingMOC != nil && cluster.ExistingMOC.Title != "" {
-			cleanTitle := strings.TrimPrefix(cluster.ExistingMOC.Title, "MOC - ")
-			cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
-			cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
-			cleanTitle = strings.TrimSpace(cleanTitle)
-			if cleanTitle != "" {
-				topicFolder = cleanTitle
-			}
-		}
-
-		for _, a := range cluster.Articles {
-			hasTitleMatch := titleContainsTopic(a.Title, cluster.Tag) || (topicFolder != "" && titleContainsTopic(a.Title, topicFolder))
-
-			// Find position of this cluster's tag in article frontmatter
-			tagIdx := 999
-			for idx, t := range strings.Split(a.Tags, ",") {
-				sanitized := repository.SanitizeObsidianTag(strings.TrimSpace(t))
-				if strings.EqualFold(sanitized, repository.SanitizeObsidianTag(cluster.Tag)) || (topicFolder != "" && strings.EqualFold(sanitized, repository.SanitizeObsidianTag(topicFolder))) {
-					tagIdx = idx
-					break
-				}
-			}
-
-			prevTitleMatch, exists := articleBestTitleMatch[a.ID]
-			isBetter := false
-
-			if !exists {
-				isBetter = true
-			} else if hasTitleMatch && !prevTitleMatch {
-				// 1. Title match takes highest priority
-				isBetter = true
-			} else if hasTitleMatch == prevTitleMatch {
-				// 2. More specific cluster (smaller size) takes priority over broad clusters
-				if clusterSize < articleClusterSizes[a.ID] {
-					isBetter = true
-				} else if clusterSize == articleClusterSizes[a.ID] {
-					// 3. Tag position in frontmatter breaks ties
-					if tagIdx < articleTagIndex[a.ID] {
-						isBetter = true
-					}
-				}
-			}
-
-			if isBetter {
-				primaryTopics[a.ID] = topicFolder
-				articleBestTitleMatch[a.ID] = hasTitleMatch
-				articleTagIndex[a.ID] = tagIdx
-				articleClusterSizes[a.ID] = clusterSize
-			}
-		}
-	}
-
-	return primaryTopics
+	return DetectClustersFromArticles(articles, minSize), nil
 }
 
 func (r *LibrarianRunner) RunLibrarian(ctx context.Context, trigger string) (*LibrarianRunResult, error) {
@@ -348,74 +112,86 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	r.isRunning = true
 	r.mu.Unlock()
 
+	startTime := time.Now()
+	r.logger.Info("Starting Librarian MOC run", zap.String("trigger", trigger))
+
+	apiKey, model, minSize, enabled := r.getSettings()
+
+	result := &LibrarianRunResult{
+		Status:  "success",
+		Trigger: trigger,
+		Errors:  make([]string, 0),
+	}
 	defer func() {
 		r.mu.Lock()
+		result.ExecutionTimeMs = time.Since(startTime).Milliseconds()
+		r.lastResult = result
 		r.isRunning = false
 		r.mu.Unlock()
 	}()
 
-	start := time.Now()
-	result := &LibrarianRunResult{
-		Status:  "success",
-		Trigger: trigger,
-	}
-
-	apiKey, model, minSize, enabled := r.getSettings()
-	if !enabled && trigger == "cron" {
+	if !enabled {
+		r.logger.Info("Librarian is disabled in settings, skipping run")
 		result.Status = "skipped (disabled)"
 		return result, nil
 	}
 
-	if apiKey == "" {
-		result.Status = "skipped (no api key)"
-		return result, nil
+	allArticles, err := r.repo.GetAllArticles(ctx)
+	if err != nil {
+		r.logger.Error("Failed to fetch articles for librarian run", zap.Error(err))
+		result.Status = "failed"
+		result.Errors = append(result.Errors, fmt.Sprintf("fetch articles: %v", err))
+		return result, err
 	}
+	result.ScannedArticles = len(allArticles)
 
 	clusters, err := r.DetectClusters(ctx, minSize)
 	if err != nil {
+		r.logger.Error("Failed to detect clusters", zap.Error(err))
 		result.Status = "failed"
-		result.Errors = append(result.Errors, err.Error())
+		result.Errors = append(result.Errors, fmt.Sprintf("detect clusters: %v", err))
 		return result, err
 	}
 
-	result.ClustersDetected = len(clusters)
-	allArticles, _ := r.repo.GetAllArticles(ctx)
-	result.ScannedArticles = len(allArticles)
+	// Filter clusters by primary topic specificity
+	primaryTopicMap := DeterminePrimaryTopicFolders(clusters)
+	var filteredClusters []ClusterCandidate
+	for _, cluster := range clusters {
+		var specificArticles []repository.ArticleRecord
+		for _, a := range cluster.Articles {
+			primaryFolder := primaryTopicMap[a.ID]
+			topicName := cluster.Tag
+			if cluster.ExistingMOC != nil && cluster.ExistingMOC.Title != "" {
+				cleanTitle := strings.TrimPrefix(cluster.ExistingMOC.Title, "MOC - ")
+				cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
+				cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
+				cleanTitle = strings.TrimSpace(cleanTitle)
+				if cleanTitle != "" {
+					topicName = cleanTitle
+				}
+			}
 
-	primaryTopics := DeterminePrimaryTopicFolders(clusters)
-
-	// Filter each cluster candidate list so an MOC only manages articles whose primary topic belongs to this cluster
-	var validClusters []ClusterCandidate
-	for i := range clusters {
-		clusterTopic := clusters[i].Tag
-		if clusters[i].ExistingMOC != nil && clusters[i].ExistingMOC.Title != "" {
-			cleanTitle := strings.TrimPrefix(clusters[i].ExistingMOC.Title, "MOC - ")
-			cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
-			cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
-			cleanTitle = strings.TrimSpace(cleanTitle)
-			if cleanTitle != "" {
-				clusterTopic = cleanTitle
+			if strings.EqualFold(repository.SanitizeObsidianTag(primaryFolder), repository.SanitizeObsidianTag(topicName)) {
+				specificArticles = append(specificArticles, a)
 			}
 		}
 
-		var primaryArticles []repository.ArticleRecord
-		for _, a := range clusters[i].Articles {
-			primary := primaryTopics[a.ID]
-			if strings.EqualFold(repository.SanitizeObsidianTag(primary), repository.SanitizeObsidianTag(clusterTopic)) ||
-				strings.EqualFold(repository.SanitizeObsidianTag(primary), repository.SanitizeObsidianTag(clusters[i].Tag)) {
-				primaryArticles = append(primaryArticles, a)
-			}
-		}
-		clusters[i].Articles = primaryArticles
-
-		// Only retain clusters that meet minSize threshold (or are existing MOCs undergoing link reconciliation)
-		if len(clusters[i].Articles) >= minSize || clusters[i].ExistingMOC != nil {
-			validClusters = append(validClusters, clusters[i])
+		if len(specificArticles) >= minSize || cluster.ExistingMOC != nil {
+			cluster.Articles = specificArticles
+			filteredClusters = append(filteredClusters, cluster)
+		} else {
+			r.logger.Info("Cluster candidate dropped below minSize after primary topic specificity filtering",
+				zap.String("tag", cluster.Tag),
+				zap.Int("initial_size", len(cluster.Articles)),
+				zap.Int("specific_size", len(specificArticles)),
+				zap.Int("min_size", minSize),
+			)
 		}
 	}
-	clusters = validClusters
+	clusters = filteredClusters
 	result.ClustersDetected = len(clusters)
 
+	// Step 1: Reconcile / Synthesize Clusters
 	for _, cluster := range clusters {
 		if cluster.ExistingMOC != nil {
 			unlinked, existingContent, err := r.getUnlinkedArticles(cluster)
@@ -426,7 +202,6 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				continue
 			}
 
-			// Reconcile existing MOC markdown against currently active member notes
 			activeMemberTitles := make(map[string]bool)
 			for _, a := range cluster.Articles {
 				activeMemberTitles[a.Title] = true
@@ -460,6 +235,14 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				continue
 			}
 
+			// Synthesize delta
+			if apiKey == "" {
+				r.logger.Warn("OpenRouter API key not configured, skipping delta synthesis for cluster", zap.String("tag", cluster.Tag))
+				result.Status = "partial (some clusters failed)"
+				result.Errors = append(result.Errors, fmt.Sprintf("tag %s: api key not configured", cluster.Tag))
+				continue
+			}
+
 			deltaResp, err := r.synthesizeDeltaCluster(ctx, cluster, unlinked, reconciledContent, apiKey, model, apiURL)
 			if err != nil {
 				r.logger.Error("Failed to synthesize delta MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
@@ -475,112 +258,126 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				continue
 			}
 
-			result.UpdatedMOCs++
-			continue
-		}
-
-		synthesis, err := r.synthesizeCluster(ctx, cluster, apiKey, model, apiURL)
-		if err != nil {
-			r.logger.Error("Failed to synthesize MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
-			result.Status = "partial (some clusters failed)"
-			result.Errors = append(result.Errors, fmt.Sprintf("tag %s: %v", cluster.Tag, err))
-			continue
-		}
-
-		if err := r.saveMOC(ctx, cluster, synthesis); err != nil {
-			r.logger.Error("Failed to save MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
-			result.Status = "partial (some clusters failed)"
-			result.Errors = append(result.Errors, fmt.Sprintf("save %s: %v", cluster.Tag, err))
-			continue
-		}
-
-		topicTitle := strings.TrimSpace(synthesis.TopicTitle)
-		if topicTitle != "" && topicTitle != cluster.Tag {
-			for _, a := range cluster.Articles {
-				if primaryTopics[a.ID] == cluster.Tag {
-					primaryTopics[a.ID] = topicTitle
+			if cluster.ExistingMOC != nil && cluster.ExistingMOC.Title != "" {
+				cleanTitle := strings.TrimPrefix(cluster.ExistingMOC.Title, "MOC - ")
+				cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
+				cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
+				cleanTitle = strings.TrimSpace(cleanTitle)
+				if cleanTitle != "" && cleanTitle != cluster.Tag {
+					for _, a := range cluster.Articles {
+						if primaryTopicMap[a.ID] == cluster.Tag {
+							primaryTopicMap[a.ID] = cleanTitle
+						}
+					}
 				}
 			}
-		}
 
-		result.CreatedMOCs++
+			result.UpdatedMOCs++
+		} else {
+			// Fresh MOC Synthesis
+			if apiKey == "" {
+				r.logger.Warn("OpenRouter API key not configured, skipping cluster synthesis", zap.String("tag", cluster.Tag))
+				result.Status = "partial (some clusters failed)"
+				result.Errors = append(result.Errors, fmt.Sprintf("tag %s: api key not configured", cluster.Tag))
+				continue
+			}
+
+			synthesis, err := r.synthesizeCluster(ctx, cluster, apiKey, model, apiURL)
+			if err != nil {
+				r.logger.Error("Failed to synthesize MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
+				result.Status = "partial (some clusters failed)"
+				result.Errors = append(result.Errors, fmt.Sprintf("tag %s: %v", cluster.Tag, err))
+				continue
+			}
+
+			if err := r.saveMOC(ctx, cluster, synthesis); err != nil {
+				r.logger.Error("Failed to save MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
+				result.Status = "partial (some clusters failed)"
+				result.Errors = append(result.Errors, fmt.Sprintf("save %s: %v", cluster.Tag, err))
+				continue
+			}
+
+			topicTitle := strings.TrimSpace(synthesis.TopicTitle)
+			if topicTitle != "" && topicTitle != cluster.Tag {
+				for _, a := range cluster.Articles {
+					if primaryTopicMap[a.ID] == cluster.Tag {
+						primaryTopicMap[a.ID] = topicTitle
+					}
+				}
+			}
+
+			result.CreatedMOCs++
+		}
 	}
 
-	// File articles into their deterministic primary topic folders
-	for articleID, topicTitle := range primaryTopics {
+	// Step 2: File Articles into Topic Folders
+	for articleID, topicTitle := range primaryTopicMap {
 		if _, err := r.organizer.FileArticle(ctx, articleID, topicTitle); err != nil {
-			r.logger.Error("Failed to file article into primary topic folder", zap.Int64("article_id", articleID), zap.String("topic", topicTitle), zap.Error(err))
-			result.Status = "partial (some clusters failed)"
-			result.Errors = append(result.Errors, fmt.Sprintf("file article %d into %s: %v", articleID, topicTitle, err))
+			r.logger.Warn("Failed to file article into topic folder", zap.Int64("id", articleID), zap.String("topic", topicTitle), zap.Error(err))
 		}
 	}
 
+	// Step 3: Prune empty/stale MOCs
 	pruned, err := r.pruneEmptyMOCs(ctx)
 	if err != nil {
-		r.logger.Error("Failed to prune empty MOCs", zap.Error(err))
-		result.Status = "partial (some clusters failed)"
-		result.Errors = append(result.Errors, fmt.Sprintf("prune empty MOCs: %v", err))
-	} else {
-		result.PrunedMOCs = pruned
+		r.logger.Warn("Failed to prune empty MOCs", zap.Error(err))
 	}
+	result.PrunedMOCs = pruned
 
+	// Clean any dangling empty topic folders
 	if err := r.organizer.CleanEmptyFolders(); err != nil {
-		r.logger.Error("Failed to clean empty topic folders", zap.Error(err))
-		result.Status = "partial (some clusters failed)"
-		result.Errors = append(result.Errors, fmt.Sprintf("clean empty folders: %v", err))
+		r.logger.Warn("Failed to clean empty topic folders", zap.Error(err))
 	}
+
+	// Refresh master index
 	if err := r.organizer.UpdateMasterIndex(ctx); err != nil {
-		r.logger.Error("Failed to update master index", zap.Error(err))
-		result.Status = "partial (some clusters failed)"
-		result.Errors = append(result.Errors, fmt.Sprintf("update master index: %v", err))
+		r.logger.Warn("Failed to update master index", zap.Error(err))
 	}
 
-	if len(result.Errors) > 0 {
-		if result.CreatedMOCs == 0 && result.UpdatedMOCs == 0 && result.PrunedMOCs == 0 {
-			result.Status = "failed"
-		} else {
-			result.Status = "partial (some clusters failed)"
-		}
-	}
-
-	result.ExecutionTimeMs = time.Since(start).Milliseconds()
-
-	if r.onGraphUpdate != nil && (result.CreatedMOCs > 0 || result.UpdatedMOCs > 0 || result.PrunedMOCs > 0) {
+	if (result.CreatedMOCs > 0 || result.UpdatedMOCs > 0 || result.PrunedMOCs > 0) && r.onGraphUpdate != nil {
 		r.onGraphUpdate()
 	}
 
-	r.mu.Lock()
-	now := time.Now()
-	r.lastRun = &now
-	r.lastResult = result
-	r.mu.Unlock()
+	if len(result.Errors) > 0 && result.CreatedMOCs == 0 && result.UpdatedMOCs == 0 {
+		result.Status = "failed"
+	}
+
+	r.logger.Info("Librarian MOC run completed",
+		zap.String("status", result.Status),
+		zap.Int("created", result.CreatedMOCs),
+		zap.Int("updated", result.UpdatedMOCs),
+		zap.Int("pruned", result.PrunedMOCs),
+		zap.Int64("duration_ms", result.ExecutionTimeMs),
+	)
 
 	return result, nil
 }
 
-// pruneEmptyMOCs scans all active MOCs in SQLite. If an MOC has 0 active member notes
-// (both via its primary tag cluster and article_links) and contains no custom user-written
-// thoughts in ## Notes & Synthesis, it deletes the MOC file from disk and deletes the record from SQLite.
 func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
-	if r.db == nil {
-		return 0, nil
-	}
-
 	var mocs []repository.GormArticle
-	if err := r.db.WithContext(ctx).
+	if err := r.db.WithContext(ctx).Model(&repository.GormArticle{}).
 		Where("deleted_at IS NULL").
 		Where("title LIKE 'MOC - %' OR title LIKE 'MOC %' OR title LIKE 'MOC:%' OR tags LIKE '%moc%'").
 		Find(&mocs).Error; err != nil {
-		return 0, fmt.Errorf("failed to query MOC articles: %w", err)
+		return 0, fmt.Errorf("failed to list MOCs for pruning: %w", err)
 	}
 
 	prunedCount := 0
 	for _, moc := range mocs {
-		if !repository.IsMOCArticle(moc.Title, moc.Tags) {
+		lowerTitle := strings.ToLower(strings.TrimSpace(moc.Title))
+		isMOC := strings.HasPrefix(lowerTitle, "moc - ") || strings.HasPrefix(lowerTitle, "moc:") || strings.HasPrefix(lowerTitle, "moc ") || lowerTitle == "moc"
+		if !isMOC && moc.Tags != "" {
+			for _, tag := range strings.Split(moc.Tags, ",") {
+				if strings.TrimSpace(strings.ToLower(tag)) == "moc" {
+					isMOC = true
+					break
+				}
+			}
+		}
+		if !isMOC {
 			continue
 		}
 
-		// 1. Extract tag and topic folder from MOC
 		tag := ""
 		tagParts := strings.Split(moc.Tags, ",")
 		for _, tp := range tagParts {
@@ -594,7 +391,6 @@ func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
 			tag = repository.SanitizeObsidianTag(strings.TrimPrefix(moc.Title, "MOC - "))
 		}
 
-		// Determine the topic folder name from the MOC's file path (e.g. /articles/Amazon/MOC - Amazon.md -> Amazon)
 		topicFolder := ""
 		relArticle := strings.TrimPrefix(moc.Article, "/")
 		parts := strings.Split(relArticle, "/")
@@ -605,7 +401,6 @@ func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
 			topicFolder = tag
 		}
 
-		// 2. Count active non-MOC member notes residing in this topic folder
 		var memberCount int64
 		if topicFolder != "" {
 			escapedFolder := escapeLikePattern(topicFolder)
@@ -619,7 +414,6 @@ func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
 			}
 		}
 
-		// Also check article_links to any active non-archived target notes
 		var linkCount int64
 		if err := r.db.WithContext(ctx).Table("article_links").
 			Joins("JOIN articles ON articles.id = article_links.target_id").
@@ -630,258 +424,43 @@ func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
 		}
 
 		if memberCount > 0 || linkCount > 0 {
-			continue // MOC is not empty
+			continue
 		}
 
-		// 3. MOC has 0 member notes. Read file to check for custom user notes in ## Notes & Synthesis
-		relPath := strings.TrimPrefix(moc.Article, "/")
-		absPath := filepath.Join(r.dataDir, relPath)
-		fileBytes, err := os.ReadFile(absPath)
+		filePath := filepath.Join(r.dataDir, strings.TrimPrefix(moc.Article, "/"))
+		if moc.Article == "" {
+			filePath = filepath.Join(r.dataDir, "articles", tag, fmt.Sprintf("MOC - %s.md", tag))
+		}
+
+		contentBytes, err := os.ReadFile(filePath)
 		if err == nil {
-			if HasCustomUserNotes(string(fileBytes)) {
-				r.logger.Info("Preserving empty MOC containing custom user notes",
-					zap.Int64("id", moc.ID),
-					zap.String("title", moc.Title),
-				)
+			if HasCustomUserNotes(string(contentBytes)) {
+				r.logger.Info("Preserving empty MOC due to custom user notes in Notes & Synthesis", zap.String("title", moc.Title))
 				continue
 			}
 		}
 
-		// 4. Delete MOC record from SQLite and article_links in transaction
-		txErr := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		r.logger.Info("Pruning empty MOC with no member notes or custom user synthesis", zap.String("title", moc.Title), zap.Int64("id", moc.ID))
+		_ = os.Remove(filePath)
+
+		if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			if err := tx.Where("source_id = ? OR target_id = ?", moc.ID, moc.ID).Delete(&repository.GormArticleLink{}).Error; err != nil {
 				return err
 			}
-			if err := tx.Delete(&moc).Error; err != nil {
+			if err := tx.Delete(&repository.GormArticle{}, moc.ID).Error; err != nil {
 				return err
 			}
 			_ = tx.Exec("DELETE FROM articles_fts WHERE rowid = ?", moc.ID).Error
 			return nil
-		})
-		if txErr != nil {
-			r.logger.Error("Failed to delete empty MOC from database",
-				zap.Int64("id", moc.ID),
-				zap.Error(txErr),
-			)
+		}); err != nil {
+			r.logger.Error("Failed to prune MOC database records", zap.Int64("id", moc.ID), zap.String("title", moc.Title), zap.Error(err))
 			continue
 		}
 
-		// 5. Remove physical file from disk
-		if absPath != "" {
-			_ = os.Remove(absPath)
-		}
-
 		prunedCount++
-		r.logger.Info("Pruned empty automated MOC with 0 notes",
-			zap.Int64("id", moc.ID),
-			zap.String("title", moc.Title),
-			zap.String("file", absPath),
-		)
 	}
 
 	return prunedCount, nil
-}
-
-func (r *LibrarianRunner) synthesizeCluster(ctx context.Context, cluster ClusterCandidate, apiKey, model, apiURL string) (*MOCSynthesisResponse, error) {
-	articleMap := make(map[int64]repository.ArticleRecord)
-	var articleListText strings.Builder
-	for _, a := range cluster.Articles {
-		articleMap[a.ID] = a
-		articleListText.WriteString(fmt.Sprintf("- ID: %d, Title: %s\n", a.ID, a.Title))
-	}
-
-	prompt := fmt.Sprintf(`You are a Knowledge Base Librarian generating a Map of Content (MOC) / Hub Note for the topic: "%s".
-
-Candidate Articles in this Topic Cluster:
-%s
-
-Instructions:
-1. Provide a concise, professional 2-3 sentence executive summary explaining what this topic encompasses based on the articles.
-2. Group the articles logically into 2-4 thematic sections (e.g., "Foundational Concepts", "Implementations & Tools", "Advanced Topics").
-3. For each article item, provide a 1-sentence contextual summary explaining how it fits into that section.
-4. Output strictly adhering to the JSON schema. Use professional plain text without emojis.`, cluster.Tag, articleListText.String())
-
-	schema := map[string]interface{}{
-		"type": "json_schema",
-		"json_schema": map[string]interface{}{
-			"name":   "moc_synthesis",
-			"strict": true,
-			"schema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"topic_title": map[string]interface{}{
-						"type":        "string",
-						"description": "Clean capitalized topic name (e.g. Distributed Systems)",
-					},
-					"executive_summary": map[string]interface{}{
-						"type":        "string",
-						"description": "2-3 sentence executive synthesis of this topic cluster.",
-					},
-					"sections": map[string]interface{}{
-						"type": "array",
-						"items": map[string]interface{}{
-							"type": "object",
-							"properties": map[string]interface{}{
-								"title": map[string]interface{}{
-									"type": "string",
-								},
-								"items": map[string]interface{}{
-									"type": "array",
-									"items": map[string]interface{}{
-										"type": "object",
-										"properties": map[string]interface{}{
-											"article_id": map[string]interface{}{
-												"type": "integer",
-											},
-											"context_note": map[string]interface{}{
-												"type": "string",
-											},
-										},
-										"required":             []string{"article_id", "context_note"},
-										"additionalProperties": false,
-									},
-								},
-							},
-							"required":             []string{"title", "items"},
-							"additionalProperties": false,
-						},
-					},
-				},
-				"required":             []string{"topic_title", "executive_summary", "sections"},
-				"additionalProperties": false,
-			},
-		},
-	}
-
-	reqBody := map[string]interface{}{
-		"model": model,
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"content": prompt,
-			},
-		},
-		"response_format": schema,
-		"temperature":     0.2,
-	}
-
-	reqBytes, _ := json.Marshal(reqBody)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(reqBytes))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	httpReq.Header.Set("HTTP-Referer", "https://readr.app")
-	httpReq.Header.Set("X-Title", "Readr Librarian MOC Synthesizer")
-
-	startTime := time.Now()
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		if r.repo != nil {
-			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
-				ArticleID:        0,
-				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
-				Model:            model,
-				Status:           "failed",
-				DurationMs:       time.Since(startTime).Milliseconds(),
-				RetryCount:       0,
-				PromptTokens:     len(prompt) / 4,
-				CompletionTokens: 0,
-				TotalTokens:      len(prompt) / 4,
-				ErrorMessage:     err.Error(),
-				CreatedAt:        startTime,
-			})
-		}
-		return nil, fmt.Errorf("openrouter request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		errMsg := fmt.Sprintf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
-		if r.repo != nil {
-			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
-				ArticleID:        0,
-				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
-				Model:            model,
-				Status:           "failed",
-				DurationMs:       time.Since(startTime).Milliseconds(),
-				RetryCount:       0,
-				PromptTokens:     len(prompt) / 4,
-				CompletionTokens: 0,
-				TotalTokens:      len(prompt) / 4,
-				ErrorMessage:     errMsg,
-				CreatedAt:        startTime,
-			})
-		}
-		return nil, fmt.Errorf("%s", errMsg)
-	}
-
-	var chatResp struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		} `json:"usage"`
-	}
-
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return nil, fmt.Errorf("failed to parse openrouter response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 {
-		return nil, fmt.Errorf("openrouter returned empty choices list")
-	}
-
-	rawContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
-	var synthesis MOCSynthesisResponse
-	if err := json.Unmarshal([]byte(rawContent), &synthesis); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal structured synthesis JSON: %w (raw: %s)", err, rawContent)
-	}
-
-	promptTokens := 0
-	completionTokens := 0
-	totalTokens := 0
-	if chatResp.Usage != nil {
-		promptTokens = chatResp.Usage.PromptTokens
-		completionTokens = chatResp.Usage.CompletionTokens
-		totalTokens = chatResp.Usage.TotalTokens
-		if totalTokens == 0 {
-			totalTokens = promptTokens + completionTokens
-		}
-	} else {
-		promptTokens = len(prompt) / 4
-		completionTokens = len(rawContent) / 4
-		totalTokens = promptTokens + completionTokens
-	}
-
-	mocID := int64(0)
-	if cluster.ExistingMOC != nil {
-		mocID = cluster.ExistingMOC.ID
-	}
-
-	if r.repo != nil {
-		_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
-			ArticleID:        mocID,
-			ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
-			Model:            model,
-			Status:           "success",
-			DurationMs:       time.Since(startTime).Milliseconds(),
-			RetryCount:       0,
-			PromptTokens:     promptTokens,
-			CompletionTokens: completionTokens,
-			TotalTokens:      totalTokens,
-			CreatedAt:        startTime,
-		})
-	}
-
-	return &synthesis, nil
 }
 
 func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate, synthesis *MOCSynthesisResponse) error {
@@ -897,14 +476,16 @@ func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate,
 
 	mocTitle := fmt.Sprintf("MOC - %s", folder)
 	targetFilename := fmt.Sprintf("MOC - %s.md", folder)
-	filePath := filepath.Join(r.dataDir, "articles", folder, targetFilename)
+	destinationPath := filepath.Join(r.dataDir, "articles", folder, targetFilename)
 	relArticlePath := fmt.Sprintf("/articles/%s/%s", folder, targetFilename)
 
+	var oldPath string
 	existingBody := ""
 	if cluster.ExistingMOC != nil && cluster.ExistingMOC.FilePath != "" {
 		existingPath := filepath.Join(r.dataDir, strings.TrimPrefix(cluster.ExistingMOC.FilePath, "/"))
 		if bytes, err := os.ReadFile(existingPath); err == nil {
 			existingBody = string(bytes)
+			oldPath = existingPath
 		}
 	}
 
@@ -918,23 +499,24 @@ func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate,
 		}
 	}
 
-	newMarkdown := r.assembleMOCMarkdown(synthesis, mocTitle, cluster.Tag, existingBody, articleInfoMap)
+	newMarkdown := assembleMOCMarkdown(synthesis, mocTitle, cluster.Tag, existingBody, articleInfoMap)
 
-	// Atomic disk write
-	dir := filepath.Dir(filePath)
+	dir := filepath.Dir(destinationPath)
 	_ = os.MkdirAll(dir, 0755)
-	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(filePath)))
+	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(destinationPath)))
 	if err := os.WriteFile(tmpFile, []byte(newMarkdown), 0644); err != nil {
 		return fmt.Errorf("failed to write tmp file: %w", err)
 	}
-	if err := os.Rename(tmpFile, filePath); err != nil {
+	if err := os.Rename(tmpFile, destinationPath); err != nil {
 		_ = os.Remove(tmpFile)
 		return fmt.Errorf("failed to rename tmp file: %w", err)
 	}
 
-	// Update or Create DB Article Record
-	tags := fmt.Sprintf("moc, %s", cluster.Tag)
+	if oldPath != "" && oldPath != destinationPath {
+		_ = os.Remove(oldPath)
+	}
 
+	tags := fmt.Sprintf("moc, %s", cluster.Tag)
 	var mocRecord repository.GormArticle
 	if cluster.ExistingMOC != nil {
 		r.db.WithContext(ctx).First(&mocRecord, cluster.ExistingMOC.ID)
@@ -953,7 +535,6 @@ func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate,
 		}
 	}
 
-	// Sync article_links
 	r.db.WithContext(ctx).Where("source_id = ?", mocRecord.ID).Delete(&repository.GormArticleLink{})
 	for _, section := range synthesis.Sections {
 		for _, item := range section.Items {
@@ -967,536 +548,10 @@ func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate,
 		}
 	}
 
-	// Sync FTS
 	r.db.WithContext(ctx).Exec("DELETE FROM articles_fts WHERE rowid = ?", mocRecord.ID)
 	r.db.WithContext(ctx).Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", mocRecord.ID, mocRecord.Title, tags)
 
 	return nil
-}
-
-func (r *LibrarianRunner) assembleMOCMarkdown(synthesis *MOCSynthesisResponse, mocTitle, tag, existingBody string, articleInfoMap map[int64]MOCArticleInfo) string {
-	userNotesContent := ""
-	if existingBody != "" {
-		reNotes := regexp.MustCompile(`(?s)## Notes & Synthesis\s*\n(.*)`)
-		if matches := reNotes.FindStringSubmatch(existingBody); len(matches) > 1 {
-			userNotesContent = strings.TrimSpace(matches[1])
-		}
-	}
-
-	if userNotesContent == "" {
-		userNotesContent = "<!-- Content below this line is preserved across automated Librarian updates -->\n"
-	}
-
-	frontmatterData := map[string]interface{}{
-		"type":  "moc",
-		"title": mocTitle,
-		"tags":  []string{"moc", tag},
-		"date":  time.Now().Format("2006-01-02"),
-		"generated": map[string]interface{}{
-			"by":         "agent/librarian-moc",
-			"updated_at": time.Now().UTC().Format(time.RFC3339),
-		},
-	}
-
-	yamlBytes, _ := yaml.Marshal(frontmatterData)
-	var sb strings.Builder
-
-	sb.WriteString("---\n")
-	sb.WriteString(string(yamlBytes))
-	sb.WriteString("---\n\n")
-
-	sb.WriteString(fmt.Sprintf("# %s\n\n", mocTitle))
-	sb.WriteString("## Executive Overview\n")
-	sb.WriteString(strings.TrimSpace(synthesis.ExecutiveSummary) + "\n\n")
-
-	sb.WriteString("## Curated Index\n\n")
-	for _, section := range synthesis.Sections {
-		sb.WriteString(fmt.Sprintf("### %s\n", strings.TrimSpace(section.Title)))
-		for _, item := range section.Items {
-			info, ok := articleInfoMap[item.ArticleID]
-			if !ok {
-				info = MOCArticleInfo{ID: item.ArticleID, Title: fmt.Sprintf("Article %d", item.ArticleID)}
-			}
-			wikilink := formatMOCArticleWikilink(info)
-			contextNote := strings.TrimSpace(item.ContextNote)
-			if contextNote != "" {
-				sb.WriteString(fmt.Sprintf("- %s - %s\n", wikilink, contextNote))
-			} else {
-				sb.WriteString(fmt.Sprintf("- %s\n", wikilink))
-			}
-		}
-		sb.WriteString("\n")
-	}
-
-	sb.WriteString("## Notes & Synthesis\n")
-	sb.WriteString(userNotesContent + "\n")
-
-	return sb.String()
-}
-
-// HasCustomUserNotes returns true if the MOC's ## Notes & Synthesis section contains
-// custom user-written text beyond empty whitespace or the default placeholder.
-func HasCustomUserNotes(mocContent string) bool {
-	reNotes := regexp.MustCompile(`(?s)## Notes & Synthesis\s*\n(.*)`)
-	matches := reNotes.FindStringSubmatch(mocContent)
-	if len(matches) < 2 {
-		return false
-	}
-	content := strings.TrimSpace(matches[1])
-	if content == "" {
-		return false
-	}
-
-	// Clean out comments like <!-- Content below this line is preserved ... -->
-	reComments := regexp.MustCompile(`<!--.*?-->`)
-	cleaned := strings.TrimSpace(reComments.ReplaceAllString(content, ""))
-	if cleaned == "" {
-		return false
-	}
-
-	// Check if it's solely the default placeholder text
-	placeholder := "*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*"
-	placeholderClean := strings.Trim(placeholder, "*_ ")
-	trimmedClean := strings.Trim(cleaned, "*_ \n\r\t")
-
-	if trimmedClean == "" || trimmedClean == placeholderClean || strings.EqualFold(trimmedClean, placeholderClean) {
-		return false
-	}
-	return true
-}
-
-// escapeLikePattern escapes SQLite LIKE wildcards (%, _) and the escape character itself (\)
-func escapeLikePattern(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `%`, `\%`)
-	s = strings.ReplaceAll(s, `_`, `\_`)
-	return s
-}
-
-// ReconcileMOCLinks scans the curated sections of an MOC (excluding ## Notes & Synthesis)
-// and prunes any bullet lines containing [[wikilinks]] whose targets are no longer in validMemberTitles.
-// Returns the updated markdown and a bool indicating if any lines were pruned.
-func ReconcileMOCLinks(mocContent string, validMemberTitles map[string]bool) (string, bool) {
-	if mocContent == "" || validMemberTitles == nil {
-		return mocContent, false
-	}
-
-	parts := strings.SplitN(mocContent, "## Notes & Synthesis", 2)
-	curatedPart := parts[0]
-	userNotesPart := ""
-	if len(parts) == 2 {
-		userNotesPart = "## Notes & Synthesis" + parts[1]
-	}
-
-	lines := strings.Split(curatedPart, "\n")
-	var newLines []string
-	changed := false
-
-	// Matches [[Target]] or [[Target|Alias]]
-	reWikilink := regexp.MustCompile(`\[\[([^\]\|]+)(?:\|([^\]]+))?\]\]`)
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		// Only check list item lines that contain a wikilink
-		if strings.HasPrefix(trimmed, "- ") && strings.Contains(line, "[[") {
-			matches := reWikilink.FindAllStringSubmatch(line, -1)
-			if len(matches) > 0 {
-				hasValidLink := false
-				for _, m := range matches {
-					targetTitle := strings.TrimSpace(m[1])
-					if validMemberTitles[targetTitle] || validMemberTitles[strings.ToLower(targetTitle)] {
-						hasValidLink = true
-						break
-					}
-					if len(m) > 2 && m[2] != "" {
-						alias := strings.TrimSpace(m[2])
-						if validMemberTitles[alias] || validMemberTitles[strings.ToLower(alias)] {
-							hasValidLink = true
-							break
-						}
-					}
-				}
-				if !hasValidLink {
-					// Stale link, prune this line
-					changed = true
-					continue
-				}
-			}
-		}
-		newLines = append(newLines, line)
-	}
-
-	reconciledCurated := strings.Join(newLines, "\n")
-	if userNotesPart != "" {
-		return reconciledCurated + userNotesPart, changed
-	}
-	return reconciledCurated, changed
-}
-
-func extractMOCSections(mocContent string) []string {
-	var sections []string
-	lines := strings.Split(mocContent, "\n")
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "## ") {
-			sec := strings.TrimSpace(strings.TrimPrefix(trimmed, "## "))
-			if sec != "" && !strings.EqualFold(sec, "Notes & Synthesis") && !strings.EqualFold(sec, "Executive Overview") && !strings.EqualFold(sec, "Curated Index") {
-				sections = append(sections, sec)
-			}
-		} else if strings.HasPrefix(trimmed, "### ") {
-			sec := strings.TrimSpace(strings.TrimPrefix(trimmed, "### "))
-			if sec != "" && !strings.EqualFold(sec, "Notes & Synthesis") && !strings.EqualFold(sec, "Executive Overview") && !strings.EqualFold(sec, "Curated Index") {
-				sections = append(sections, sec)
-			}
-		}
-	}
-	return sections
-}
-
-func (r *LibrarianRunner) synthesizeDeltaCluster(ctx context.Context, cluster ClusterCandidate, unlinked []repository.ArticleRecord, existingContent string, apiKey, model, apiURL string) (*MOCDeltaResponse, error) {
-	sections := extractMOCSections(existingContent)
-	var sectionsList strings.Builder
-	for _, sec := range sections {
-		sectionsList.WriteString(fmt.Sprintf("- %s\n", sec))
-	}
-
-	var newArticlesList strings.Builder
-	for _, a := range unlinked {
-		newArticlesList.WriteString(fmt.Sprintf("- ID: %d, Title: %s\n", a.ID, a.Title))
-	}
-
-	prompt := fmt.Sprintf(`You are a Knowledge Base Librarian categorizing new notes into an existing Map of Content (MOC) for topic: "%s".
-
-Existing MOC Sections:
-%s
-New Articles to Place:
-%s
-Instructions:
-1. For each new article, select the most appropriate existing section from the list above.
-2. Provide a 1-sentence contextual summary (context_note) explaining how it fits into that section.
-3. Output strictly adhering to the JSON schema. Use professional plain text without emojis.`, cluster.Tag, sectionsList.String(), newArticlesList.String())
-
-	schema := map[string]interface{}{
-		"type": "json_schema",
-		"json_schema": map[string]interface{}{
-			"name":   "moc_delta_placement",
-			"strict": true,
-			"schema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"placements": map[string]interface{}{
-						"type": "array",
-						"items": map[string]interface{}{
-							"type": "object",
-							"properties": map[string]interface{}{
-								"article_id": map[string]interface{}{
-									"type": "integer",
-								},
-								"target_section": map[string]interface{}{
-									"type": "string",
-								},
-								"context_note": map[string]interface{}{
-									"type": "string",
-								},
-							},
-							"required":             []string{"article_id", "target_section", "context_note"},
-							"additionalProperties": false,
-						},
-					},
-				},
-				"required":             []string{"placements"},
-				"additionalProperties": false,
-			},
-		},
-	}
-
-	reqBody := map[string]interface{}{
-		"model": model,
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"content": prompt,
-			},
-		},
-		"response_format": schema,
-		"temperature":     0.2,
-	}
-
-	reqBytes, _ := json.Marshal(reqBody)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(reqBytes))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	httpReq.Header.Set("HTTP-Referer", "https://readr.app")
-	httpReq.Header.Set("X-Title", "Readr Librarian MOC Synthesizer")
-
-	startTime := time.Now()
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		if r.repo != nil {
-			mocID := int64(0)
-			if cluster.ExistingMOC != nil {
-				mocID = cluster.ExistingMOC.ID
-			}
-			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
-				ArticleID:        mocID,
-				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
-				Model:            model,
-				Status:           "failed",
-				DurationMs:       time.Since(startTime).Milliseconds(),
-				RetryCount:       0,
-				PromptTokens:     len(prompt) / 4,
-				CompletionTokens: 0,
-				TotalTokens:      len(prompt) / 4,
-				ErrorMessage:     err.Error(),
-				CreatedAt:        startTime,
-			})
-		}
-		return nil, fmt.Errorf("openrouter request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		errMsg := fmt.Sprintf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
-		if r.repo != nil {
-			mocID := int64(0)
-			if cluster.ExistingMOC != nil {
-				mocID = cluster.ExistingMOC.ID
-			}
-			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
-				ArticleID:        mocID,
-				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
-				Model:            model,
-				Status:           "failed",
-				DurationMs:       time.Since(startTime).Milliseconds(),
-				RetryCount:       0,
-				PromptTokens:     len(prompt) / 4,
-				CompletionTokens: 0,
-				TotalTokens:      len(prompt) / 4,
-				ErrorMessage:     errMsg,
-				CreatedAt:        startTime,
-			})
-		}
-		return nil, fmt.Errorf("%s", errMsg)
-	}
-
-	var chatResp struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		} `json:"usage"`
-	}
-
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return nil, fmt.Errorf("failed to parse openrouter response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 {
-		return nil, fmt.Errorf("openrouter returned empty choices list")
-	}
-
-	rawContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
-	var deltaResp MOCDeltaResponse
-	if err := json.Unmarshal([]byte(rawContent), &deltaResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal structured delta JSON: %w (raw: %s)", err, rawContent)
-	}
-
-	promptTokens := 0
-	completionTokens := 0
-	totalTokens := 0
-	if chatResp.Usage != nil {
-		promptTokens = chatResp.Usage.PromptTokens
-		completionTokens = chatResp.Usage.CompletionTokens
-		totalTokens = chatResp.Usage.TotalTokens
-		if totalTokens == 0 {
-			totalTokens = promptTokens + completionTokens
-		}
-	} else {
-		promptTokens = len(prompt) / 4
-		completionTokens = len(rawContent) / 4
-		totalTokens = promptTokens + completionTokens
-	}
-
-	mocID := int64(0)
-	if cluster.ExistingMOC != nil {
-		mocID = cluster.ExistingMOC.ID
-	}
-
-	if r.repo != nil {
-		_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
-			ArticleID:        mocID,
-			ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
-			Model:            model,
-			Status:           "success",
-			DurationMs:       time.Since(startTime).Milliseconds(),
-			RetryCount:       0,
-			PromptTokens:     promptTokens,
-			CompletionTokens: completionTokens,
-			TotalTokens:      totalTokens,
-			CreatedAt:        startTime,
-		})
-	}
-
-	return &deltaResp, nil
-}
-
-func applyDeltaPlacements(existingContent string, placements []MOCDeltaPlacement, articleInfoMap map[int64]MOCArticleInfo) string {
-	if len(placements) == 0 {
-		return existingContent
-	}
-
-	type sectionPlacements struct {
-		section string
-		items   []MOCDeltaPlacement
-	}
-	var grouped []sectionPlacements
-	sectionIdx := make(map[string]int)
-
-	for _, p := range placements {
-		sec := strings.TrimSpace(p.TargetSection)
-		if sec == "" {
-			sec = "Uncategorized"
-		}
-		normSec := strings.ToLower(sec)
-		if idx, exists := sectionIdx[normSec]; exists {
-			grouped[idx].items = append(grouped[idx].items, p)
-		} else {
-			sectionIdx[normSec] = len(grouped)
-			grouped = append(grouped, sectionPlacements{
-				section: sec,
-				items:   []MOCDeltaPlacement{p},
-			})
-		}
-	}
-
-	lines := strings.Split(existingContent, "\n")
-	scheduledArticles := make(map[int64]bool)
-	scheduledWikilinks := make(map[string]bool)
-
-	for _, g := range grouped {
-		headerIdx := -1
-		for i, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "#") {
-				headerText := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
-				if strings.EqualFold(headerText, g.section) {
-					headerIdx = i
-					break
-				}
-			}
-		}
-
-		var itemLines []string
-		for _, item := range g.items {
-			if scheduledArticles[item.ArticleID] {
-				continue
-			}
-
-			info, ok := articleInfoMap[item.ArticleID]
-			if !ok {
-				info = MOCArticleInfo{ID: item.ArticleID, Title: fmt.Sprintf("Article %d", item.ArticleID)}
-			}
-
-			wikilink := formatMOCArticleWikilink(info)
-			if scheduledWikilinks[wikilink] {
-				continue
-			}
-
-			fileBase := ""
-			if info.FilePath != "" {
-				fileBase = strings.TrimSuffix(filepath.Base(info.FilePath), ".md")
-			}
-
-			// Prevent duplicate additions if title/file is already referenced anywhere in existing lines
-			alreadyPresent := false
-			for _, line := range lines {
-				if strings.Contains(line, wikilink) ||
-					(fileBase != "" && (strings.Contains(line, fmt.Sprintf("[[%s]]", fileBase)) || strings.Contains(line, fmt.Sprintf("[[%s|", fileBase)))) ||
-					(info.Title != "" && (strings.Contains(line, fmt.Sprintf("[[%s]]", info.Title)) || strings.Contains(line, fmt.Sprintf("[[%s|", info.Title)))) {
-					alreadyPresent = true
-					break
-				}
-			}
-			if alreadyPresent {
-				continue
-			}
-
-			scheduledArticles[item.ArticleID] = true
-			scheduledWikilinks[wikilink] = true
-
-			note := strings.TrimSpace(item.ContextNote)
-			if note != "" {
-				itemLines = append(itemLines, fmt.Sprintf("- %s - %s", wikilink, note))
-			} else {
-				itemLines = append(itemLines, fmt.Sprintf("- %s", wikilink))
-			}
-		}
-
-		if len(itemLines) == 0 {
-			continue
-		}
-
-		if headerIdx != -1 {
-			nextHeaderIdx := len(lines)
-			for i := headerIdx + 1; i < len(lines); i++ {
-				trimmed := strings.TrimSpace(lines[i])
-				if strings.HasPrefix(trimmed, "#") {
-					nextHeaderIdx = i
-					break
-				}
-			}
-
-			insertIdx := nextHeaderIdx
-			for insertIdx > headerIdx+1 && strings.TrimSpace(lines[insertIdx-1]) == "" {
-				insertIdx--
-			}
-
-			newLines := make([]string, 0, len(lines)+len(itemLines))
-			newLines = append(newLines, lines[:insertIdx]...)
-			newLines = append(newLines, itemLines...)
-			newLines = append(newLines, lines[insertIdx:]...)
-			lines = newLines
-		} else {
-			notesIdx := -1
-			for i, line := range lines {
-				trimmed := strings.TrimSpace(line)
-				if strings.HasPrefix(trimmed, "#") {
-					headerText := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
-					if strings.EqualFold(headerText, "Notes & Synthesis") {
-						notesIdx = i
-						break
-					}
-				}
-			}
-
-			var newSectionLines []string
-			newSectionLines = append(newSectionLines, fmt.Sprintf("## %s", g.section))
-			newSectionLines = append(newSectionLines, itemLines...)
-			newSectionLines = append(newSectionLines, "")
-
-			if notesIdx != -1 {
-				newLines := make([]string, 0, len(lines)+len(newSectionLines))
-				newLines = append(newLines, lines[:notesIdx]...)
-				newLines = append(newLines, newSectionLines...)
-				newLines = append(newLines, lines[notesIdx:]...)
-				lines = newLines
-			} else {
-				lines = append(lines, "")
-				lines = append(lines, newSectionLines...)
-			}
-		}
-	}
-
-	return strings.Join(lines, "\n")
 }
 
 func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandidate, deltaResp *MOCDeltaResponse, existingContent string) error {
@@ -1516,6 +571,7 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 		return fmt.Errorf("failed to ensure topic folder: %w", err)
 	}
 
+	mocTitle := fmt.Sprintf("MOC - %s", folder)
 	targetFilename := fmt.Sprintf("MOC - %s.md", folder)
 	destinationPath := filepath.Join(r.dataDir, "articles", folder, targetFilename)
 	relArticlePath := fmt.Sprintf("/articles/%s/%s", folder, targetFilename)
@@ -1538,13 +594,12 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 		}
 	}
 
-	updatedMarkdown := applyDeltaPlacements(existingContent, deltaResp.Placements, articleInfoMap)
+	newMarkdown := applyDeltaPlacements(existingContent, deltaResp.Placements, articleInfoMap)
 
-	// Atomic disk write to topic folder destination
 	dir := filepath.Dir(destinationPath)
 	_ = os.MkdirAll(dir, 0755)
 	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(destinationPath)))
-	if err := os.WriteFile(tmpFile, []byte(updatedMarkdown), 0644); err != nil {
+	if err := os.WriteFile(tmpFile, []byte(newMarkdown), 0644); err != nil {
 		return fmt.Errorf("failed to write tmp file: %w", err)
 	}
 	if err := os.Rename(tmpFile, destinationPath); err != nil {
@@ -1552,53 +607,60 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 		return fmt.Errorf("failed to rename tmp file: %w", err)
 	}
 
-	// Remove old file location only after new file is durable at destination
 	if oldPath != "" && oldPath != destinationPath {
 		_ = os.Remove(oldPath)
 	}
 
-	// Update DB record with new topic folder path
+	tags := fmt.Sprintf("moc, %s", cluster.Tag)
 	var mocRecord repository.GormArticle
-	r.db.WithContext(ctx).First(&mocRecord, cluster.ExistingMOC.ID)
-	if mocRecord.ID > 0 {
+	if cluster.ExistingMOC != nil {
+		r.db.WithContext(ctx).First(&mocRecord, cluster.ExistingMOC.ID)
+		mocRecord.Title = mocTitle
+		mocRecord.Tags = tags
 		mocRecord.Article = relArticlePath
 		r.db.WithContext(ctx).Save(&mocRecord)
-	}
-
-	// Synchronize article_links: delete any targets that are no longer cluster members
-	validIDs := make(map[int64]bool)
-	for _, a := range cluster.Articles {
-		validIDs[a.ID] = true
-	}
-	for _, p := range deltaResp.Placements {
-		if p.ArticleID > 0 {
-			validIDs[p.ArticleID] = true
+	} else {
+		mocRecord = repository.GormArticle{
+			Title:   mocTitle,
+			Tags:    tags,
+			Article: relArticlePath,
 		}
-	}
-	var existingLinks []repository.GormArticleLink
-	r.db.WithContext(ctx).Where("source_id = ?", cluster.ExistingMOC.ID).Find(&existingLinks)
-	for _, el := range existingLinks {
-		if !validIDs[el.TargetID] {
-			r.db.WithContext(ctx).Delete(&el)
+		if err := r.db.WithContext(ctx).Create(&mocRecord).Error; err != nil {
+			return fmt.Errorf("failed to insert moc article in db: %w", err)
 		}
 	}
 
-	// Add new article_links
 	for _, p := range deltaResp.Placements {
-		if p.ArticleID > 0 && p.ArticleID != cluster.ExistingMOC.ID {
-			var count int64
-			r.db.WithContext(ctx).Model(&repository.GormArticleLink{}).
-				Where("source_id = ? AND target_id = ?", cluster.ExistingMOC.ID, p.ArticleID).
-				Count(&count)
-			if count == 0 {
+		if p.ArticleID > 0 && p.ArticleID != mocRecord.ID {
+			var existingLink repository.GormArticleLink
+			err := r.db.WithContext(ctx).Where("source_id = ? AND target_id = ?", mocRecord.ID, p.ArticleID).First(&existingLink).Error
+			if err != nil {
 				link := repository.GormArticleLink{
-					SourceID: cluster.ExistingMOC.ID,
+					SourceID: mocRecord.ID,
 					TargetID: p.ArticleID,
 				}
 				r.db.WithContext(ctx).Create(&link)
 			}
 		}
 	}
+
+	// Prune stale article_links
+	if cluster.ExistingMOC != nil {
+		activeArticleIDs := make(map[int64]bool)
+		for _, a := range cluster.Articles {
+			activeArticleIDs[a.ID] = true
+		}
+		var links []repository.GormArticleLink
+		r.db.WithContext(ctx).Where("source_id = ?", mocRecord.ID).Find(&links)
+		for _, link := range links {
+			if !activeArticleIDs[link.TargetID] {
+				r.db.WithContext(ctx).Delete(&link)
+			}
+		}
+	}
+
+	r.db.WithContext(ctx).Exec("DELETE FROM articles_fts WHERE rowid = ?", mocRecord.ID)
+	r.db.WithContext(ctx).Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", mocRecord.ID, mocRecord.Title, tags)
 
 	return nil
 }
@@ -1654,48 +716,26 @@ func (r *LibrarianRunner) saveReconciledMOC(ctx context.Context, cluster Cluster
 		r.db.WithContext(ctx).Save(&mocRecord)
 	}
 
-	validIDs := make(map[int64]bool)
-	for _, a := range cluster.Articles {
-		validIDs[a.ID] = true
-	}
-	var existingLinks []repository.GormArticleLink
-	r.db.WithContext(ctx).Where("source_id = ?", cluster.ExistingMOC.ID).Find(&existingLinks)
-	for _, el := range existingLinks {
-		if !validIDs[el.TargetID] {
-			r.db.WithContext(ctx).Delete(&el)
+	// Prune stale article_links
+	if cluster.ExistingMOC != nil {
+		activeArticleIDs := make(map[int64]bool)
+		for _, a := range cluster.Articles {
+			activeArticleIDs[a.ID] = true
+		}
+		var links []repository.GormArticleLink
+		r.db.WithContext(ctx).Where("source_id = ?", cluster.ExistingMOC.ID).Find(&links)
+		for _, link := range links {
+			if !activeArticleIDs[link.TargetID] {
+				r.db.WithContext(ctx).Delete(&link)
+			}
 		}
 	}
 
 	return nil
 }
 
-var reMOCWikilink = regexp.MustCompile(`\[\[([^[\]\n]+?)\]\]`)
-
-func extractLinkedArticlesFromMOC(mocContent string) map[string]bool {
-	linked := make(map[string]bool)
-	matches := reMOCWikilink.FindAllStringSubmatch(mocContent, -1)
-	for _, m := range matches {
-		if len(m) > 1 {
-			raw := strings.TrimSpace(m[1])
-			if raw == "" {
-				continue
-			}
-			// 1. Mark the entire raw string inside [[...]] as linked (preserves literal pipe-containing titles)
-			linked[raw] = true
-			linked[strings.ToLower(raw)] = true
-
-			// 2. If it is a pipe-delimited [[Target|Alias]], index only the target component
-			if strings.Contains(raw, "|") {
-				parts := strings.Split(raw, "|")
-				target := strings.TrimSpace(parts[0])
-				if target != "" {
-					linked[target] = true
-					linked[strings.ToLower(target)] = true
-				}
-			}
-		}
-	}
-	return linked
+func (r *LibrarianRunner) getUnlinkedArticles(cluster ClusterCandidate) ([]repository.ArticleRecord, string, error) {
+	return getUnlinkedArticles(cluster, r.dataDir)
 }
 
 func getUnlinkedArticles(cluster ClusterCandidate, dataDir string) ([]repository.ArticleRecord, string, error) {
@@ -1705,21 +745,18 @@ func getUnlinkedArticles(cluster ClusterCandidate, dataDir string) ([]repository
 
 	mocFilePath := ""
 	if cluster.ExistingMOC.FilePath != "" {
-		candidate := filepath.Join(dataDir, strings.TrimPrefix(cluster.ExistingMOC.FilePath, "/"))
-		if _, err := os.Stat(candidate); err == nil {
-			mocFilePath = candidate
-		}
+		rel := strings.TrimPrefix(cluster.ExistingMOC.FilePath, "/")
+		mocFilePath = filepath.Join(dataDir, rel)
 	}
-	if mocFilePath == "" && cluster.ExistingMOC.Title != "" {
-		candidate := filepath.Join(dataDir, "articles", fmt.Sprintf("%s.md", cluster.ExistingMOC.Title))
-		if _, err := os.Stat(candidate); err == nil {
-			mocFilePath = candidate
+
+	if mocFilePath == "" || !fileExists(mocFilePath) {
+		topicCandidate := cluster.Tag
+		if cluster.ExistingMOC.Title != "" {
+			topicCandidate = strings.TrimPrefix(cluster.ExistingMOC.Title, "MOC - ")
 		}
-	}
-	if mocFilePath == "" && cluster.ExistingMOC.ID > 0 {
-		candidate := filepath.Join(dataDir, "articles", fmt.Sprintf("%d.md", cluster.ExistingMOC.ID))
-		if _, err := os.Stat(candidate); err == nil {
-			mocFilePath = candidate
+		fallbackPath := filepath.Join(dataDir, "articles", topicCandidate, fmt.Sprintf("MOC - %s.md", topicCandidate))
+		if fileExists(fallbackPath) {
+			mocFilePath = fallbackPath
 		}
 	}
 
@@ -1754,8 +791,9 @@ func getUnlinkedArticles(cluster ClusterCandidate, dataDir string) ([]repository
 	return unlinked, existingContent, nil
 }
 
-func (r *LibrarianRunner) getUnlinkedArticles(cluster ClusterCandidate) ([]repository.ArticleRecord, string, error) {
-	return getUnlinkedArticles(cluster, r.dataDir)
+func fileExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
 }
 
 func (r *LibrarianRunner) getSettings() (apiKey, model string, minClusterSize int, enabled bool) {
@@ -1781,73 +819,4 @@ func (r *LibrarianRunner) getSettings() (apiKey, model string, minClusterSize in
 	}
 
 	return defaults.APIKey, defaults.Model, defaults.MinClusterSize, defaults.Enabled
-}
-
-type LibrarianCronManager struct {
-	cron    *cron.Cron
-	entryID cron.EntryID
-	runner  *LibrarianRunner
-	logger  *zap.Logger
-	mu      sync.Mutex
-}
-
-func NewLibrarianCronManager(runner *LibrarianRunner, logger *zap.Logger) *LibrarianCronManager {
-	if logger == nil {
-		logger = zap.NewNop()
-	}
-	return &LibrarianCronManager{
-		cron:   cron.New(),
-		runner: runner,
-		logger: logger,
-	}
-}
-
-func (m *LibrarianCronManager) Start(cronExpr string, enabled bool) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.cron != nil {
-		m.cron.Stop()
-	}
-	m.cron = cron.New()
-	m.entryID = 0
-
-	if !enabled {
-		m.logger.Info("Librarian background cron disabled in settings")
-		return nil
-	}
-
-	if cronExpr == "" {
-		cronExpr = "0 0 * * *"
-	}
-
-	id, err := m.cron.AddFunc(cronExpr, func() {
-		m.logger.Info("Executing scheduled Librarian MOC background synthesis", zap.String("schedule", cronExpr))
-		_, _ = m.runner.RunLibrarian(context.Background(), "cron")
-	})
-	if err != nil {
-		return fmt.Errorf("failed to register cron schedule %q: %w", cronExpr, err)
-	}
-
-	m.entryID = id
-	m.cron.Start()
-	m.logger.Info("Started Librarian background cron scheduler", zap.String("cron", cronExpr))
-	return nil
-}
-
-func (m *LibrarianCronManager) Stop() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.cron.Stop()
-}
-
-func (m *LibrarianCronManager) GetNextRun() *time.Time {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	entry := m.cron.Entry(m.entryID)
-	if entry.Next.IsZero() {
-		return nil
-	}
-	t := entry.Next
-	return &t
 }

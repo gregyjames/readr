@@ -1897,3 +1897,40 @@ func TestLibrarian_PruneEmptyMOC_FolderWithWildcards(t *testing.T) {
 		t.Errorf("expected MOC file %s to be deleted", mocPath)
 	}
 }
+
+func TestDetectClustersFromArticles_DeterministicSecondaryTagSorting(t *testing.T) {
+	// 3 clusters of size 2, with tags "zebra", "apple", "banana"
+	// 1 cluster of size 3, with tag "charlie"
+	articles := []repository.ArticleRecord{
+		{ID: 1, Title: "Zebra 1", Tags: "zebra"},
+		{ID: 2, Title: "Zebra 2", Tags: "zebra"},
+		{ID: 3, Title: "Apple 1", Tags: "apple"},
+		{ID: 4, Title: "Apple 2", Tags: "apple"},
+		{ID: 5, Title: "Banana 1", Tags: "banana"},
+		{ID: 6, Title: "Banana 2", Tags: "banana"},
+		{ID: 7, Title: "Charlie 1", Tags: "charlie"},
+		{ID: 8, Title: "Charlie 2", Tags: "charlie"},
+		{ID: 9, Title: "Charlie 3", Tags: "charlie"},
+	}
+
+	for i := 0; i < 10; i++ {
+		candidates := DetectClustersFromArticles(articles, 2)
+		if len(candidates) != 4 {
+			t.Fatalf("expected 4 candidates, got %d", len(candidates))
+		}
+
+		// First candidate should be charlie (count 3)
+		if candidates[0].Tag != "charlie" || len(candidates[0].Articles) != 3 {
+			t.Errorf("expected first candidate to be charlie (count 3), got %s (%d)", candidates[0].Tag, len(candidates[0].Articles))
+		}
+
+		// Subsequent equal-size (count 2) candidates must be deterministically sorted alphabetically
+		expectedEqualOrder := []string{"apple", "banana", "zebra"}
+		for j, expectedTag := range expectedEqualOrder {
+			actualTag := candidates[j+1].Tag
+			if actualTag != expectedTag {
+				t.Errorf("iteration %d: expected candidate %d to have tag %q, got %q", i, j+1, expectedTag, actualTag)
+			}
+		}
+	}
+}
