@@ -13,6 +13,7 @@ import (
 	"example.com/backend/internal/handlers"
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
+	"example.com/backend/internal/vault"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"go.uber.org/zap"
@@ -192,6 +193,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	chatRepo := chat.NewFileRepository(filepath.Join(dataDirectory, "chats"))
 	articleFetcher := &handlers.ArticleFileFetcher{DataDir: dataDirectory, DB: db}
 	chatService := chat.NewService(chatRepo, articleFetcher)
+	vaultInstance := vault.NewVault(dataDirectory, db, logger, graphEngine)
 
 	hCtx := &handlers.HandlerContext{
 		DB:               db,
@@ -199,6 +201,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		DataDir:          dataDirectory,
 		SettingsStore:    settingsStore,
 		Repo:             repo,
+		Vault:            vaultInstance,
 		Ingester:         ingester,
 		GraphEngine:      graphEngine,
 		ChatRepo:         chatRepo,
