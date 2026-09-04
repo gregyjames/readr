@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -711,12 +712,16 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 				var existingLink repository.GormArticleLink
 				err := tx.Where("source_id = ? AND target_id = ?", mocRecord.ID, p.ArticleID).First(&existingLink).Error
 				if err != nil {
-					link := repository.GormArticleLink{
-						SourceID: mocRecord.ID,
-						TargetID: p.ArticleID,
-					}
-					if err := tx.Create(&link).Error; err != nil {
-						return fmt.Errorf("create delta link in tx: %w", err)
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						link := repository.GormArticleLink{
+							SourceID: mocRecord.ID,
+							TargetID: p.ArticleID,
+						}
+						if err := tx.Create(&link).Error; err != nil {
+							return fmt.Errorf("create delta link in tx: %w", err)
+						}
+					} else {
+						return fmt.Errorf("find existing delta link in tx: %w", err)
 					}
 				}
 			}
