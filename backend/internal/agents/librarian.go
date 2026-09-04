@@ -64,12 +64,24 @@ func NewLibrarianRunner(logger *zap.Logger, db *gorm.DB, repo repository.Reposit
 }
 
 func (r *LibrarianRunner) GetStatus(enabled bool, cronExpr string, minClusterSize int, nextRun *time.Time) LibrarianStatus {
+	r.mu.Lock()
+	var lastResult *LibrarianRunResult
+	if r.lastResult != nil {
+		copyRes := *r.lastResult
+		if r.lastResult.Errors != nil {
+			copyRes.Errors = make([]string, len(r.lastResult.Errors))
+			copy(copyRes.Errors, r.lastResult.Errors)
+		}
+		lastResult = &copyRes
+	}
+	r.mu.Unlock()
+
 	return LibrarianStatus{
 		Enabled:        enabled,
 		CronExpression: cronExpr,
 		MinClusterSize: minClusterSize,
 		NextRun:        nextRun,
-		LastRunResult:  r.lastResult,
+		LastRunResult:  lastResult,
 	}
 }
 
@@ -100,12 +112,6 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	r.isRunning = true
 	r.mu.Unlock()
 
-	defer func() {
-		r.mu.Lock()
-		r.isRunning = false
-		r.mu.Unlock()
-	}()
-
 	startTime := time.Now()
 	r.logger.Info("Starting Librarian MOC run", zap.String("trigger", trigger))
 
@@ -117,8 +123,11 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 		Errors:  make([]string, 0),
 	}
 	defer func() {
+		r.mu.Lock()
 		result.ExecutionTimeMs = time.Since(startTime).Milliseconds()
 		r.lastResult = result
+		r.isRunning = false
+		r.mu.Unlock()
 	}()
 
 	if !enabled {
