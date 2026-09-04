@@ -3,34 +3,30 @@ package agents
 import (
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
+	"example.com/backend/internal/markdown"
 	"example.com/backend/internal/repository"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
 
-var summaryBlockRegex = regexp.MustCompile(`(?m)^>\s*(?:💡\s*)?(?:\*\*)?(?:AI\s+)?Summary:(?:\*\*)?.*(?:\n>.*)*`)
-var reProtected = regexp.MustCompile(`(\[\[[\s\S]*?\]\]|\[[\s\S]*?\]\([\s\S]*?\)|` + "`[\\s\\S]*?`" + `)`)
-
 func applySummary(body string, summary string) string {
-	summaryText := strings.TrimSpace(summary)
-	if summaryText == "" {
-		return body
-	}
-	newSummaryBlock := fmt.Sprintf("> 💡 **Summary:** %s", summaryText)
-	if summaryBlockRegex.MatchString(body) {
-		return summaryBlockRegex.ReplaceAllLiteralString(body, newSummaryBlock)
-	}
-	return newSummaryBlock + "\n\n" + strings.TrimLeft(body, "\n")
+	return markdown.ApplySummaryBlock(body, summary)
 }
 
 func injectLinksIntoBody(body string, links []llmLink, candidates []repository.ArticleRecord, sourceID int64, db *gorm.DB) (string, []string) {
 	var injectedLinks []string
 	if len(links) == 0 {
 		return body, injectedLinks
+	}
+
+	replacements := make(map[string]string)
+	var processedLinks []struct {
+		phrase      string
+		replacement string
+		targetID    int64
 	}
 
 	for _, link := range links {
@@ -78,36 +74,41 @@ func injectLinksIntoBody(body string, links []llmLink, candidates []repository.A
 			continue
 		}
 
-		// Split into protected tokens and unprotected segments
-		parts := reProtected.Split(body, -1)
-		matches := reProtected.FindAllString(body, -1)
+		replacements[phrase] = replacement
+		processedLinks = append(processedLinks, struct {
+			phrase      string
+			replacement string
+			targetID    int64
+		}{
+			phrase:      phrase,
+			replacement: replacement,
+			targetID:    link.ExistingArticleID,
+		})
+	}
 
-		replaced := false
-		var newBody strings.Builder
-		for i, part := range parts {
-			if !replaced && strings.Contains(part, phrase) {
-				part = strings.Replace(part, phrase, replacement, 1)
-				replaced = true
-			}
-			newBody.WriteString(part)
-			if i < len(matches) {
-				newBody.WriteString(matches[i])
-			}
-		}
+	if len(replacements) == 0 {
+		return body, injectedLinks
+	}
 
-		if replaced {
-			body = newBody.String()
-			injectedLinks = append(injectedLinks, fmt.Sprintf("%s (target_id: %d)", replacement, link.ExistingArticleID))
+	newBody := markdown.InjectWikilinks(body, replacements)
+	if newBody == body {
+		return body, injectedLinks
+	}
+
+	for _, pl := range processedLinks {
+		if strings.Contains(newBody, pl.replacement) && !strings.Contains(body, pl.replacement) {
+			injectedLinks = append(injectedLinks, fmt.Sprintf("%s (target_id: %d)", pl.replacement, pl.targetID))
 			if db != nil {
 				var count int64
-				db.Table("article_links").Where("source_id = ? AND target_id = ?", sourceID, link.ExistingArticleID).Count(&count)
+				db.Table("article_links").Where("source_id = ? AND target_id = ?", sourceID, pl.targetID).Count(&count)
 				if count == 0 {
-					db.Exec("INSERT INTO article_links (source_id, target_id) VALUES (?, ?)", sourceID, link.ExistingArticleID)
+					db.Exec("INSERT INTO article_links (source_id, target_id) VALUES (?, ?)", sourceID, pl.targetID)
 				}
 			}
 		}
 	}
-	return body, injectedLinks
+
+	return newBody, injectedLinks
 }
 
 func mergeArticleTags(existingTags string, aiTags []string) []string {
