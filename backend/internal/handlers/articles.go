@@ -248,6 +248,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 				"error": "Failed to delete article",
 			})
 		}
+		_ = h.DB.Exec("DELETE FROM article_links WHERE source_id = ? OR target_id = ?", id, id).Error
 
 		if article.Article != "" {
 			if p, err := resolveArticleFromRecord(h.DataDir, article.Article); err == nil {

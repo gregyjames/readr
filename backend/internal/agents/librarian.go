@@ -592,7 +592,7 @@ func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
 		var memberCount int64
 		if tag != "" {
 			if err := r.db.WithContext(ctx).Model(&repository.GormArticle{}).
-				Where("deleted_at IS NULL AND id != ?", moc.ID).
+				Where("deleted_at IS NULL AND (is_archived = false OR is_archived IS NULL) AND id != ?", moc.ID).
 				Where("tags LIKE ? OR article LIKE ?", "%"+tag+"%", "%/articles/"+tag+"/%").
 				Count(&memberCount).Error; err != nil {
 				r.logger.Error("Failed to count member notes for MOC pruning", zap.Int64("id", moc.ID), zap.Error(err))
@@ -604,7 +604,7 @@ func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
 		var linkCount int64
 		if err := r.db.WithContext(ctx).Table("article_links").
 			Joins("JOIN articles ON articles.id = article_links.target_id").
-			Where("article_links.source_id = ? AND articles.deleted_at IS NULL", moc.ID).
+			Where("article_links.source_id = ? AND articles.deleted_at IS NULL AND (articles.is_archived = false OR articles.is_archived IS NULL)", moc.ID).
 			Count(&linkCount).Error; err != nil {
 			r.logger.Error("Failed to count article links for MOC pruning", zap.Int64("id", moc.ID), zap.Error(err))
 			continue

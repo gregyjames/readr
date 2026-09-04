@@ -137,7 +137,7 @@ func (o *VaultOrganizer) CleanEmptyFolders() error {
 func (o *VaultOrganizer) UpdateMasterIndex(ctx context.Context) error {
 	var mocs []repository.GormArticle
 	if err := o.db.WithContext(ctx).
-		Where("deleted_at IS NULL").
+		Where("deleted_at IS NULL AND (is_archived = false OR is_archived IS NULL)").
 		Where("title LIKE 'MOC - %' OR title LIKE 'MOC %' OR title LIKE 'MOC:%' OR tags LIKE '%moc%'").
 		Order("title ASC").
 		Find(&mocs).Error; err != nil {

@@ -336,3 +336,52 @@ func TestArticleArchiveHandlers(t *testing.T) {
 		}
 	})
 }
+
+func TestDeleteArticle_CleansArticleLinks(t *testing.T) {
+	tempDir := t.TempDir()
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open sqlite: %v", err)
+	}
+
+	_ = db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{})
+
+	// Seed an article and links
+	article := repository.GormArticle{
+		ID:    10,
+		Title: "Target Article",
+	}
+	db.Create(&article)
+
+	link1 := repository.GormArticleLink{ID: 1, SourceID: 99, TargetID: 10}
+	link2 := repository.GormArticleLink{ID: 2, SourceID: 10, TargetID: 100}
+	db.Create(&link1)
+	db.Create(&link2)
+
+	app := fiber.New()
+	api := app.Group("/api")
+	hCtx := &HandlerContext{
+		DB:      db,
+		DataDir: tempDir,
+		Logger:  zap.NewNop(),
+	}
+	RegisterArticles(api, hCtx)
+
+	req := httptest.NewRequest("DELETE", "/api/delete/10", nil)
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatalf("delete request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	// Verify links were cleaned up
+	var count int64
+	db.Model(&repository.GormArticleLink{}).Where("source_id = 10 OR target_id = 10").Count(&count)
+	if count != 0 {
+		t.Errorf("expected 0 remaining article_links for article 10, got %d", count)
+	}
+}

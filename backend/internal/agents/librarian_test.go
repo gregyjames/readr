@@ -1790,3 +1790,52 @@ func TestLibrarian_PruneEmptyMOC_DoesNotPruneRegularArticlesWithMOCTagSubstring(
 		t.Errorf("expected regular article file to remain on disk at %s", regularFile)
 	}
 }
+
+func TestLibrarian_PruneEmptyMOC_WhenMemberNotesAreArchived(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	topicFolder := filepath.Join(articlesDir, "Amazon")
+	_ = os.MkdirAll(topicFolder, 0755)
+	mocPath := filepath.Join(topicFolder, "MOC - Amazon.md")
+
+	mocContent := `# MOC - Amazon
+
+## Core Concepts
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*
+`
+	_ = os.WriteFile(mocPath, []byte(mocContent), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      900,
+		Title:   "MOC - Amazon",
+		Tags:    "moc, amazon",
+		Article: "/articles/Amazon/MOC - Amazon.md",
+	})
+
+	// Seed archived Amazon article
+	db.Create(&repository.GormArticle{
+		ID:         901,
+		Title:      "Amazon AWS Architecture",
+		Tags:       "amazon, cloud",
+		Article:    "/articles/Amazon/Amazon AWS Architecture.md",
+		IsArchived: true,
+	})
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	pruned, err := runner.pruneEmptyMOCs(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if pruned != 1 {
+		t.Errorf("expected 1 MOC pruned when member note is archived, got %d", pruned)
+	}
+
+	if _, err := os.Stat(mocPath); !os.IsNotExist(err) {
+		t.Errorf("expected MOC file %s to be deleted", mocPath)
+	}
+}
