@@ -608,10 +608,11 @@ func (r *LibrarianRunner) pruneEmptyMOCs(ctx context.Context) (int, error) {
 		// 2. Count active non-MOC member notes residing in this topic folder
 		var memberCount int64
 		if topicFolder != "" {
-			folderPattern := "%/articles/" + topicFolder + "/%"
+			escapedFolder := escapeLikePattern(topicFolder)
+			folderPattern := "%/articles/" + escapedFolder + "/%"
 			if err := r.db.WithContext(ctx).Model(&repository.GormArticle{}).
 				Where("deleted_at IS NULL AND (is_archived = false OR is_archived IS NULL) AND id != ?", moc.ID).
-				Where("article LIKE ? AND title NOT LIKE 'MOC - %' AND title NOT LIKE 'MOC %' AND title NOT LIKE 'MOC:%'", folderPattern).
+				Where("article LIKE ? ESCAPE '\\' AND title NOT LIKE 'MOC - %' AND title NOT LIKE 'MOC %' AND title NOT LIKE 'MOC:%'", folderPattern).
 				Count(&memberCount).Error; err != nil {
 				r.logger.Error("Failed to count member notes for MOC pruning", zap.Int64("id", moc.ID), zap.Error(err))
 				continue
@@ -1062,6 +1063,14 @@ func HasCustomUserNotes(mocContent string) bool {
 		return false
 	}
 	return true
+}
+
+// escapeLikePattern escapes SQLite LIKE wildcards (%, _) and the escape character itself (\)
+func escapeLikePattern(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
 }
 
 // ReconcileMOCLinks scans the curated sections of an MOC (excluding ## Notes & Synthesis)

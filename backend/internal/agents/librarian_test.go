@@ -1839,3 +1839,61 @@ func TestLibrarian_PruneEmptyMOC_WhenMemberNotesAreArchived(t *testing.T) {
 		t.Errorf("expected MOC file %s to be deleted", mocPath)
 	}
 }
+
+func TestLibrarian_PruneEmptyMOC_FolderWithWildcards(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// Create MOC for topic folder "AI_ML" containing an underscore wildcard
+	topicFolderAIML := filepath.Join(articlesDir, "AI_ML")
+	_ = os.MkdirAll(topicFolderAIML, 0755)
+	mocPath := filepath.Join(topicFolderAIML, "MOC - AI_ML.md")
+
+	mocContent := `# MOC - AI_ML
+
+## Core Concepts
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*
+`
+	_ = os.WriteFile(mocPath, []byte(mocContent), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      910,
+		Title:   "MOC - AI_ML",
+		Tags:    "moc, ai_ml",
+		Article: "/articles/AI_ML/MOC - AI_ML.md",
+	})
+
+	// Create an active article in folder "AI-ML" (differs by single char where _ would match unescaped)
+	topicFolderHyphen := filepath.Join(articlesDir, "AI-ML")
+	_ = os.MkdirAll(topicFolderHyphen, 0755)
+	articleHyphenPath := filepath.Join(topicFolderHyphen, "Deep Learning.md")
+	_ = os.WriteFile(articleHyphenPath, []byte("# Deep Learning\nContent"), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      911,
+		Title:   "Deep Learning",
+		Tags:    "ai-ml",
+		Article: "/articles/AI-ML/Deep Learning.md",
+	})
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+
+	// Since AI_ML folder has 0 member notes and only AI-ML has a note,
+	// unescaped LIKE '%/articles/AI_ML/%' would falsely match AI-ML, preventing pruning.
+	// With escaping, MOC - AI_ML must be pruned.
+	pruned, err := runner.pruneEmptyMOCs(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if pruned != 1 {
+		t.Errorf("expected 1 MOC pruned for AI_ML, got %d", pruned)
+	}
+
+	if _, err := os.Stat(mocPath); !os.IsNotExist(err) {
+		t.Errorf("expected MOC file %s to be deleted", mocPath)
+	}
+}
