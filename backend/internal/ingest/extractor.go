@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"codeberg.org/readeck/go-readability"
@@ -38,6 +39,9 @@ func (e *ContentExtractor) Extract(htmlBytes []byte, sourceURL *url.URL) (*Extra
 	if err != nil {
 		return nil, fmt.Errorf("html to markdown conversion failed: %w", err)
 	}
+
+	// Post-process and sanitize markdown content
+	markdownContent = cleanMarkdownContent(markdownContent)
 
 	fullDoc, _ := html.Parse(bytes.NewReader(htmlBytes))
 	metaInfo := extractHTMLMetadata(fullDoc)
@@ -80,6 +84,87 @@ func (e *ContentExtractor) Extract(htmlBytes []byte, sourceURL *url.URL) (*Extra
 		SiteName:        siteName,
 		OG:              metaInfo.og,
 	}, nil
+}
+
+var (
+	reMultipleNewlines    = regexp.MustCompile(`\n{3,}`)
+	reEmptyLinks          = regexp.MustCompile(`\[\s*\]\([^\)]*\)`)
+	reEmptyImages         = regexp.MustCompile(`!\[\s*\]\(\s*\)`)
+	reOrphanedBullets     = regexp.MustCompile(`(?m)^[-*+]\s*$`)
+	reBoilerplateHeadings = regexp.MustCompile(`(?i)^#{1,6}\s*(share\s+this(\s+article|\s+story|\s+post)?|share\s+on\s+\w+|newsletter(\s+signup)?|subscribe(\s+to\s+our\s+newsletter)?|leave\s+a\s+(reply|comment)|comments?|related\s+(articles?|posts?|stories)|advertisement|trending\s+now)\s*$`)
+	reCodeFence           = regexp.MustCompile("(?s)(```.*?```|~~~.*?~~~)")
+)
+
+// cleanMarkdownSegment cleans non-code markdown prose
+func cleanMarkdownSegment(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return raw
+	}
+
+	// 1. Remove empty tracking images and empty links
+	cleaned := reEmptyImages.ReplaceAllString(raw, "")
+	cleaned = reEmptyLinks.ReplaceAllString(cleaned, "")
+
+	// 2. Remove orphaned bullet points and boilerplate headings
+	lines := strings.Split(cleaned, "\n")
+	filteredLines := make([]string, 0, len(lines))
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Check boilerplate headings
+		if reBoilerplateHeadings.MatchString(trimmed) {
+			continue
+		}
+
+		// Check orphaned bullet points
+		if reOrphanedBullets.MatchString(trimmed) {
+			continue
+		}
+
+		// Trim trailing whitespace per line
+		filteredLines = append(filteredLines, strings.TrimRight(line, " \t\r"))
+	}
+
+	return strings.Join(filteredLines, "\n")
+}
+
+// cleanMarkdownContent removes web clutter, empty elements, boilerplate headings, and normalizes spacing while preserving code blocks.
+func cleanMarkdownContent(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+
+	// Split by code fences and apply cleaning only to non-code prose segments
+	indices := reCodeFence.FindAllStringIndex(raw, -1)
+	if len(indices) == 0 {
+		cleaned := cleanMarkdownSegment(raw)
+		cleaned = reMultipleNewlines.ReplaceAllString(cleaned, "\n\n")
+		return strings.TrimSpace(cleaned)
+	}
+
+	var sb strings.Builder
+	lastOffset := 0
+
+	for _, idx := range indices {
+		start, end := idx[0], idx[1]
+		if start > lastOffset {
+			prose := raw[lastOffset:start]
+			sb.WriteString(cleanMarkdownSegment(prose))
+		}
+		// Write code block verbatim
+		sb.WriteString(raw[start:end])
+		lastOffset = end
+	}
+
+	if lastOffset < len(raw) {
+		prose := raw[lastOffset:]
+		sb.WriteString(cleanMarkdownSegment(prose))
+	}
+
+	cleaned := sb.String()
+	cleaned = reMultipleNewlines.ReplaceAllString(cleaned, "\n\n")
+	return strings.TrimSpace(cleaned)
 }
 
 type metadataInfo struct {

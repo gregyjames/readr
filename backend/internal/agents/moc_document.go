@@ -65,28 +65,252 @@ type MOCDeltaResponse struct {
 	Placements []MOCDeltaPlacement `json:"placements"`
 }
 
-// HasCustomUserNotes returns true if the MOC's ## Notes & Synthesis section contains
-// custom user-written text beyond empty whitespace or the default placeholder.
-func HasCustomUserNotes(mocContent string) bool {
-	reNotes := regexp.MustCompile(`(?s)## Notes & Synthesis\s*\n(.*)`)
-	matches := reNotes.FindStringSubmatch(mocContent)
-	if len(matches) < 2 {
-		return false
+// MOCParsedItem represents an item within a curated section of an MOCDocument.
+type MOCParsedItem struct {
+	RawLine     string
+	ArticleID   int64
+	Wikilink    string
+	TargetTitle string
+	AliasTitle  string
+	ContextNote string
+}
+
+// MOCParsedSection represents a section in the Curated Index.
+type MOCParsedSection struct {
+	Title string
+	Items []MOCParsedItem
+}
+
+// MOCDocument represents a structured Map of Content document.
+type MOCDocument struct {
+	Frontmatter      map[string]interface{}
+	RawYAML          string
+	Title            string
+	ExecutiveSummary string
+	CuratedSections  []MOCParsedSection
+	UserNotesBody    string
+}
+
+var mocFrontmatterRegex = regexp.MustCompile(`(?s)^---\r?\n(.*?)\r?\n---\r?\n?(.*)$`)
+
+// ParseMOCDocument parses a markdown string into a structured MOCDocument.
+func ParseMOCDocument(raw string) (*MOCDocument, error) {
+	doc := &MOCDocument{
+		Frontmatter: make(map[string]interface{}),
 	}
 
-	content := strings.TrimSpace(matches[1])
+	cleanRaw := strings.TrimPrefix(raw, "\ufeff")
+	body := raw
+
+	if strings.HasPrefix(cleanRaw, "---") {
+		matches := mocFrontmatterRegex.FindStringSubmatch(cleanRaw)
+		if len(matches) >= 3 {
+			yamlStr := strings.TrimSpace(matches[1])
+			body = matches[2]
+			doc.RawYAML = matches[1]
+			if yamlStr != "" {
+				_ = yaml.Unmarshal([]byte(yamlStr), &doc.Frontmatter)
+				if doc.Frontmatter == nil {
+					doc.Frontmatter = make(map[string]interface{})
+				}
+			}
+		}
+	}
+
+	// Split into Curated area and User Notes area
+	notesSplit := strings.SplitN(body, "## Notes & Synthesis", 2)
+	curatedArea := notesSplit[0]
+	if len(notesSplit) > 1 {
+		doc.UserNotesBody = strings.TrimLeft(notesSplit[1], "\r\n")
+	}
+
+	lines := strings.Split(curatedArea, "\n")
+	var currentSection *MOCParsedSection
+	reWikilink := regexp.MustCompile(`\[\[([^\]\|]+)(?:\|([^\]]+))?\]\]`)
+
+	inExecutiveOverview := false
+	var overviewLines []string
+
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+
+		// Document Title (# Title)
+		if strings.HasPrefix(trimmedLine, "# ") && doc.Title == "" {
+			doc.Title = strings.TrimSpace(strings.TrimPrefix(trimmedLine, "# "))
+			inExecutiveOverview = false
+			continue
+		}
+
+		// Top-level sections (## ...)
+		if strings.HasPrefix(trimmedLine, "## ") {
+			secTitle := strings.TrimSpace(strings.TrimPrefix(trimmedLine, "## "))
+			if strings.EqualFold(secTitle, "Executive Overview") {
+				inExecutiveOverview = true
+				currentSection = nil
+				continue
+			} else if strings.EqualFold(secTitle, "Curated Index") {
+				inExecutiveOverview = false
+				currentSection = nil
+				continue
+			} else {
+				// Treat as a section if not Overview/Index/Notes
+				inExecutiveOverview = false
+				doc.CuratedSections = append(doc.CuratedSections, MOCParsedSection{
+					Title: secTitle,
+				})
+				currentSection = &doc.CuratedSections[len(doc.CuratedSections)-1]
+				continue
+			}
+		}
+
+		// Sub-level sections (### ...)
+		if strings.HasPrefix(trimmedLine, "### ") {
+			inExecutiveOverview = false
+			secTitle := strings.TrimSpace(strings.TrimPrefix(trimmedLine, "### "))
+			doc.CuratedSections = append(doc.CuratedSections, MOCParsedSection{
+				Title: secTitle,
+			})
+			currentSection = &doc.CuratedSections[len(doc.CuratedSections)-1]
+			continue
+		}
+
+		if inExecutiveOverview {
+			overviewLines = append(overviewLines, line)
+			continue
+		}
+
+		// Curated item line
+		if currentSection != nil && strings.HasPrefix(trimmedLine, "- ") {
+			item := MOCParsedItem{
+				RawLine: line,
+			}
+			matches := reWikilink.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				item.Wikilink = matches[0]
+				item.TargetTitle = strings.TrimSpace(matches[1])
+				if len(matches) > 2 && matches[2] != "" {
+					item.AliasTitle = strings.TrimSpace(matches[2])
+				}
+			}
+
+			// Extract context note after " - "
+			bulletContent := strings.TrimPrefix(trimmedLine, "- ")
+			if item.Wikilink != "" {
+				linkIdx := strings.Index(bulletContent, item.Wikilink)
+				if linkIdx != -1 {
+					afterLink := strings.TrimSpace(bulletContent[linkIdx+len(item.Wikilink):])
+					item.ContextNote = strings.TrimPrefix(afterLink, "- ")
+					item.ContextNote = strings.TrimPrefix(item.ContextNote, "-")
+					item.ContextNote = strings.TrimSpace(item.ContextNote)
+				}
+			} else {
+				// Bullet might be "Plain Title - Context Note"
+				if dashIdx := strings.Index(bulletContent, " - "); dashIdx != -1 {
+					item.TargetTitle = strings.TrimSpace(bulletContent[:dashIdx])
+					item.ContextNote = strings.TrimSpace(bulletContent[dashIdx+3:])
+				} else {
+					item.TargetTitle = strings.TrimSpace(bulletContent)
+				}
+			}
+
+			currentSection.Items = append(currentSection.Items, item)
+		}
+	}
+
+	doc.ExecutiveSummary = strings.TrimSpace(strings.Join(overviewLines, "\n"))
+	return doc, nil
+}
+
+// Serialize serializes the MOCDocument into markdown.
+func (doc *MOCDocument) Serialize() string {
+	var sb strings.Builder
+
+	if len(doc.Frontmatter) > 0 {
+		yamlBytes, _ := yaml.Marshal(doc.Frontmatter)
+		sb.WriteString("---\n")
+		sb.WriteString(string(yamlBytes))
+		sb.WriteString("---\n\n")
+	} else if strings.TrimSpace(doc.RawYAML) != "" {
+		sb.WriteString("---\n")
+		sb.WriteString(strings.TrimSpace(doc.RawYAML))
+		sb.WriteString("\n---\n\n")
+	}
+
+	title := doc.Title
+	if title == "" {
+		if t, ok := doc.Frontmatter["title"].(string); ok && t != "" {
+			title = t
+		} else {
+			title = "MOC"
+		}
+	}
+
+	sb.WriteString(fmt.Sprintf("# %s\n\n", title))
+
+	if strings.TrimSpace(doc.ExecutiveSummary) != "" {
+		sb.WriteString("## Executive Overview\n")
+		sb.WriteString(strings.TrimSpace(doc.ExecutiveSummary) + "\n\n")
+	}
+
+	hasCuratedItems := false
+	for _, sec := range doc.CuratedSections {
+		if len(sec.Items) > 0 {
+			hasCuratedItems = true
+			break
+		}
+	}
+
+	if hasCuratedItems {
+		sb.WriteString("## Curated Index\n\n")
+		for _, section := range doc.CuratedSections {
+			if len(section.Items) == 0 {
+				continue
+			}
+			sb.WriteString(fmt.Sprintf("### %s\n", strings.TrimSpace(section.Title)))
+			for _, item := range section.Items {
+				if item.RawLine != "" && strings.HasPrefix(strings.TrimSpace(item.RawLine), "- ") {
+					sb.WriteString(item.RawLine + "\n")
+				} else if item.Wikilink != "" {
+					if item.ContextNote != "" {
+						sb.WriteString(fmt.Sprintf("- %s - %s\n", item.Wikilink, item.ContextNote))
+					} else {
+						sb.WriteString(fmt.Sprintf("- %s\n", item.Wikilink))
+					}
+				} else if item.TargetTitle != "" {
+					if item.ContextNote != "" {
+						sb.WriteString(fmt.Sprintf("- %s - %s\n", item.TargetTitle, item.ContextNote))
+					} else {
+						sb.WriteString(fmt.Sprintf("- %s\n", item.TargetTitle))
+					}
+				}
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	sb.WriteString("## Notes & Synthesis\n")
+	userNotes := strings.TrimSpace(doc.UserNotesBody)
+	if userNotes == "" {
+		userNotes = "<!-- Content below this line is preserved across automated Librarian updates -->\n"
+	}
+	sb.WriteString(userNotes + "\n")
+
+	return sb.String()
+}
+
+// HasCustomUserNotes returns true if the MOC's UserNotesBody contains custom user text.
+func (doc *MOCDocument) HasCustomUserNotes() bool {
+	content := strings.TrimSpace(doc.UserNotesBody)
 	if content == "" {
 		return false
 	}
 
-	// Clean out comments like <!-- Content below this line is preserved ... -->
 	reComments := regexp.MustCompile(`<!--.*?-->`)
 	cleaned := strings.TrimSpace(reComments.ReplaceAllString(content, ""))
 	if cleaned == "" {
 		return false
 	}
 
-	// Check if it's solely the default placeholder text
 	placeholder := "*Add your manual observations, key takeaways, and cross-cutting synthesis across these notes here.*"
 	placeholderClean := strings.Trim(placeholder, "*_ ")
 	trimmedClean := strings.Trim(cleaned, "*_ \n\r\t")
@@ -95,6 +319,148 @@ func HasCustomUserNotes(mocContent string) bool {
 		return false
 	}
 	return true
+}
+
+// ReconcileLinks prunes items whose target wikilinks are no longer in validMemberTitles.
+func (doc *MOCDocument) ReconcileLinks(validMemberTitles map[string]bool) bool {
+	if validMemberTitles == nil {
+		return false
+	}
+
+	changed := false
+	var updatedSections []MOCParsedSection
+
+	for _, sec := range doc.CuratedSections {
+		var validItems []MOCParsedItem
+		for _, item := range sec.Items {
+			if item.TargetTitle == "" && item.Wikilink == "" {
+				validItems = append(validItems, item)
+				continue
+			}
+
+			targetValid := validMemberTitles[item.TargetTitle] || validMemberTitles[strings.ToLower(item.TargetTitle)]
+			aliasValid := item.AliasTitle != "" && (validMemberTitles[item.AliasTitle] || validMemberTitles[strings.ToLower(item.AliasTitle)])
+
+			if targetValid || aliasValid {
+				validItems = append(validItems, item)
+			} else {
+				changed = true
+			}
+		}
+
+		// Only retain section if it has remaining items (prunes empty sections)
+		if len(validItems) > 0 {
+			sec.Items = validItems
+			updatedSections = append(updatedSections, sec)
+		} else if len(sec.Items) > 0 {
+			// Section had items and now has 0, mark changed
+			changed = true
+		}
+	}
+
+	doc.CuratedSections = updatedSections
+	return changed
+}
+
+// ApplyDeltaPlacements applies delta placements to the MOCDocument.
+func (doc *MOCDocument) ApplyDeltaPlacements(placements []MOCDeltaPlacement, articleInfoMap map[int64]MOCArticleInfo) {
+	if len(placements) == 0 {
+		return
+	}
+
+	// Index existing items by article ID, target title, and wikilink
+	existingLinks := make(map[string]bool)
+	for _, sec := range doc.CuratedSections {
+		for _, item := range sec.Items {
+			if item.Wikilink != "" {
+				existingLinks[item.Wikilink] = true
+			}
+			if item.TargetTitle != "" {
+				existingLinks[item.TargetTitle] = true
+				existingLinks[strings.ToLower(item.TargetTitle)] = true
+			}
+			if item.AliasTitle != "" {
+				existingLinks[item.AliasTitle] = true
+				existingLinks[strings.ToLower(item.AliasTitle)] = true
+			}
+		}
+	}
+
+	scheduledArticles := make(map[int64]bool)
+
+	for _, p := range placements {
+		if scheduledArticles[p.ArticleID] {
+			continue
+		}
+
+		info, ok := articleInfoMap[p.ArticleID]
+		if !ok {
+			info = MOCArticleInfo{ID: p.ArticleID, Title: fmt.Sprintf("Article %d", p.ArticleID)}
+		}
+
+		wikilink := formatMOCArticleWikilink(info)
+		fileBase := ""
+		if info.FilePath != "" {
+			fileBase = strings.TrimSuffix(filepath.Base(info.FilePath), ".md")
+		}
+
+		if existingLinks[wikilink] ||
+			(info.Title != "" && (existingLinks[info.Title] || existingLinks[strings.ToLower(info.Title)])) ||
+			(fileBase != "" && (existingLinks[fileBase] || existingLinks[strings.ToLower(fileBase)])) {
+			continue
+		}
+
+		scheduledArticles[p.ArticleID] = true
+		existingLinks[wikilink] = true
+		if info.Title != "" {
+			existingLinks[info.Title] = true
+			existingLinks[strings.ToLower(info.Title)] = true
+		}
+
+		targetSecName := strings.TrimSpace(p.TargetSection)
+		if targetSecName == "" {
+			targetSecName = "Uncategorized"
+		}
+
+		newItem := MOCParsedItem{
+			ArticleID:   p.ArticleID,
+			Wikilink:    wikilink,
+			TargetTitle: info.Title,
+			ContextNote: strings.TrimSpace(p.ContextNote),
+		}
+		if newItem.ContextNote != "" {
+			newItem.RawLine = fmt.Sprintf("- %s - %s", wikilink, newItem.ContextNote)
+		} else {
+			newItem.RawLine = fmt.Sprintf("- %s", wikilink)
+		}
+
+		// Find section
+		sectionFound := false
+		for i := range doc.CuratedSections {
+			if strings.EqualFold(doc.CuratedSections[i].Title, targetSecName) {
+				doc.CuratedSections[i].Items = append(doc.CuratedSections[i].Items, newItem)
+				sectionFound = true
+				break
+			}
+		}
+
+		if !sectionFound {
+			doc.CuratedSections = append(doc.CuratedSections, MOCParsedSection{
+				Title: targetSecName,
+				Items: []MOCParsedItem{newItem},
+			})
+		}
+	}
+}
+
+// HasCustomUserNotes returns true if the MOC's ## Notes & Synthesis section contains
+// custom user-written text beyond empty whitespace or the default placeholder.
+func HasCustomUserNotes(mocContent string) bool {
+	doc, err := ParseMOCDocument(mocContent)
+	if err != nil {
+		return false
+	}
+	return doc.HasCustomUserNotes()
 }
 
 // escapeLikePattern escapes SQLite LIKE wildcards (%, _) and the escape character itself (\)
@@ -113,73 +479,28 @@ func ReconcileMOCLinks(mocContent string, validMemberTitles map[string]bool) (st
 		return mocContent, false
 	}
 
-	parts := strings.SplitN(mocContent, "## Notes & Synthesis", 2)
-	curatedPart := parts[0]
-	userNotesPart := ""
-	if len(parts) == 2 {
-		userNotesPart = "## Notes & Synthesis" + parts[1]
+	doc, err := ParseMOCDocument(mocContent)
+	if err != nil {
+		return mocContent, false
 	}
 
-	lines := strings.Split(curatedPart, "\n")
-	var newLines []string
-	changed := false
-
-	// Matches [[Target]] or [[Target|Alias]]
-	reWikilink := regexp.MustCompile(`\[\[([^\]\|]+)(?:\|([^\]]+))?\]\]`)
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		// Only check list item lines that contain a wikilink
-		if strings.HasPrefix(trimmed, "- ") && strings.Contains(line, "[[") {
-			matches := reWikilink.FindAllStringSubmatch(line, -1)
-			if len(matches) > 0 {
-				hasValidLink := false
-				for _, m := range matches {
-					targetTitle := strings.TrimSpace(m[1])
-					if validMemberTitles[targetTitle] || validMemberTitles[strings.ToLower(targetTitle)] {
-						hasValidLink = true
-						break
-					}
-					if len(m) > 2 && m[2] != "" {
-						alias := strings.TrimSpace(m[2])
-						if validMemberTitles[alias] || validMemberTitles[strings.ToLower(alias)] {
-							hasValidLink = true
-							break
-						}
-					}
-				}
-				if !hasValidLink {
-					// Stale link, prune this line
-					changed = true
-					continue
-				}
-			}
-		}
-		newLines = append(newLines, line)
+	pruned := doc.ReconcileLinks(validMemberTitles)
+	if !pruned {
+		return mocContent, false
 	}
-
-	reconciledCurated := strings.Join(newLines, "\n")
-	if userNotesPart != "" {
-		return reconciledCurated + userNotesPart, changed
-	}
-	return reconciledCurated, changed
+	return doc.Serialize(), true
 }
 
 func extractMOCSections(mocContent string) []string {
+	doc, err := ParseMOCDocument(mocContent)
+	if err != nil {
+		return nil
+	}
 	var sections []string
-	lines := strings.Split(mocContent, "\n")
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "## ") {
-			sec := strings.TrimSpace(strings.TrimPrefix(trimmed, "## "))
-			if sec != "" && !strings.EqualFold(sec, "Notes & Synthesis") && !strings.EqualFold(sec, "Executive Overview") && !strings.EqualFold(sec, "Curated Index") {
-				sections = append(sections, sec)
-			}
-		} else if strings.HasPrefix(trimmed, "### ") {
-			sec := strings.TrimSpace(strings.TrimPrefix(trimmed, "### "))
-			if sec != "" && !strings.EqualFold(sec, "Notes & Synthesis") && !strings.EqualFold(sec, "Executive Overview") && !strings.EqualFold(sec, "Curated Index") {
-				sections = append(sections, sec)
-			}
+	for _, sec := range doc.CuratedSections {
+		t := strings.TrimSpace(sec.Title)
+		if t != "" && !strings.EqualFold(t, "Notes & Synthesis") && !strings.EqualFold(t, "Executive Overview") && !strings.EqualFold(t, "Curated Index") {
+			sections = append(sections, t)
 		}
 	}
 	return sections
@@ -188,9 +509,8 @@ func extractMOCSections(mocContent string) []string {
 func assembleMOCMarkdown(synthesis *MOCSynthesisResponse, mocTitle, tag, existingBody string, articleInfoMap map[int64]MOCArticleInfo) string {
 	userNotesContent := ""
 	if existingBody != "" {
-		reNotes := regexp.MustCompile(`(?s)## Notes & Synthesis\s*\n(.*)`)
-		if matches := reNotes.FindStringSubmatch(existingBody); len(matches) > 1 {
-			userNotesContent = strings.TrimSpace(matches[1])
+		if existingDoc, err := ParseMOCDocument(existingBody); err == nil && existingDoc.UserNotesBody != "" {
+			userNotesContent = existingDoc.UserNotesBody
 		}
 	}
 
@@ -209,20 +529,9 @@ func assembleMOCMarkdown(synthesis *MOCSynthesisResponse, mocTitle, tag, existin
 		},
 	}
 
-	yamlBytes, _ := yaml.Marshal(frontmatterData)
-	var sb strings.Builder
-
-	sb.WriteString("---\n")
-	sb.WriteString(string(yamlBytes))
-	sb.WriteString("---\n\n")
-
-	sb.WriteString(fmt.Sprintf("# %s\n\n", mocTitle))
-	sb.WriteString("## Executive Overview\n")
-	sb.WriteString(strings.TrimSpace(synthesis.ExecutiveSummary) + "\n\n")
-
-	sb.WriteString("## Curated Index\n\n")
+	var parsedSections []MOCParsedSection
 	for _, section := range synthesis.Sections {
-		sb.WriteString(fmt.Sprintf("### %s\n", strings.TrimSpace(section.Title)))
+		var items []MOCParsedItem
 		for _, item := range section.Items {
 			info, ok := articleInfoMap[item.ArticleID]
 			if !ok {
@@ -230,19 +539,35 @@ func assembleMOCMarkdown(synthesis *MOCSynthesisResponse, mocTitle, tag, existin
 			}
 			wikilink := formatMOCArticleWikilink(info)
 			contextNote := strings.TrimSpace(item.ContextNote)
+			rawLine := ""
 			if contextNote != "" {
-				sb.WriteString(fmt.Sprintf("- %s - %s\n", wikilink, contextNote))
+				rawLine = fmt.Sprintf("- %s - %s", wikilink, contextNote)
 			} else {
-				sb.WriteString(fmt.Sprintf("- %s\n", wikilink))
+				rawLine = fmt.Sprintf("- %s", wikilink)
 			}
+			items = append(items, MOCParsedItem{
+				RawLine:     rawLine,
+				ArticleID:   item.ArticleID,
+				Wikilink:    wikilink,
+				TargetTitle: info.Title,
+				ContextNote: contextNote,
+			})
 		}
-		sb.WriteString("\n")
+		parsedSections = append(parsedSections, MOCParsedSection{
+			Title: strings.TrimSpace(section.Title),
+			Items: items,
+		})
 	}
 
-	sb.WriteString("## Notes & Synthesis\n")
-	sb.WriteString(userNotesContent + "\n")
+	doc := &MOCDocument{
+		Frontmatter:      frontmatterData,
+		Title:            mocTitle,
+		ExecutiveSummary: strings.TrimSpace(synthesis.ExecutiveSummary),
+		CuratedSections:  parsedSections,
+		UserNotesBody:    userNotesContent,
+	}
 
-	return sb.String()
+	return doc.Serialize()
 }
 
 func applyDeltaPlacements(existingContent string, placements []MOCDeltaPlacement, articleInfoMap map[int64]MOCArticleInfo) string {
@@ -250,148 +575,13 @@ func applyDeltaPlacements(existingContent string, placements []MOCDeltaPlacement
 		return existingContent
 	}
 
-	type sectionPlacements struct {
-		section string
-		items   []MOCDeltaPlacement
-	}
-	var grouped []sectionPlacements
-	sectionIdx := make(map[string]int)
-
-	for _, p := range placements {
-		sec := strings.TrimSpace(p.TargetSection)
-		if sec == "" {
-			sec = "Uncategorized"
-		}
-		normSec := strings.ToLower(sec)
-		if idx, exists := sectionIdx[normSec]; exists {
-			grouped[idx].items = append(grouped[idx].items, p)
-		} else {
-			sectionIdx[normSec] = len(grouped)
-			grouped = append(grouped, sectionPlacements{
-				section: sec,
-				items:   []MOCDeltaPlacement{p},
-			})
-		}
+	doc, err := ParseMOCDocument(existingContent)
+	if err != nil {
+		return existingContent
 	}
 
-	lines := strings.Split(existingContent, "\n")
-	scheduledArticles := make(map[int64]bool)
-	scheduledWikilinks := make(map[string]bool)
-
-	for _, g := range grouped {
-		headerIdx := -1
-		for i, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "#") {
-				headerText := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
-				if strings.EqualFold(headerText, g.section) {
-					headerIdx = i
-					break
-				}
-			}
-		}
-
-		var itemLines []string
-		for _, item := range g.items {
-			if scheduledArticles[item.ArticleID] {
-				continue
-			}
-
-			info, ok := articleInfoMap[item.ArticleID]
-			if !ok {
-				info = MOCArticleInfo{ID: item.ArticleID, Title: fmt.Sprintf("Article %d", item.ArticleID)}
-			}
-
-			wikilink := formatMOCArticleWikilink(info)
-			if scheduledWikilinks[wikilink] {
-				continue
-			}
-
-			fileBase := ""
-			if info.FilePath != "" {
-				fileBase = strings.TrimSuffix(filepath.Base(info.FilePath), ".md")
-			}
-
-			alreadyPresent := false
-			for _, line := range lines {
-				if strings.Contains(line, wikilink) ||
-					(fileBase != "" && (strings.Contains(line, fmt.Sprintf("[[%s]]", fileBase)) || strings.Contains(line, fmt.Sprintf("[[%s|", fileBase)))) ||
-					(info.Title != "" && (strings.Contains(line, fmt.Sprintf("[[%s]]", info.Title)) || strings.Contains(line, fmt.Sprintf("[[%s|", info.Title)))) {
-					alreadyPresent = true
-					break
-				}
-			}
-			if alreadyPresent {
-				continue
-			}
-
-			scheduledArticles[item.ArticleID] = true
-			scheduledWikilinks[wikilink] = true
-
-			note := strings.TrimSpace(item.ContextNote)
-			if note != "" {
-				itemLines = append(itemLines, fmt.Sprintf("- %s - %s", wikilink, note))
-			} else {
-				itemLines = append(itemLines, fmt.Sprintf("- %s", wikilink))
-			}
-		}
-
-		if len(itemLines) == 0 {
-			continue
-		}
-
-		if headerIdx != -1 {
-			nextHeaderIdx := len(lines)
-			for i := headerIdx + 1; i < len(lines); i++ {
-				trimmed := strings.TrimSpace(lines[i])
-				if strings.HasPrefix(trimmed, "#") {
-					nextHeaderIdx = i
-					break
-				}
-			}
-
-			insertIdx := nextHeaderIdx
-			for insertIdx > headerIdx+1 && strings.TrimSpace(lines[insertIdx-1]) == "" {
-				insertIdx--
-			}
-
-			newLines := make([]string, 0, len(lines)+len(itemLines))
-			newLines = append(newLines, lines[:insertIdx]...)
-			newLines = append(newLines, itemLines...)
-			newLines = append(newLines, lines[insertIdx:]...)
-			lines = newLines
-		} else {
-			notesIdx := -1
-			for i, line := range lines {
-				trimmed := strings.TrimSpace(line)
-				if strings.HasPrefix(trimmed, "#") {
-					headerText := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
-					if strings.EqualFold(headerText, "Notes & Synthesis") {
-						notesIdx = i
-						break
-					}
-				}
-			}
-
-			var newSectionLines []string
-			newSectionLines = append(newSectionLines, fmt.Sprintf("## %s", g.section))
-			newSectionLines = append(newSectionLines, itemLines...)
-			newSectionLines = append(newSectionLines, "")
-
-			if notesIdx != -1 {
-				newLines := make([]string, 0, len(lines)+len(newSectionLines))
-				newLines = append(newLines, lines[:notesIdx]...)
-				newLines = append(newLines, newSectionLines...)
-				newLines = append(newLines, lines[notesIdx:]...)
-				lines = newLines
-			} else {
-				lines = append(lines, "")
-				lines = append(lines, newSectionLines...)
-			}
-		}
-	}
-
-	return strings.Join(lines, "\n")
+	doc.ApplyDeltaPlacements(placements, articleInfoMap)
+	return doc.Serialize()
 }
 
 var reMOCWikilink = regexp.MustCompile(`\[\[([^\]]+)\]\]`)

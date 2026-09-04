@@ -108,30 +108,75 @@ Instructions:
 
 	startTime := time.Now()
 	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		if r.repo != nil {
-			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
-				ArticleID:        0,
-				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
-				Model:            model,
-				Status:           "failed",
-				DurationMs:       time.Since(startTime).Milliseconds(),
-				RetryCount:       0,
-				PromptTokens:     len(prompt) / 4,
-				CompletionTokens: 0,
-				TotalTokens:      len(prompt) / 4,
-				ErrorMessage:     err.Error(),
-				CreatedAt:        startTime,
-			})
-		}
-		return nil, fmt.Errorf("openrouter request failed: %w", err)
-	}
-	defer resp.Body.Close()
+	var resp *http.Response
+	var bodyBytes []byte
+	var lastErr error
+	maxRetries := 3
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		errMsg := fmt.Sprintf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(reqBytes))
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		httpReq.Header.Set("HTTP-Referer", "https://readr.app")
+		httpReq.Header.Set("X-Title", "Readr Librarian MOC Synthesizer")
+
+		resp, err = client.Do(httpReq)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		bodyBytes, err = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		// Check if status is retryable (429 rate limit or 5xx server errors)
+		if resp.StatusCode == 429 || (resp.StatusCode >= 500 && resp.StatusCode <= 599) {
+			lastErr = fmt.Errorf("openrouter returned retryable status %d: %s", resp.StatusCode, string(bodyBytes))
+			continue
+		}
+
+		if resp.StatusCode != 200 {
+			errMsg := fmt.Sprintf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
+			if r.repo != nil {
+				_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
+					ArticleID:        0,
+					ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
+					Model:            model,
+					Status:           "failed",
+					DurationMs:       time.Since(startTime).Milliseconds(),
+					RetryCount:       attempt,
+					PromptTokens:     len(prompt) / 4,
+					CompletionTokens: 0,
+					TotalTokens:      len(prompt) / 4,
+					ErrorMessage:     errMsg,
+					CreatedAt:        startTime,
+				})
+			}
+			return nil, fmt.Errorf("%s", errMsg)
+		}
+
+		// Success
+		lastErr = nil
+		break
+	}
+
+	if lastErr != nil {
 		if r.repo != nil {
 			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
 				ArticleID:        0,
@@ -139,15 +184,15 @@ Instructions:
 				Model:            model,
 				Status:           "failed",
 				DurationMs:       time.Since(startTime).Milliseconds(),
-				RetryCount:       0,
+				RetryCount:       maxRetries,
 				PromptTokens:     len(prompt) / 4,
 				CompletionTokens: 0,
 				TotalTokens:      len(prompt) / 4,
-				ErrorMessage:     errMsg,
+				ErrorMessage:     lastErr.Error(),
 				CreatedAt:        startTime,
 			})
 		}
-		return nil, fmt.Errorf("%s", errMsg)
+		return nil, fmt.Errorf("openrouter request failed after %d attempts: %w", maxRetries, lastErr)
 	}
 
 	var chatResp struct {
@@ -296,54 +341,96 @@ Instructions:
 
 	startTime := time.Now()
 	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		if r.repo != nil {
-			mocID := int64(0)
-			if cluster.ExistingMOC != nil {
-				mocID = cluster.ExistingMOC.ID
-			}
-			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
-				ArticleID:        mocID,
-				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
-				Model:            model,
-				Status:           "failed",
-				DurationMs:       time.Since(startTime).Milliseconds(),
-				RetryCount:       0,
-				PromptTokens:     len(prompt) / 4,
-				CompletionTokens: 0,
-				TotalTokens:      len(prompt) / 4,
-				ErrorMessage:     err.Error(),
-				CreatedAt:        startTime,
-			})
-		}
-		return nil, fmt.Errorf("openrouter request failed: %w", err)
-	}
-	defer resp.Body.Close()
+	var resp *http.Response
+	var bodyBytes []byte
+	var lastErr error
+	maxRetries := 3
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		errMsg := fmt.Sprintf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
-		if r.repo != nil {
-			mocID := int64(0)
-			if cluster.ExistingMOC != nil {
-				mocID = cluster.ExistingMOC.ID
+	mocID := int64(0)
+	if cluster.ExistingMOC != nil {
+		mocID = cluster.ExistingMOC.ID
+	}
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
 			}
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(reqBytes))
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		httpReq.Header.Set("HTTP-Referer", "https://readr.app")
+		httpReq.Header.Set("X-Title", "Readr Librarian MOC Synthesizer")
+
+		resp, err = client.Do(httpReq)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		bodyBytes, err = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		// Check if status is retryable (429 rate limit or 5xx server errors)
+		if resp.StatusCode == 429 || (resp.StatusCode >= 500 && resp.StatusCode <= 599) {
+			lastErr = fmt.Errorf("openrouter returned retryable status %d: %s", resp.StatusCode, string(bodyBytes))
+			continue
+		}
+
+		if resp.StatusCode != 200 {
+			errMsg := fmt.Sprintf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
+			if r.repo != nil {
+				_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
+					ArticleID:        mocID,
+					ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
+					Model:            model,
+					Status:           "failed",
+					DurationMs:       time.Since(startTime).Milliseconds(),
+					RetryCount:       attempt,
+					PromptTokens:     len(prompt) / 4,
+					CompletionTokens: 0,
+					TotalTokens:      len(prompt) / 4,
+					ErrorMessage:     errMsg,
+					CreatedAt:        startTime,
+				})
+			}
+			return nil, fmt.Errorf("%s", errMsg)
+		}
+
+		// Success
+		lastErr = nil
+		break
+	}
+
+	if lastErr != nil {
+		if r.repo != nil {
 			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
 				ArticleID:        mocID,
 				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
 				Model:            model,
 				Status:           "failed",
 				DurationMs:       time.Since(startTime).Milliseconds(),
-				RetryCount:       0,
+				RetryCount:       maxRetries,
 				PromptTokens:     len(prompt) / 4,
 				CompletionTokens: 0,
 				TotalTokens:      len(prompt) / 4,
-				ErrorMessage:     errMsg,
+				ErrorMessage:     lastErr.Error(),
 				CreatedAt:        startTime,
 			})
 		}
-		return nil, fmt.Errorf("%s", errMsg)
+		return nil, fmt.Errorf("openrouter request failed after %d attempts: %w", maxRetries, lastErr)
 	}
 
 	var chatResp struct {
@@ -388,7 +475,7 @@ Instructions:
 		totalTokens = promptTokens + completionTokens
 	}
 
-	mocID := int64(0)
+	mocID = int64(0)
 	if cluster.ExistingMOC != nil {
 		mocID = cluster.ExistingMOC.ID
 	}

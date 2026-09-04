@@ -122,6 +122,51 @@ func TestVaultOrganizer_FileArticle_FromRootToFolder(t *testing.T) {
 	}
 }
 
+func TestVaultOrganizer_FileArticle_FallbackArticleID(t *testing.T) {
+	db, organizer, dataDir := setupTestDBAndOrganizer(t)
+	ctx := context.Background()
+
+	// 1. Create articles directory and root article file named 42.md
+	articlesDir := filepath.Join(dataDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0755)
+
+	rootFilePath := filepath.Join(articlesDir, "42.md")
+	noteContent := []byte("# Fallback ID Note\nContent")
+	if err := os.WriteFile(rootFilePath, noteContent, 0644); err != nil {
+		t.Fatalf("failed to write fallback note: %v", err)
+	}
+
+	// 2. Insert article with legacy path /articles/42.md and a descriptive title
+	article := repository.GormArticle{
+		ID:      42,
+		Title:   "Fallback ID Note",
+		Article: "/articles/42.md",
+	}
+	if err := db.Create(&article).Error; err != nil {
+		t.Fatalf("failed to create article in DB: %v", err)
+	}
+
+	// 3. File article under "Algorithms"
+	newPath, err := organizer.FileArticle(ctx, 42, "Algorithms")
+	if err != nil {
+		t.Fatalf("FileArticle returned error: %v", err)
+	}
+
+	expectedPath := "/articles/Algorithms/Fallback ID Note.md"
+	if newPath != expectedPath {
+		t.Errorf("FileArticle returned %q, expected %q", newPath, expectedPath)
+	}
+
+	// 4. Verify file was moved on disk and original 42.md is gone
+	destFilePath := filepath.Join(dataDir, "articles", "Algorithms", "Fallback ID Note.md")
+	if _, err := os.Stat(destFilePath); err != nil {
+		t.Errorf("destination file %s does not exist: %v", destFilePath, err)
+	}
+	if _, err := os.Stat(rootFilePath); !os.IsNotExist(err) {
+		t.Errorf("source file %s should have been moved", rootFilePath)
+	}
+}
+
 func TestVaultOrganizer_FileArticle_ReFiling(t *testing.T) {
 	db, organizer, dataDir := setupTestDBAndOrganizer(t)
 	ctx := context.Background()
