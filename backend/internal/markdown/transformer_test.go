@@ -235,6 +235,28 @@ Article body.
 			t.Errorf("expected %q, got %q", body, result)
 		}
 	})
+
+	t.Run("preserves later blockquote containing Summary: in document body", func(t *testing.T) {
+		body := `# Article Heading
+
+Here is an introductory paragraph.
+
+> **Summary:** This is a quoted summary inside the body text from another author.
+> It should remain untouched in the body.
+
+Final paragraph.
+`
+		newSummary := "Executive high level summary."
+		result := markdown.ApplySummaryBlock(body, newSummary)
+
+		if !strings.HasPrefix(result, "> 💡 **Summary:** Executive high level summary.\n\n# Article Heading") {
+			t.Errorf("expected leading summary at the top, got:\n%s", result)
+		}
+
+		if !strings.Contains(result, "> **Summary:** This is a quoted summary inside the body text from another author.") {
+			t.Errorf("expected inner body quote to remain intact, got:\n%s", result)
+		}
+	})
 }
 
 func TestInjectWikilinks_EdgeCases(t *testing.T) {

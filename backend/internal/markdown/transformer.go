@@ -11,22 +11,27 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
-var summaryBlockRegex = regexp.MustCompile(`(?m)^>\s*(?:💡\s*)?(?:\*\*)?(?:AI\s+)?Summary:(?:\*\*)?.*(?:\r?\n>.*)*`)
+var leadingSummaryBlockRegex = regexp.MustCompile(`(?s)^\s*>\s*(?:💡\s*)?(?:\*\*)?(?:AI\s+)?Summary:(?:\*\*)?[^\r\n]*(?:\r?\n>[^\r\n]*)*\r?\n*`)
 
 // ApplySummaryBlock adds, updates, or removes a callout summary block at the beginning of the markdown body.
 func ApplySummaryBlock(body string, summary string) string {
 	summaryText := strings.TrimSpace(summary)
 	if summaryText == "" {
-		if summaryBlockRegex.MatchString(body) {
-			cleaned := summaryBlockRegex.ReplaceAllLiteralString(body, "")
+		if leadingSummaryBlockRegex.MatchString(body) {
+			cleaned := leadingSummaryBlockRegex.ReplaceAllLiteralString(body, "")
 			return strings.TrimLeft(cleaned, "\r\n")
 		}
 		return body
 	}
 
 	newSummaryBlock := fmt.Sprintf("> 💡 **Summary:** %s", summaryText)
-	if summaryBlockRegex.MatchString(body) {
-		return summaryBlockRegex.ReplaceAllLiteralString(body, newSummaryBlock)
+	if leadingSummaryBlockRegex.MatchString(body) {
+		cleaned := leadingSummaryBlockRegex.ReplaceAllLiteralString(body, "")
+		cleaned = strings.TrimLeft(cleaned, "\r\n")
+		if cleaned == "" {
+			return newSummaryBlock + "\n"
+		}
+		return newSummaryBlock + "\n\n" + cleaned
 	}
 
 	return newSummaryBlock + "\n\n" + strings.TrimLeft(body, "\r\n")
