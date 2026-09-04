@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { settings, saveSettingsToServer, toggleTheme, setViewMode } from '../store/settings'
-import { authState, changePassword, getStoredToken } from '../store/auth'
+import { authState, changePassword, getStoredToken, checkAuthStatus } from '../store/auth'
 import { generateBookmarkletCode } from '../utils/bookmarklet'
 
 // Bookmarklet State
@@ -259,9 +259,12 @@ const fetchModels = async () => {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  if (!authState.isLoaded) {
+    await checkAuthStatus()
+  }
   const token = getStoredToken()
-  if (token && !bookmarkletAuthToken.value) {
+  if (token) {
     bookmarkletAuthToken.value = token
   }
   fetchModels()
