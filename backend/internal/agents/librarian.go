@@ -575,39 +575,52 @@ func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate,
 	}
 
 	tags := fmt.Sprintf("moc, %s", cluster.Tag)
-	var mocRecord repository.GormArticle
-	if cluster.ExistingMOC != nil {
-		r.db.WithContext(ctx).First(&mocRecord, cluster.ExistingMOC.ID)
-		mocRecord.Title = mocTitle
-		mocRecord.Tags = tags
-		mocRecord.Article = relArticlePath
-		r.db.WithContext(ctx).Save(&mocRecord)
-	} else {
-		mocRecord = repository.GormArticle{
-			Title:   mocTitle,
-			Tags:    tags,
-			Article: relArticlePath,
-		}
-		if err := r.db.WithContext(ctx).Create(&mocRecord).Error; err != nil {
-			return fmt.Errorf("failed to insert moc article in db: %w", err)
-		}
-	}
-
-	r.db.WithContext(ctx).Where("source_id = ?", mocRecord.ID).Delete(&repository.GormArticleLink{})
-	for _, section := range synthesis.Sections {
-		for _, item := range section.Items {
-			if item.ArticleID > 0 && item.ArticleID != mocRecord.ID {
-				link := repository.GormArticleLink{
-					SourceID: mocRecord.ID,
-					TargetID: item.ArticleID,
-				}
-				r.db.WithContext(ctx).Create(&link)
+	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var mocRecord repository.GormArticle
+		if cluster.ExistingMOC != nil {
+			if err := tx.First(&mocRecord, cluster.ExistingMOC.ID).Error; err != nil {
+				return fmt.Errorf("find existing moc in tx: %w", err)
+			}
+			mocRecord.Title = mocTitle
+			mocRecord.Tags = tags
+			mocRecord.Article = relArticlePath
+			if err := tx.Save(&mocRecord).Error; err != nil {
+				return fmt.Errorf("save existing moc in tx: %w", err)
+			}
+		} else {
+			mocRecord = repository.GormArticle{
+				Title:   mocTitle,
+				Tags:    tags,
+				Article: relArticlePath,
+			}
+			if err := tx.Create(&mocRecord).Error; err != nil {
+				return fmt.Errorf("insert moc article in tx: %w", err)
 			}
 		}
-	}
 
-	r.db.WithContext(ctx).Exec("DELETE FROM articles_fts WHERE rowid = ?", mocRecord.ID)
-	r.db.WithContext(ctx).Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", mocRecord.ID, mocRecord.Title, tags)
+		if err := tx.Where("source_id = ?", mocRecord.ID).Delete(&repository.GormArticleLink{}).Error; err != nil {
+			return fmt.Errorf("delete old moc links in tx: %w", err)
+		}
+		for _, section := range synthesis.Sections {
+			for _, item := range section.Items {
+				if item.ArticleID > 0 && item.ArticleID != mocRecord.ID {
+					link := repository.GormArticleLink{
+						SourceID: mocRecord.ID,
+						TargetID: item.ArticleID,
+					}
+					if err := tx.Create(&link).Error; err != nil {
+						return fmt.Errorf("create moc link in tx: %w", err)
+					}
+				}
+			}
+		}
+
+		_ = tx.Exec("DELETE FROM articles_fts WHERE rowid = ?", mocRecord.ID).Error
+		_ = tx.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", mocRecord.ID, mocRecord.Title, tags).Error
+		return nil
+	}); err != nil {
+		return fmt.Errorf("failed to commit moc db transaction: %w", err)
+	}
 
 	return nil
 }
@@ -670,55 +683,67 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 	}
 
 	tags := fmt.Sprintf("moc, %s", cluster.Tag)
-	var mocRecord repository.GormArticle
-	if cluster.ExistingMOC != nil {
-		r.db.WithContext(ctx).First(&mocRecord, cluster.ExistingMOC.ID)
-		mocRecord.Title = mocTitle
-		mocRecord.Tags = tags
-		mocRecord.Article = relArticlePath
-		r.db.WithContext(ctx).Save(&mocRecord)
-	} else {
-		mocRecord = repository.GormArticle{
-			Title:   mocTitle,
-			Tags:    tags,
-			Article: relArticlePath,
+	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var mocRecord repository.GormArticle
+		if cluster.ExistingMOC != nil {
+			if err := tx.First(&mocRecord, cluster.ExistingMOC.ID).Error; err != nil {
+				return fmt.Errorf("find existing moc in tx: %w", err)
+			}
+			mocRecord.Title = mocTitle
+			mocRecord.Tags = tags
+			mocRecord.Article = relArticlePath
+			if err := tx.Save(&mocRecord).Error; err != nil {
+				return fmt.Errorf("save existing moc in tx: %w", err)
+			}
+		} else {
+			mocRecord = repository.GormArticle{
+				Title:   mocTitle,
+				Tags:    tags,
+				Article: relArticlePath,
+			}
+			if err := tx.Create(&mocRecord).Error; err != nil {
+				return fmt.Errorf("insert moc in tx: %w", err)
+			}
 		}
-		if err := r.db.WithContext(ctx).Create(&mocRecord).Error; err != nil {
-			return fmt.Errorf("failed to insert moc article in db: %w", err)
-		}
-	}
 
-	for _, p := range deltaResp.Placements {
-		if p.ArticleID > 0 && p.ArticleID != mocRecord.ID {
-			var existingLink repository.GormArticleLink
-			err := r.db.WithContext(ctx).Where("source_id = ? AND target_id = ?", mocRecord.ID, p.ArticleID).First(&existingLink).Error
-			if err != nil {
-				link := repository.GormArticleLink{
-					SourceID: mocRecord.ID,
-					TargetID: p.ArticleID,
+		for _, p := range deltaResp.Placements {
+			if p.ArticleID > 0 && p.ArticleID != mocRecord.ID {
+				var existingLink repository.GormArticleLink
+				err := tx.Where("source_id = ? AND target_id = ?", mocRecord.ID, p.ArticleID).First(&existingLink).Error
+				if err != nil {
+					link := repository.GormArticleLink{
+						SourceID: mocRecord.ID,
+						TargetID: p.ArticleID,
+					}
+					if err := tx.Create(&link).Error; err != nil {
+						return fmt.Errorf("create delta link in tx: %w", err)
+					}
 				}
-				r.db.WithContext(ctx).Create(&link)
 			}
 		}
-	}
 
-	// Prune stale article_links
-	if cluster.ExistingMOC != nil {
-		activeArticleIDs := make(map[int64]bool)
-		for _, a := range cluster.Articles {
-			activeArticleIDs[a.ID] = true
-		}
-		var links []repository.GormArticleLink
-		r.db.WithContext(ctx).Where("source_id = ?", mocRecord.ID).Find(&links)
-		for _, link := range links {
-			if !activeArticleIDs[link.TargetID] {
-				r.db.WithContext(ctx).Delete(&link)
+		// Prune stale article_links
+		if cluster.ExistingMOC != nil {
+			activeArticleIDs := make(map[int64]bool)
+			for _, a := range cluster.Articles {
+				activeArticleIDs[a.ID] = true
+			}
+			var links []repository.GormArticleLink
+			if err := tx.Where("source_id = ?", mocRecord.ID).Find(&links).Error; err == nil {
+				for _, link := range links {
+					if !activeArticleIDs[link.TargetID] {
+						_ = tx.Delete(&link).Error
+					}
+				}
 			}
 		}
-	}
 
-	r.db.WithContext(ctx).Exec("DELETE FROM articles_fts WHERE rowid = ?", mocRecord.ID)
-	r.db.WithContext(ctx).Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", mocRecord.ID, mocRecord.Title, tags)
+		_ = tx.Exec("DELETE FROM articles_fts WHERE rowid = ?", mocRecord.ID).Error
+		_ = tx.Exec("INSERT INTO articles_fts(rowid, title, content) VALUES (?, ?, ?)", mocRecord.ID, mocRecord.Title, tags).Error
+		return nil
+	}); err != nil {
+		return fmt.Errorf("failed to commit delta moc db transaction: %w", err)
+	}
 
 	return nil
 }
@@ -767,26 +792,33 @@ func (r *LibrarianRunner) saveReconciledMOC(ctx context.Context, cluster Cluster
 		_ = os.Remove(oldPath)
 	}
 
-	var mocRecord repository.GormArticle
-	r.db.WithContext(ctx).First(&mocRecord, cluster.ExistingMOC.ID)
-	if mocRecord.ID > 0 {
-		mocRecord.Article = relArticlePath
-		r.db.WithContext(ctx).Save(&mocRecord)
-	}
-
-	// Prune stale article_links
-	if cluster.ExistingMOC != nil {
-		activeArticleIDs := make(map[int64]bool)
-		for _, a := range cluster.Articles {
-			activeArticleIDs[a.ID] = true
-		}
-		var links []repository.GormArticleLink
-		r.db.WithContext(ctx).Where("source_id = ?", cluster.ExistingMOC.ID).Find(&links)
-		for _, link := range links {
-			if !activeArticleIDs[link.TargetID] {
-				r.db.WithContext(ctx).Delete(&link)
+	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var mocRecord repository.GormArticle
+		if err := tx.First(&mocRecord, cluster.ExistingMOC.ID).Error; err == nil && mocRecord.ID > 0 {
+			mocRecord.Article = relArticlePath
+			if err := tx.Save(&mocRecord).Error; err != nil {
+				return fmt.Errorf("save reconciled moc path in tx: %w", err)
 			}
 		}
+
+		// Prune stale article_links
+		if cluster.ExistingMOC != nil {
+			activeArticleIDs := make(map[int64]bool)
+			for _, a := range cluster.Articles {
+				activeArticleIDs[a.ID] = true
+			}
+			var links []repository.GormArticleLink
+			if err := tx.Where("source_id = ?", cluster.ExistingMOC.ID).Find(&links).Error; err == nil {
+				for _, link := range links {
+					if !activeArticleIDs[link.TargetID] {
+						_ = tx.Delete(&link).Error
+					}
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("failed to commit reconciled moc db transaction: %w", err)
 	}
 
 	return nil

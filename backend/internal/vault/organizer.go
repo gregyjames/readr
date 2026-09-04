@@ -61,8 +61,8 @@ func (o *VaultOrganizer) FileArticle(ctx context.Context, articleID int64, topic
 	currentAbs := filepath.Join(o.dataDir, currentRel)
 
 	fileName := filepath.Base(currentAbs)
-	if fileName == "" || fileName == "." || fileName == "/" {
-		fileName = ingest.SanitizeTitleFilename(article.Title, articleID)
+	if fileName == "" || fileName == "." || fileName == "/" || fileName == fmt.Sprintf("%d.md", articleID) {
+		fileName = ingest.SanitizeTitleFilename(article.Title, articleID) + ".md"
 	}
 
 	targetRel := filepath.Join("articles", topicFolder, fileName)
