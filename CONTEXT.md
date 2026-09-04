@@ -10,6 +10,8 @@ This document establishes the canonical domain language and architecture vocabul
 - **Article / Note**: A captured, saved, or imported web article or note stored as a Markdown file in the vault with frontmatter metadata.
 - **Topic Folder**: A subfolder within `data/articles/<Topic>/` containing related articles grouped by subject.
 - **Map of Content (MOC)**: An overview document (e.g. `MOC - Lifehacks.md`) synthesized by the Librarian agent that categorizes, connects, and summarizes notes within a topic.
+- **MOC Document**: The markdown AST representation and wikilink reconciliation engine for Map of Content hub notes.
+- **Cluster Classifier**: The pure domain classifier that groups vault notes into topic clusters, evaluates topic specificity, and filters out competitor notes.
 - **Article Link**: A directional link or relation between two articles (e.g. via Obsidian-style `[[wikilinks]]` or relational entries in `article_links`).
 - **Attachment / Asset**: Media files (images, audio) associated with an article, stored in `data/images/<id>/`.
 - **Librarian**: The background AI agent responsible for clustering notes, synthesizing MOCs, and pruning stale or orphan topic structures.
