@@ -55,11 +55,35 @@ High level synthesis of distributed systems.
 	}
 
 	serialized := doc.Serialize()
+	if !strings.Contains(serialized, "type: moc") || !strings.Contains(serialized, "title: MOC - Distributed Systems") {
+		t.Errorf("roundtrip serialization missed frontmatter:\n%s", serialized)
+	}
 	if !strings.Contains(serialized, "[[Raft Consensus Algorithm]]") || !strings.Contains(serialized, "*User custom note here.*") {
 		t.Errorf("roundtrip serialization missed content:\n%s", serialized)
 	}
 	if !strings.Contains(serialized, "## Executive Overview") || !strings.Contains(serialized, "High level synthesis of distributed systems.") {
 		t.Errorf("roundtrip serialization missed overview:\n%s", serialized)
+	}
+}
+
+func TestMOCDocument_ParseAndRoundtrip_PreservesRawYAMLWhenNonMap(t *testing.T) {
+	raw := `---
+some unparseable or scalar yaml
+---
+
+# MOC - Unstructured
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+`
+	doc, err := ParseMOCDocument(raw)
+	if err != nil {
+		t.Fatalf("unexpected error parsing MOC: %v", err)
+	}
+
+	serialized := doc.Serialize()
+	if !strings.Contains(serialized, "some unparseable or scalar yaml") {
+		t.Errorf("expected raw YAML to be preserved in serialization when Frontmatter is empty/non-map, got:\n%s", serialized)
 	}
 }
 

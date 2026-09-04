@@ -91,23 +91,28 @@ type MOCDocument struct {
 	UserNotesBody    string
 }
 
+var mocFrontmatterRegex = regexp.MustCompile(`(?s)^---\r?\n(.*?)\r?\n---\r?\n?(.*)$`)
+
 // ParseMOCDocument parses a markdown string into a structured MOCDocument.
 func ParseMOCDocument(raw string) (*MOCDocument, error) {
 	doc := &MOCDocument{
 		Frontmatter: make(map[string]interface{}),
 	}
 
-	trimmed := strings.TrimLeft(raw, "\r\n\t ")
+	cleanRaw := strings.TrimPrefix(raw, "\ufeff")
 	body := raw
 
-	if strings.HasPrefix(trimmed, "---") {
-		parts := strings.SplitN(trimmed[3:], "---", 2)
-		if len(parts) == 2 {
-			yamlStr := strings.TrimSpace(parts[0])
-			body = strings.TrimLeft(parts[1], "\r\n")
-			doc.RawYAML = yamlStr
+	if strings.HasPrefix(cleanRaw, "---") {
+		matches := mocFrontmatterRegex.FindStringSubmatch(cleanRaw)
+		if len(matches) >= 3 {
+			yamlStr := strings.TrimSpace(matches[1])
+			body = matches[2]
+			doc.RawYAML = matches[1]
 			if yamlStr != "" {
 				_ = yaml.Unmarshal([]byte(yamlStr), &doc.Frontmatter)
+				if doc.Frontmatter == nil {
+					doc.Frontmatter = make(map[string]interface{})
+				}
 			}
 		}
 	}
@@ -225,6 +230,10 @@ func (doc *MOCDocument) Serialize() string {
 		sb.WriteString("---\n")
 		sb.WriteString(string(yamlBytes))
 		sb.WriteString("---\n\n")
+	} else if strings.TrimSpace(doc.RawYAML) != "" {
+		sb.WriteString("---\n")
+		sb.WriteString(strings.TrimSpace(doc.RawYAML))
+		sb.WriteString("\n---\n\n")
 	}
 
 	title := doc.Title
