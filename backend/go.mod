@@ -11,6 +11,7 @@ require (
 	github.com/nikolalohinski/gonja/v2 v2.9.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/robfig/cron/v3 v3.0.1
+	github.com/yuin/goldmark v1.8.6
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.55.0
 	golang.org/x/net v0.58.0
@@ -47,7 +48,6 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.51.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect
-	github.com/yuin/goldmark v1.8.6 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
 	golang.org/x/sys v0.47.0 // indirect
