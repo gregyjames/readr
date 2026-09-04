@@ -24,6 +24,23 @@ Here is a link to [[Artificial Intelligence|AI]] and [[Backpropagation]].
     expect(fm.saved).toBe('2026-08-29');
   });
 
+  it('parses complex YAML frontmatter with js-yaml', () => {
+    const raw = `---
+title: "Advanced Distributed Systems"
+tags: ["system-design", "consensus"]
+metadata:
+  nested: true
+  score: 9.5
+---
+
+# Content`;
+
+    const fm = parseFrontmatter(raw);
+    expect(fm.title).toBe('Advanced Distributed Systems');
+    expect(fm.tags).toEqual(['system-design', 'consensus']);
+    expect(fm.metadata).toEqual({ nested: true, score: 9.5 });
+  });
+
   it('strips frontmatter cleanly from prose', () => {
     const stripped = stripFrontmatter(sampleMarkdown);
     expect(stripped.startsWith('# Neural Networks Overview')).toBe(true);
@@ -41,6 +58,25 @@ Here is a link to [[Artificial Intelligence|AI]] and [[Backpropagation]].
     expect(replaced).toContain('>NumPy | Cython</a>');
   });
 
+  it('preserves code blocks without converting wikilinks inside them', () => {
+    const markdown = `# Title
+
+Paragraph with [[Target Note|Label]].
+
+\`\`\`python
+# Example wikilink inside code
+def test():
+    return "[[Code Link]]"
+\`\`\`
+
+Inline code with \`[[Not A Link]]\` here.`;
+
+    const html = replaceWikilinks(markdown);
+    expect(html).toContain('data-target="Target Note"');
+    expect(html).toContain('return "[[Code Link]]"');
+    expect(html).toContain('`[[Not A Link]]`');
+  });
+
   it('extracts hostnames cleanly without throwing', () => {
     expect(getHostname('https://www.witsnode.com/post/123')).toBe('witsnode.com');
     expect(getHostname('https://sub.domain.org/path')).toBe('sub.domain.org');
@@ -48,3 +84,4 @@ Here is a link to [[Artificial Intelligence|AI]] and [[Backpropagation]].
     expect(getHostname('')).toBe('');
   });
 });
+
