@@ -96,6 +96,8 @@ More good content.`,
 ` + "```go" + `
 package main
 
+// []() and ![]() inside code block should be preserved
+// ## Share this article
 func main() {
     println("Hello world")
 }
@@ -107,6 +109,8 @@ End of article.`,
 ` + "```go" + `
 package main
 
+// []() and ![]() inside code block should be preserved
+// ## Share this article
 func main() {
     println("Hello world")
 }

@@ -92,12 +92,13 @@ var (
 	reEmptyImages         = regexp.MustCompile(`!\[\s*\]\(\s*\)`)
 	reOrphanedBullets     = regexp.MustCompile(`(?m)^[-*+]\s*$`)
 	reBoilerplateHeadings = regexp.MustCompile(`(?i)^#{1,6}\s*(share\s+this(\s+article|\s+story|\s+post)?|share\s+on\s+\w+|newsletter(\s+signup)?|subscribe(\s+to\s+our\s+newsletter)?|leave\s+a\s+(reply|comment)|comments?|related\s+(articles?|posts?|stories)|advertisement|trending\s+now)\s*$`)
+	reCodeFence           = regexp.MustCompile("(?s)(```.*?```|~~~.*?~~~)")
 )
 
-// cleanMarkdownContent removes web clutter, empty elements, boilerplate headings, and normalizes spacing.
-func cleanMarkdownContent(raw string) string {
+// cleanMarkdownSegment cleans non-code markdown prose
+func cleanMarkdownSegment(raw string) string {
 	if strings.TrimSpace(raw) == "" {
-		return ""
+		return raw
 	}
 
 	// 1. Remove empty tracking images and empty links
@@ -125,11 +126,44 @@ func cleanMarkdownContent(raw string) string {
 		filteredLines = append(filteredLines, strings.TrimRight(line, " \t\r"))
 	}
 
-	cleaned = strings.Join(filteredLines, "\n")
+	return strings.Join(filteredLines, "\n")
+}
 
-	// 3. Normalize multiple consecutive newlines (3+ -> 2)
+// cleanMarkdownContent removes web clutter, empty elements, boilerplate headings, and normalizes spacing while preserving code blocks.
+func cleanMarkdownContent(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+
+	// Split by code fences and apply cleaning only to non-code prose segments
+	indices := reCodeFence.FindAllStringIndex(raw, -1)
+	if len(indices) == 0 {
+		cleaned := cleanMarkdownSegment(raw)
+		cleaned = reMultipleNewlines.ReplaceAllString(cleaned, "\n\n")
+		return strings.TrimSpace(cleaned)
+	}
+
+	var sb strings.Builder
+	lastOffset := 0
+
+	for _, idx := range indices {
+		start, end := idx[0], idx[1]
+		if start > lastOffset {
+			prose := raw[lastOffset:start]
+			sb.WriteString(cleanMarkdownSegment(prose))
+		}
+		// Write code block verbatim
+		sb.WriteString(raw[start:end])
+		lastOffset = end
+	}
+
+	if lastOffset < len(raw) {
+		prose := raw[lastOffset:]
+		sb.WriteString(cleanMarkdownSegment(prose))
+	}
+
+	cleaned := sb.String()
 	cleaned = reMultipleNewlines.ReplaceAllString(cleaned, "\n\n")
-
 	return strings.TrimSpace(cleaned)
 }
 
