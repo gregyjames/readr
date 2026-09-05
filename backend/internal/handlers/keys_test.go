@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -20,7 +21,7 @@ import (
 
 func setupKeysTestApp(t *testing.T) (*fiber.App, *HandlerContext, *gorm.DB) {
 	tempDir := t.TempDir()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "keys_test.db")), &gorm.Config{})
 	require.NoError(t, err)
 
 	require.NoError(t, db.AutoMigrate(&repository.APIKey{}))

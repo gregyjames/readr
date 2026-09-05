@@ -30,6 +30,8 @@ interface ArticleData {
   tags: string
   reading_status?: string
   reading_progress?: number
+  reading_time?: string
+  word_count?: number
 }
 
 const allArticles = ref<ArticleData[]>([])

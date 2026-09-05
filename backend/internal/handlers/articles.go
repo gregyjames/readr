@@ -80,6 +80,12 @@ func resolveArticleFromRecord(dataDir, recordArticlePath string) (string, error)
 	return resolveArticleFilePath(dataDir, rel)
 }
 
+func hydrateReadingTime(articles []repository.GormArticle) {
+	for i := range articles {
+		articles[i].ReadingTime = repository.ReadingTimeFromWords(articles[i].WordCount)
+	}
+}
+
 func RegisterArticles(router fiber.Router, h *HandlerContext) {
 	router.Get("/getarticles", func(c *fiber.Ctx) error {
 		archivedParam := c.Query("archived")
@@ -122,6 +128,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			})
 		}
 		hydrateReadingStatus(c.Context(), h, articles)
+		hydrateReadingTime(articles)
 		return c.JSON(articles)
 	})
 
@@ -499,8 +506,22 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid article file path"})
 		}
 
+		previousContent, prevReadErr := os.ReadFile(sourcePath)
+
 		if err := os.WriteFile(sourcePath, []byte(req.Content), 0644); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save article"})
+		}
+
+		words, _ := repository.CalculateReadingTime(req.Content)
+		res := h.DB.Model(&repository.GormArticle{}).Where("id = ?", article.ID).Update("word_count", words)
+		if res.Error != nil || res.RowsAffected == 0 {
+			if prevReadErr == nil {
+				_ = os.WriteFile(sourcePath, previousContent, 0644)
+			}
+			if res.Error != nil && h.Logger != nil {
+				h.Logger.Error("Failed to update article word_count in DB", zap.Int64("id", article.ID), zap.Error(res.Error))
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update article word count"})
 		}
 
 		SyncArticleToFTS(h.DB, article.ID, article.Title, article.Tags, h.Logger)

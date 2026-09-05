@@ -165,3 +165,51 @@ func MigrateLegacyArticleTags(db *gorm.DB, dataDir string, logger *zap.Logger) (
 
 	return migratedCount, nil
 }
+
+// MigrateLegacyWordCounts scans all articles in SQLite without a word_count. If the corresponding markdown
+// file exists on disk, it calculates and stores the word count in the database.
+func MigrateLegacyWordCounts(db *gorm.DB, dataDir string, logger *zap.Logger) (int, error) {
+	if db == nil {
+		return 0, nil
+	}
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	var articles []repository.GormArticle
+	if err := db.Where("deleted_at IS NULL AND (word_count = 0 OR word_count IS NULL)").Find(&articles).Error; err != nil {
+		return 0, fmt.Errorf("failed to fetch articles for word count migration: %w", err)
+	}
+
+	migratedCount := 0
+	for _, a := range articles {
+		if a.Article == "" {
+			continue
+		}
+
+		filePath, err := resolveArticleFromRecord(dataDir, a.Article)
+		if err != nil {
+			continue
+		}
+
+		contentBytes, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		words, _ := repository.CalculateReadingTime(string(contentBytes))
+		if words > 0 {
+			if err := db.Model(&repository.GormArticle{}).Where("id = ?", a.ID).Update("word_count", words).Error; err != nil {
+				logger.Warn("Failed to update word_count in database", zap.Int64("id", a.ID), zap.Error(err))
+				continue
+			}
+			migratedCount++
+		}
+	}
+
+	if migratedCount > 0 {
+		logger.Info("Migrated article word counts", zap.Int("count", migratedCount))
+	}
+
+	return migratedCount, nil
+}

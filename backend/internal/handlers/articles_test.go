@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -147,8 +148,8 @@ func TestArticleArchiveHandlers(t *testing.T) {
 
 	// Seed articles: 1 active, 1 archived
 	articles := []repository.GormArticle{
-		{ID: 101, Title: "Active Article", Article: "101.md", IsArchived: false},
-		{ID: 102, Title: "Archived Article", Article: "102.md", IsArchived: true},
+		{ID: 101, Title: "Active Article", Article: "101.md", IsArchived: false, WordCount: 400},
+		{ID: 102, Title: "Archived Article", Article: "102.md", IsArchived: true, WordCount: 200},
 	}
 	for _, a := range articles {
 		if err := db.Create(&a).Error; err != nil {
@@ -184,6 +185,12 @@ func TestArticleArchiveHandlers(t *testing.T) {
 		}
 		if len(list) != 1 || list[0].ID != 101 {
 			t.Fatalf("expected 1 active article with ID 101, got: %+v", list)
+		}
+		if list[0].ReadingTime != "2 min read" {
+			t.Errorf("expected ReadingTime = %q, got %q", "2 min read", list[0].ReadingTime)
+		}
+		if list[0].WordCount != 400 {
+			t.Errorf("expected WordCount = %d, got %d", 400, list[0].WordCount)
 		}
 	})
 
@@ -383,5 +390,93 @@ func TestDeleteArticle_CleansArticleLinks(t *testing.T) {
 	db.Model(&repository.GormArticleLink{}).Where("source_id = 10 OR target_id = 10").Count(&count)
 	if count != 0 {
 		t.Errorf("expected 0 remaining article_links for article 10, got %d", count)
+	}
+}
+
+func TestEditArticle_UpdatesWordCount_And_RollsBack(t *testing.T) {
+	tempDir := t.TempDir()
+	articlesDir := filepath.Join(tempDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0755)
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open sqlite: %v", err)
+	}
+	_ = db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{})
+
+	origContent := "# Original Title\n\nShort content."
+	filePath := filepath.Join(articlesDir, "edit_test.md")
+	_ = os.WriteFile(filePath, []byte(origContent), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:        50,
+		Title:     "Original Title",
+		Article:   "/articles/edit_test.md",
+		WordCount: 4,
+	})
+
+	app := fiber.New()
+	api := app.Group("/api")
+	hCtx := &HandlerContext{
+		DB:      db,
+		DataDir: tempDir,
+		Logger:  zap.NewNop(),
+	}
+	RegisterArticles(api, hCtx)
+
+	// 1. Successful edit updates word_count
+	newContent := "# Original Title\n\n" + strings.Repeat("word ", 250)
+	bodyBytes, _ := json.Marshal(map[string]string{"content": newContent})
+	req := httptest.NewRequest("POST", "/api/edit/50", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatalf("edit request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	var updated repository.GormArticle
+	db.First(&updated, 50)
+	expectedWords, _ := repository.CalculateReadingTime(newContent)
+	if updated.WordCount != expectedWords {
+		t.Errorf("expected WordCount %d, got %d", expectedWords, updated.WordCount)
+	}
+
+	diskBytes, _ := os.ReadFile(filePath)
+	if string(diskBytes) != newContent {
+		t.Errorf("expected file content to be updated on disk")
+	}
+
+	// 2. Failure rollback: when the article row is deleted before DB update executes
+	currentContentOnDisk := string(diskBytes)
+	db.Exec("DELETE FROM articles WHERE id = 50")
+
+	failingContent := "# Failing Title\n\nContent that should be reverted."
+	failBody, _ := json.Marshal(map[string]string{"content": failingContent})
+	failReq := httptest.NewRequest("POST", "/api/edit/50", bytes.NewReader(failBody))
+	failReq.Header.Set("Content-Type", "application/json")
+
+	// Pre-create article in memory with matching id for handler to find initially, or drop table to trigger DB update error
+	db.Exec("DROP TABLE articles")
+
+	failResp, err := app.Test(failReq, 5000)
+	if err != nil {
+		t.Fatalf("edit request failed: %v", err)
+	}
+	defer failResp.Body.Close()
+
+	if failResp.StatusCode == 200 {
+		t.Errorf("expected non-200 status when DB table is missing, got %d", failResp.StatusCode)
+	}
+
+	// Verify disk file was restored to previous content
+	restoredBytes, _ := os.ReadFile(filePath)
+	if string(restoredBytes) != currentContentOnDisk {
+		t.Errorf("expected disk file to be restored to %q, got %q", currentContentOnDisk, string(restoredBytes))
 	}
 }

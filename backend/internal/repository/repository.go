@@ -3,7 +3,10 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -25,6 +28,56 @@ func IsMOCArticle(title, tags string) bool {
 	return false
 }
 
+// ReadingTimeFromWords computes the formatted reading time string (e.g. "5 min read")
+// for a given word count assuming 200 words per minute.
+func ReadingTimeFromWords(words int) string {
+	if words <= 0 {
+		return "1 min read"
+	}
+	minutes := int(math.Ceil(float64(words) / 200.0))
+	if minutes < 1 {
+		minutes = 1
+	}
+	return fmt.Sprintf("%d min read", minutes)
+}
+
+// CalculateReadingTime computes the word count and estimated reading time string (e.g. "5 min read")
+// for markdown content. It strips leading YAML frontmatter (--- ... ---) and counts whitespace-separated words.
+func CalculateReadingTime(content string) (int, string) {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return 0, "1 min read"
+	}
+
+	// Strip leading YAML frontmatter if present
+	if strings.HasPrefix(trimmed, "---") {
+		rest := trimmed[3:]
+		if idx := strings.Index(rest, "\n---"); idx != -1 {
+			trimmed = strings.TrimSpace(rest[idx+4:])
+		} else if idx := strings.Index(rest, "\r\n---"); idx != -1 {
+			trimmed = strings.TrimSpace(rest[idx+5:])
+		}
+	}
+
+	if trimmed == "" {
+		return 0, "1 min read"
+	}
+
+	// Single-pass word counter over runes
+	words := 0
+	inWord := false
+	for _, r := range trimmed {
+		if unicode.IsSpace(r) {
+			inWord = false
+		} else if !inWord {
+			inWord = true
+			words++
+		}
+	}
+
+	return words, ReadingTimeFromWords(words)
+}
+
 type ArticleRecord struct {
 	ID              int64   `json:"id"`
 	Title           string  `json:"title"`
@@ -35,6 +88,8 @@ type ArticleRecord struct {
 	IsArchived      bool    `json:"is_archived"`
 	ReadingStatus   string  `json:"reading_status"`
 	ReadingProgress float64 `json:"reading_progress"`
+	ReadingTime     string  `json:"reading_time"`
+	WordCount       int     `json:"word_count"`
 }
 
 type LinkRecord struct {

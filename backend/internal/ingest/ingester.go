@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"example.com/backend/internal/repository"
 )
 
 type Ingester struct {
@@ -153,13 +155,16 @@ func (ing *Ingester) Ingest(ctx context.Context, req IngestRequest) (*IngestedAr
 	}
 
 	// 8. Persist to ArticleRepository
+	words, rt := repository.CalculateReadingTime(markdownDoc)
 	article := &IngestedArticle{
-		ID:        filenameID,
-		Title:     extracted.Title,
-		ImagePath: coverImagePath,
-		FilePath:  relFilePath,
-		Tags:      tagsString,
-		SourceURL: trimmedURL,
+		ID:          filenameID,
+		Title:       extracted.Title,
+		ImagePath:   coverImagePath,
+		FilePath:    relFilePath,
+		Tags:        tagsString,
+		SourceURL:   trimmedURL,
+		WordCount:   words,
+		ReadingTime: rt,
 	}
 
 	if err := ing.repo.SaveArticle(ctx, article); err != nil {

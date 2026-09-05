@@ -14,6 +14,8 @@ interface Article {
   parsedTags: string[]
   reading_status?: string
   reading_progress?: number
+  reading_time?: string
+  word_count?: number
 }
 
 const articles = ref<Article[]>([])
@@ -129,9 +131,12 @@ function formatTimelineDate(unixTs: number): { month: string; day: string; year:
   return { month, day, year }
 }
 
-function getReadingTime(text: string): string {
-  if (!text) return '1 min'
-  const words = text.trim().split(/\s+/).length
+function getReadingTime(articleOrText?: Article | string | null): string {
+  if (!articleOrText) return '1 min read'
+  if (typeof articleOrText === 'object') {
+    return articleOrText.reading_time || '1 min read'
+  }
+  const words = articleOrText.trim().split(/\s+/).filter(Boolean).length
   const minutes = Math.max(1, Math.ceil(words / 200))
   return `${minutes} min read`
 }
@@ -406,7 +411,7 @@ const secondaryArticles = computed(() => {
                   <span>•</span>
                   <span>{{ formatDate(leadArticle.ID) || 'Recent' }}</span>
                   <span>•</span>
-                  <span>{{ getReadingTime(leadArticle.article) }}</span>
+                  <span>{{ getReadingTime(leadArticle) }}</span>
                   <span>•</span>
                   <ArticleProgressLabel
                     variant="meta"
@@ -570,7 +575,7 @@ const secondaryArticles = computed(() => {
                 {{ formatShortDate(article.ID) || `ID #${article.ID}` }}
               </span>
               <span class="text-[10px] font-mono text-white/85 drop-shadow-sm">
-                {{ getReadingTime(article.article) }}
+                {{ getReadingTime(article) }}
               </span>
             </div>
           </div>
@@ -710,7 +715,7 @@ const secondaryArticles = computed(() => {
                 </span>
 
                 <span class="text-[11px] text-gray-400 dark:text-gray-500 font-mono">
-                  {{ getReadingTime(article.article) }}
+                  {{ getReadingTime(article) }}
                 </span>
 
                 <ArticleProgressLabel
