@@ -11,6 +11,7 @@ import ArticleHoverPreview from './ArticleHoverPreview.vue'
 import ArticleStatusRing from './ArticleStatusRing.vue'
 import MocProgressLabel from './MocProgressLabel.vue'
 import type { MocProgress } from '../utils/moc'
+import { resolveWikilinkTarget } from '../utils/wikilink'
 import GraphZoomControls from './GraphZoomControls.vue'
 import { useGraphZoom } from '../composables/useGraphZoom'
 import emitter from '../event-bus'
@@ -41,11 +42,7 @@ const allArticles = ref<ArticleData[]>([])
 
 const currentArticle = computed(() => {
   const param = String(route.params.id || '').replace(/\.md$/, '').trim()
-  return allArticles.value.find(a => 
-    String(a.ID) === param ||
-    a.title.trim().toLowerCase() === param.toLowerCase() ||
-    a.article.replace(/^\/?articles\//, '').replace(/\.md$/, '').trim().toLowerCase() === param.toLowerCase()
-  ) || null
+  return resolveWikilinkTarget(allArticles.value, param) || null
 })
 
 const getArticleId = () => {
@@ -958,12 +955,9 @@ const loadContent = async () => {
     const parsedRaw = raw.replace(/\[\[([^[\]\n]+?)\]\]/g, (_, p1) => {
       const fullText = String(p1 || '').trim()
       
-      // 1. First check if the full un-split string matches an article title (e.g. "Title | Site Name")
-      const matchFull = allArticles.value.find(a => 
-        a.title.trim().toLowerCase() === fullText.toLowerCase() ||
-        String(a.ID) === fullText ||
-        a.article.replace(/^\/?articles\//, '').replace(/\.md$/, '').trim().toLowerCase() === fullText.toLowerCase()
-      )
+      // 1. First check if the full un-split string matches an article (e.g. a
+      //    title that genuinely contains a pipe, like "Title | Site Name")
+      const matchFull = resolveWikilinkTarget(allArticles.value, fullText)
 
       if (matchFull) {
         return `<a href="/articles/${matchFull.ID}" data-article-id="${matchFull.ID}" class="wikilink font-semibold text-emerald-600 dark:text-emerald-400 no-underline hover:underline hover:text-emerald-700 dark:hover:text-emerald-300 transition-colors bg-emerald-50/50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded-md border border-emerald-100 dark:border-emerald-800/50 cursor-pointer">${matchFull.title}</a>`
@@ -974,11 +968,7 @@ const loadContent = async () => {
       const targetTitle = parts[0].trim()
       const display = parts.length > 1 ? parts.slice(1).join('|').trim() : targetTitle
       
-      const targetArticle = allArticles.value.find(a => 
-        a.title.trim().toLowerCase() === targetTitle.toLowerCase() ||
-        String(a.ID) === targetTitle ||
-        a.article.replace(/^\/?articles\//, '').replace(/\.md$/, '').trim().toLowerCase() === targetTitle.toLowerCase()
-      )
+      const targetArticle = resolveWikilinkTarget(allArticles.value, targetTitle)
 
       if (targetArticle) {
         return `<a href="/articles/${targetArticle.ID}" data-article-id="${targetArticle.ID}" class="wikilink font-semibold text-emerald-600 dark:text-emerald-400 no-underline hover:underline hover:text-emerald-700 dark:hover:text-emerald-300 transition-colors bg-emerald-50/50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded-md border border-emerald-100 dark:border-emerald-800/50 cursor-pointer">${display}</a>`
