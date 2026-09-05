@@ -367,3 +367,89 @@ func TestVault_ListArticles_HydratesReadingTime(t *testing.T) {
 		t.Errorf("ListArticles WordCount = %d, want 600", list[0].WordCount)
 	}
 }
+
+func TestVault_GetArticle_ReadRacingWithEdit(t *testing.T) {
+	v, db, tempDir, _ := setupTestVaultEnv(t)
+	ctx := context.Background()
+
+	// 1. Initial article with 0 word_count in DB (simulating legacy or uncomputed note)
+	filePath := filepath.Join(tempDir, "articles", "Race Note.md")
+	_ = os.MkdirAll(filepath.Dir(filePath), 0755)
+	initialContent := "Initial content with four words."
+	_ = os.WriteFile(filePath, []byte(initialContent), 0644)
+
+	initialArt := repository.GormArticle{
+		Title:     "Race Note",
+		Article:   "/articles/Race Note.md",
+		WordCount: 0,
+	}
+	if err := db.Create(&initialArt).Error; err != nil {
+		t.Fatalf("failed to create initial article: %v", err)
+	}
+
+	// 2. An edit occurs (e.g. SaveArticle) updating the row and content with 100 words
+	editedContent := strings.Repeat("word ", 100)
+	_, err := v.SaveArticle(ctx, NoteInput{
+		ID:      initialArt.ID,
+		Title:   "Race Note",
+		Content: editedContent,
+	})
+	if err != nil {
+		t.Fatalf("failed to save edited article: %v", err)
+	}
+
+	// Capture the edited article state from DB
+	var editedArt repository.GormArticle
+	if err := db.First(&editedArt, initialArt.ID).Error; err != nil {
+		t.Fatalf("failed to get edited article: %v", err)
+	}
+	if editedArt.WordCount != 100 {
+		t.Fatalf("expected edited article word_count 100, got %d", editedArt.WordCount)
+	}
+
+	// 3. Now simulate the stale read's word_count update attempting to overwrite with stale initialArt.UpdatedAt
+	// Even if an in-flight GetArticle tried to write stale word_count (e.g. 5), compare-and-update prevents overwriting
+	staleUpdateRes := db.Model(&repository.GormArticle{}).
+		Where("id = ? AND updated_at = ?", initialArt.ID, initialArt.UpdatedAt).
+		Update("word_count", 5)
+
+	if staleUpdateRes.RowsAffected != 0 {
+		t.Fatalf("expected 0 rows affected on stale compare-and-update, got %d", staleUpdateRes.RowsAffected)
+	}
+
+	// Verify the database word count was preserved at 100
+	var currentArt repository.GormArticle
+	if err := db.First(&currentArt, initialArt.ID).Error; err != nil {
+		t.Fatalf("failed to fetch current article: %v", err)
+	}
+	if currentArt.WordCount != 100 {
+		t.Errorf("expected word_count 100, got %d (stale write overwritten)", currentArt.WordCount)
+	}
+
+	// 4. Calling GetArticle on an uncomputed note successfully calculates and updates word count
+	uncomputedPath := filepath.Join(tempDir, "articles", "Uncomputed Note.md")
+	_ = os.WriteFile(uncomputedPath, []byte("One two three four five six seven"), 0644)
+	uncomputedArt := repository.GormArticle{
+		Title:     "Uncomputed Note",
+		Article:   "/articles/Uncomputed Note.md",
+		WordCount: 0,
+	}
+	db.Create(&uncomputedArt)
+
+	gotArt, _, err := v.GetArticle(ctx, uncomputedArt.ID)
+	if err != nil {
+		t.Fatalf("GetArticle failed: %v", err)
+	}
+	if gotArt.WordCount != 7 {
+		t.Errorf("expected WordCount 7, got %d", gotArt.WordCount)
+	}
+	if gotArt.ReadingTime != "1 min read" {
+		t.Errorf("expected ReadingTime '1 min read', got %q", gotArt.ReadingTime)
+	}
+
+	var dbCheck repository.GormArticle
+	db.First(&dbCheck, uncomputedArt.ID)
+	if dbCheck.WordCount != 7 {
+		t.Errorf("expected persisted WordCount 7, got %d", dbCheck.WordCount)
+	}
+}
