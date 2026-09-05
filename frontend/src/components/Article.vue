@@ -8,6 +8,7 @@ import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 import { Network } from 'vis-network'
 import ArticleHoverPreview from './ArticleHoverPreview.vue'
+import ArticleStatusRing from './ArticleStatusRing.vue'
 import GraphZoomControls from './GraphZoomControls.vue'
 import { useGraphZoom } from '../composables/useGraphZoom'
 import emitter from '../event-bus'
@@ -27,6 +28,8 @@ interface ArticleData {
   image: string
   article: string
   tags: string
+  reading_status?: string
+  reading_progress?: number
 }
 
 const allArticles = ref<ArticleData[]>([])
@@ -72,6 +75,255 @@ const updateReadingProgress = () => {
 
   const progress = ((window.scrollY - articleTop) / scrollableDistance) * 100
   readingProgress.value = Math.min(Math.max(progress, 0), 100)
+}
+
+// --- Reading status persistence ---------------------------------------------
+const readingStatus = ref('not_started')
+let lastSentProgress = -1
+
+const sendProgress = async (progress: number) => {
+  const id = getArticleId()
+  if (!id) return
+  // MOC hubs are generated index documents, not reading material: they show no
+  // status anywhere, so never accumulate a row for one.
+  if (isMOC.value) return
+  try {
+    const res = await axios.post(`/api/articles/${id}/progress`, { progress })
+    readingStatus.value = res.data?.reading_status || readingStatus.value
+    // Never let our idea of what has been sent move backwards; the server keeps
+    // a high-water mark, so a lower write must not re-open the guard below.
+    lastSentProgress = Math.max(lastSentProgress, Math.round(progress))
+  } catch (err) {
+    console.error('Failed to save reading progress', err)
+  }
+}
+
+// Only write when the rounded value actually advanced: progress is a
+// high-water mark server-side, so re-sending a lower value is wasted work.
+const flushProgress = () => {
+  const rounded = Math.round(readingProgress.value)
+  if (rounded <= lastSentProgress) return
+  void sendProgress(readingProgress.value)
+}
+
+// The open-ping has to land even at 0%, which the guard above would swallow
+// once anything has been sent. lastSentProgress starts at -1 so the first
+// write always goes through.
+
+// Checkpoints replace a debounce timer: a write fires the moment you cross a
+// decile, so the number of requests per article is bounded (~10) and there is
+// no timer to be throttled in a background tab.
+//
+// FINISH_THRESHOLD must be in the ladder. Deciles alone would never fire it:
+// floor(98 / 10) * 10 is 90, which is already crossed, so reaching the end of
+// an article would checkpoint nothing.
+const FINISH_THRESHOLD = 98
+const CHECKPOINTS = [10, 20, 30, 40, 50, 60, 70, 80, 90, FINISH_THRESHOLD]
+
+let lastCheckpoint = -1
+
+const checkpointFor = (progress: number): number => {
+  let reached = -1
+  for (const mark of CHECKPOINTS) {
+    if (progress >= mark) reached = mark
+  }
+  return reached
+}
+
+const handleProgressScroll = () => {
+  updateReadingProgress()
+  const reached = checkpointFor(readingProgress.value)
+  if (reached > lastCheckpoint) {
+    lastCheckpoint = reached
+    // Send the true position, not the checkpoint value: the mark is only the
+    // trigger, and the extra precision is free.
+    flushProgress()
+  }
+}
+
+// Leaving the page is the one moment worth the exact position rather than the
+// last checkpoint crossed, so resume lands where you actually stopped.
+//
+// sendBeacon, not axios: the browser takes ownership of the request and
+// delivers it after the page is gone. A normal XHR started here is cancelled
+// during teardown, which is why closing the tab straight after finishing an
+// article could previously drop the write.
+const beaconProgress = () => {
+  const id = getArticleId()
+  if (!id || isMOC.value) return
+  const rounded = Math.round(readingProgress.value)
+  if (rounded <= lastSentProgress) return
+
+  const payload = JSON.stringify({ progress: readingProgress.value })
+  const body = new Blob([payload], { type: 'application/json' })
+  if (navigator.sendBeacon?.(`/api/articles/${id}/progress`, body)) {
+    // Fire-and-forget: there is no response to read a status back from.
+    lastSentProgress = rounded
+    lastCheckpoint = Math.max(lastCheckpoint, checkpointFor(readingProgress.value))
+  } else {
+    flushProgress()
+  }
+}
+
+// visibilitychange covers tab switches and mobile backgrounding; pagehide
+// covers real close/navigation including bfcache. beforeunload is deliberately
+// avoided: unreliable on mobile, and it disables bfcache.
+const handleVisibilityChange = () => {
+  if (document.visibilityState === 'hidden') beaconProgress()
+}
+
+const handlePageHide = () => {
+  beaconProgress()
+}
+
+// Mirrors the server's derivation so the HUD ring tracks live scrolling
+// instead of lagging behind the debounced write.
+const hudStatus = computed(() => {
+  if (readingStatus.value === 'finished' || readingProgress.value >= FINISH_THRESHOLD) return 'finished'
+  // Without this an unread article draws a zero-length blue arc and a bare "0",
+  // which reads as an empty control rather than "not started".
+  if (readingStatus.value === 'not_started' && readingProgress.value < 1) return 'not_started'
+  return 'not_finished'
+})
+
+const resetReadingState = () => {
+  readingProgress.value = 0
+  readingStatus.value = 'not_started'
+  lastSentProgress = -1
+  lastCheckpoint = -1
+  shouldRestore = true
+  resumeNotice.value = null
+}
+
+// --- Resume where you left off ----------------------------------------------
+const RESUME_MIN = 5
+const RESUME_MAX = FINISH_THRESHOLD
+
+// Only a genuine article open restores scroll. loadContent() also re-runs after
+// an edit, a link insert, and a reparse; yanking the page then would be wrong.
+let shouldRestore = true
+const resumeNotice = ref<{ percent: number } | null>(null)
+let resumeNoticeTimer: ReturnType<typeof setTimeout> | null = null
+let resizeWatcher: ResizeObserver | null = null
+
+const scrollTargetFor = (percent: number): number | null => {
+  if (!articleRef.value) return null
+  const rect = articleRef.value.getBoundingClientRect()
+  const navHeight = 80
+  const articleTop = rect.top + window.scrollY - navHeight
+  const scrollableDistance = rect.height - (window.innerHeight - navHeight)
+  if (scrollableDistance <= 0) return null
+  return articleTop + (percent / 100) * scrollableDistance
+}
+
+// Body images carry no intrinsic dimensions, so the document grows after the
+// markdown is committed. Wait for them before measuring, but never hang on one.
+const waitForImages = async () => {
+  if (!articleRef.value) return
+  const images = [...articleRef.value.querySelectorAll('img')]
+  const settled = images.map(img =>
+    img.complete ? Promise.resolve() : img.decode().catch(() => undefined)
+  )
+  await Promise.race([
+    Promise.all(settled),
+    new Promise(resolve => setTimeout(resolve, 1500)),
+  ])
+}
+
+const dismissResumeNotice = () => {
+  resumeNotice.value = null
+  if (resumeNoticeTimer) {
+    clearTimeout(resumeNoticeTimer)
+    resumeNoticeTimer = null
+  }
+}
+
+const backToTop = () => {
+  // Instant, not smooth: these articles run to tens of thousands of pixels and
+  // a smooth scroll across that takes many seconds of animation nobody asked
+  // for. "Back to top" should just be at the top.
+  window.scrollTo({ top: 0, behavior: 'auto' })
+  dismissResumeNotice()
+}
+
+const stopResizeWatcher = () => {
+  resizeWatcher?.disconnect()
+  resizeWatcher = null
+}
+
+const restoreReadingPosition = async () => {
+  if (!shouldRestore) return
+  shouldRestore = false
+
+  if (isMOC.value) return
+  const saved = Number(currentArticle.value?.reading_progress ?? 0)
+  const status = currentArticle.value?.reading_status
+  if (status !== 'not_finished') return
+  if (!Number.isFinite(saved) || saved < RESUME_MIN || saved > RESUME_MAX) return
+
+  // Seed local state so the HUD ring shows the saved position immediately.
+  readingStatus.value = status
+  lastSentProgress = Math.round(saved)
+  // Resuming at 50% must not immediately re-fire every checkpoint below it.
+  lastCheckpoint = checkpointFor(saved)
+
+  await waitForImages()
+  await nextTick()
+
+  const target = scrollTargetFor(saved)
+  if (target === null) return
+  window.scrollTo({ top: target, behavior: 'auto' })
+  updateReadingProgress()
+
+  // Late-loading content can still shift the page under us; re-apply once, then
+  // stop so this never fights the reader's own scrolling.
+  stopResizeWatcher()
+  if (articleRef.value && typeof ResizeObserver !== 'undefined') {
+    let settledHeight = articleRef.value.getBoundingClientRect().height
+    resizeWatcher = new ResizeObserver(() => {
+      const height = articleRef.value?.getBoundingClientRect().height ?? settledHeight
+      if (Math.abs(height - settledHeight) < 4) return
+      settledHeight = height
+      const retarget = scrollTargetFor(saved)
+      if (retarget !== null) {
+        window.scrollTo({ top: retarget, behavior: 'auto' })
+        updateReadingProgress()
+      }
+    })
+    resizeWatcher.observe(articleRef.value)
+    setTimeout(stopResizeWatcher, 2000)
+  }
+
+  resumeNotice.value = { percent: Math.round(saved) }
+  if (resumeNoticeTimer) clearTimeout(resumeNoticeTimer)
+  resumeNoticeTimer = setTimeout(dismissResumeNotice, 6000)
+}
+
+const markFinished = async () => {
+  const id = getArticleId()
+  if (!id) return
+  try {
+    const res = await axios.post(`/api/articles/${id}/status`, { status: 'finished' })
+    readingStatus.value = res.data?.reading_status || 'finished'
+    readingProgress.value = 100
+    lastSentProgress = 100
+    lastCheckpoint = FINISH_THRESHOLD
+  } catch (err) {
+    console.error('Failed to mark article finished', err)
+  }
+}
+
+const resetReadingStatus = async () => {
+  const id = getArticleId()
+  if (!id) return
+  try {
+    await axios.post(`/api/articles/${id}/status/reset`)
+    readingStatus.value = 'not_started'
+    lastSentProgress = -1
+    lastCheckpoint = -1
+  } catch (err) {
+    console.error('Failed to reset reading status', err)
+  }
 }
 
 const markdownContent = ref('')
@@ -755,9 +1007,13 @@ const loadContent = async () => {
   }
 }
 
-watch(() => route.params.id, (newId) => {
-  if (newId) {
+watch(() => route.params.id, (newId, oldId) => {
+  // Only a move to a *different* article resets reading state. The watcher can
+  // also fire with an unchanged id as the route settles, and resetting there
+  // wipes the resume toast a second after it appears.
+  if (newId && newId !== oldId) {
     showPreview.value = false
+    resetReadingState()
     loadContent()
     loadLocalGraph()
   }
@@ -842,8 +1098,10 @@ onMounted(async () => {
   document.addEventListener('mouseover', handleMouseOver)
   document.addEventListener('mouseout', handleMouseOut)
   
-  window.addEventListener('scroll', updateReadingProgress, { passive: true })
+  window.addEventListener('scroll', handleProgressScroll, { passive: true })
   window.addEventListener('resize', updateReadingProgress, { passive: true })
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  window.addEventListener('pagehide', handlePageHide)
   
   observer = new MutationObserver(() => {
     if (localNetwork) {
@@ -858,15 +1116,30 @@ onMounted(async () => {
 })
 
 watch(markdownContent, () => {
-  nextTick(updateReadingProgress)
+  nextTick(async () => {
+    updateReadingProgress()
+    // Restore before pinging, so the open write reflects where the reader
+    // actually is rather than the top of the page.
+    await restoreReadingPosition()
+    // Opening an article is itself a state change: record it so a glanced-at
+    // note stops reading as "never opened". Short articles that cannot scroll
+    // report 100 here and finish on open. Routed through the same high-water
+    // guard as scrolling so it can never write a lower value.
+    flushProgress()
+  })
 })
 
 onBeforeUnmount(() => {
   if (notificationTimer) {
     clearTimeout(notificationTimer)
   }
-  window.removeEventListener('scroll', updateReadingProgress)
+  flushProgress()
+  stopResizeWatcher()
+  if (resumeNoticeTimer) clearTimeout(resumeNoticeTimer)
+  window.removeEventListener('scroll', handleProgressScroll)
   window.removeEventListener('resize', updateReadingProgress)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  window.removeEventListener('pagehide', handlePageHide)
   emitter.off('article-added', handleReparseComplete)
   emitter.off('graph-updated', handleReparseComplete)
   document.removeEventListener('mouseup', handleSelection)
@@ -931,12 +1204,40 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="flex items-center gap-1.5 sm:gap-2">
-          <!-- Reading Progress Pill -->
-          <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-gray-100/80 dark:bg-white/[0.04] text-[11px] font-mono text-gray-600 dark:text-gray-400 border border-gray-200/50 dark:border-white/[0.04]">
-            <div class="w-2 h-2 rounded-full border border-emerald-500/40 flex items-center justify-center relative overflow-hidden bg-emerald-500/10">
-              <div class="w-full bg-emerald-500 transition-all duration-150" :style="{ height: `${readingProgress}%` }"></div>
-            </div>
-            <span>{{ Math.round(readingProgress) }}%</span>
+          <!-- Reading Status: same ring the vault shows, live as you scroll -->
+          <div
+            v-if="!isMOC"
+            class="flex items-center gap-1 pl-2 pr-1 py-1 rounded-xl bg-gray-100/80 dark:bg-white/[0.04] border border-gray-200/50 dark:border-white/[0.04]"
+          >
+            <ArticleStatusRing
+              :status="hudStatus"
+              :progress="readingProgress"
+            />
+            <button
+              v-if="hudStatus !== 'finished'"
+              @click="markFinished"
+              class="inline-flex items-center gap-1 px-1.5 py-1 rounded-lg text-[11px] font-mono text-gray-600 dark:text-gray-300 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors cursor-pointer"
+              title="Mark as finished"
+              aria-label="Mark as finished"
+            >
+              <svg class="w-3.5 h-3.5 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+              <span class="hidden sm:inline">Finish</span>
+            </button>
+            <button
+              v-else
+              @click="resetReadingStatus"
+              class="inline-flex items-center gap-1 px-1.5 py-1 rounded-lg text-[11px] font-mono text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-500/10 transition-colors cursor-pointer"
+              title="Reset to unread"
+              aria-label="Reset to unread"
+            >
+              <svg class="w-3.5 h-3.5 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 12a9 9 0 1 0 3-6.7"></path>
+                <polyline points="3 4 3 9 8 9"></polyline>
+              </svg>
+              <span class="hidden sm:inline">Unread</span>
+            </button>
           </div>
 
           <!-- Typography Toggle: Newsreader Serif vs Geist Sans -->
@@ -1370,6 +1671,43 @@ onBeforeUnmount(() => {
     @mouseenter="cancelPreviewHide"
     @mouseleave="hidePreview"
   />
+
+  <!-- Resume Toast: shown when reopening an article restores your position -->
+  <transition name="toast-slide">
+    <div
+      v-if="resumeNotice"
+      role="status"
+      class="fixed bottom-8 left-1/2 -translate-x-1/2 md:left-auto md:translate-x-0 md:right-8 z-50 max-w-[calc(100vw-2rem)] backdrop-blur-xl bg-white/95 dark:bg-[#161616]/95 border border-blue-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.15)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.7)] rounded-2xl pl-3 pr-2 py-2.5 flex items-center gap-2"
+    >
+      <!-- show-value off: the percentage already reads in the sentence beside it -->
+      <ArticleStatusRing
+        status="not_finished"
+        :progress="resumeNotice.percent"
+        :size="18"
+        :show-value="false"
+      />
+      <span class="text-xs font-mono text-gray-600 dark:text-gray-300 whitespace-nowrap">
+        Resumed at {{ resumeNotice.percent }}%
+      </span>
+      <button
+        @click="backToTop"
+        class="shrink-0 px-2 py-1 rounded-lg text-xs font-mono font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 transition-colors cursor-pointer whitespace-nowrap"
+      >
+        Back to top
+      </button>
+      <div class="h-4 w-px shrink-0 bg-gray-200 dark:bg-white/10"></div>
+      <button
+        @click="dismissResumeNotice"
+        class="shrink-0 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 transition-colors cursor-pointer"
+        aria-label="Dismiss"
+      >
+        <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+  </transition>
 
   <!-- Floating Toast Notification for Reparsing Lifecycle -->
   <transition name="toast-slide">
