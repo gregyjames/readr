@@ -25,6 +25,8 @@ import (
 
 type Article = repository.GormArticle
 type ArticleLink = repository.GormArticleLink
+type ArticleStatusType = repository.GormArticleStatusType
+type ArticleStatus = repository.GormArticleStatus
 type LinkRequest = handlers.LinkRequest
 type LinkError = handlers.LinkError
 type GraphNode = graph.Node
@@ -85,8 +87,12 @@ func initDB() *gorm.DB {
 		panic(err)
 	}
 
-	db.AutoMigrate(&Article{}, &ArticleLink{}, &repository.PipelineMetric{})
+	db.AutoMigrate(&Article{}, &ArticleLink{}, &repository.PipelineMetric{},
+		&ArticleStatusType{}, &ArticleStatus{})
 	handlers.EnsureFTS(db, logger)
+	if err := repository.EnsureArticleStatusTypes(db); err != nil && logger != nil {
+		logger.Error("Failed to seed reading status types", zap.Error(err))
+	}
 	handlers.MigrateLegacyArticleFilenames(db, getDataDir(), logger)
 	handlers.MigrateLegacyArticleTags(db, getDataDir(), logger)
 
@@ -114,7 +120,8 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		if err != nil {
 			panic(err)
 		}
-		db.AutoMigrate(&Article{}, &ArticleLink{}, &repository.PipelineMetric{})
+		db.AutoMigrate(&Article{}, &ArticleLink{}, &repository.PipelineMetric{},
+			&ArticleStatusType{}, &ArticleStatus{})
 
 		dataDir := getDataDir()
 		os.MkdirAll(filepath.Join(dataDir, "articles"), os.ModePerm)
@@ -139,6 +146,9 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	}
 
 	handlers.EnsureFTS(db, logger)
+	if err := repository.EnsureArticleStatusTypes(db); err != nil && logger != nil {
+		logger.Error("Failed to seed reading status types", zap.Error(err))
+	}
 
 	dataDirectory := getDataDir()
 	settingsStore := handlers.NewSettingsStore(dataDirectory, logger)
@@ -236,6 +246,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	handlers.RegisterAuth(api, hCtx)
 	handlers.RegisterArticles(api, hCtx)
+	handlers.RegisterArticleStatus(api, hCtx)
 	handlers.RegisterGraph(api, hCtx)
 	handlers.RegisterChat(api, hCtx)
 	handlers.RegisterSettings(api, hCtx)

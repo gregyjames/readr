@@ -37,7 +37,7 @@ func setupTestLibrarianEnv(t *testing.T) (*gorm.DB, repository.Repository, strin
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
-	_ = db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.PipelineMetric{})
+	_ = db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.PipelineMetric{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{})
 	_ = db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(title, content, tokenize='porter')`)
 
 	repo := repository.NewGormRepository(db)

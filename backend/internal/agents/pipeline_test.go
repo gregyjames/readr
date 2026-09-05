@@ -38,7 +38,7 @@ func setupTestPipelineEnv(t *testing.T) (string, *gorm.DB, repository.Repository
 		t.Fatal(err)
 	}
 
-	if err := db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.PipelineMetric{}); err != nil {
+	if err := db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.PipelineMetric{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{}); err != nil {
 		t.Fatal(err)
 	}
 	db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(title, content, tokenize='porter')`)

@@ -53,7 +53,7 @@ func TestGetArticleContent_NestedTopicDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
 	}
-	if err := db.AutoMigrate(&repository.GormArticle{}); err != nil {
+	if err := db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{}); err != nil {
 		t.Fatalf("failed to auto migrate: %v", err)
 	}
 
@@ -141,7 +141,7 @@ func TestArticleArchiveHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
 	}
-	if err := db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}); err != nil {
+	if err := db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{}); err != nil {
 		t.Fatalf("failed to auto migrate: %v", err)
 	}
 
@@ -344,7 +344,7 @@ func TestDeleteArticle_CleansArticleLinks(t *testing.T) {
 		t.Fatalf("failed to open sqlite: %v", err)
 	}
 
-	_ = db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{})
+	_ = db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{})
 
 	// Seed an article and links
 	article := repository.GormArticle{

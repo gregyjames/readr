@@ -78,12 +78,14 @@ func extractCandidateKeywords(title, body string, maxKeywords int) []string {
 
 type GormArticle struct {
 	gorm.Model
-	ID         int64  `gorm:"primaryKey"`
-	Article    string `json:"article"`
-	Image      string `json:"image"`
-	Title      string `json:"title"`
-	Tags       string `json:"tags"`
-	IsArchived bool   `gorm:"default:false;index" json:"is_archived"`
+	ID              int64   `gorm:"primaryKey"`
+	Article         string  `json:"article"`
+	Image           string  `json:"image"`
+	Title           string  `json:"title"`
+	Tags            string  `json:"tags"`
+	IsArchived      bool    `gorm:"default:false;index" json:"is_archived"`
+	ReadingStatus   string  `gorm:"-" json:"reading_status"`
+	ReadingProgress float64 `gorm:"-" json:"reading_progress"`
 }
 
 func (GormArticle) TableName() string {
@@ -253,6 +255,7 @@ func (r *GormRepository) CreateLink(ctx context.Context, sourceID, targetID int6
 
 func (r *GormRepository) DeleteArticle(ctx context.Context, id int64) error {
 	r.db.WithContext(ctx).Exec("DELETE FROM article_links WHERE source_id = ? OR target_id = ?", id, id)
+	_ = DeleteStatus(r.db.WithContext(ctx), id)
 	return r.db.WithContext(ctx).Delete(&GormArticle{}, id).Error
 }
 

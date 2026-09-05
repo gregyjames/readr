@@ -4,6 +4,8 @@ import axios from 'axios'
 import emitter from '../event-bus.ts'
 import BookmarkIcon from '../assets/book.svg'
 import { settings, setViewMode as saveGlobalViewMode } from '../store/settings'
+import ArticleProgressLabel from './ArticleProgressLabel.vue'
+import { isMoc } from '../utils/moc'
 
 interface Article {
   ID: number
@@ -12,6 +14,8 @@ interface Article {
   image: string
   tags: string
   parsedTags: string[]
+  reading_status?: string
+  reading_progress?: number
 }
 
 defineProps<{ msg?: string }>()
@@ -124,11 +128,7 @@ function getReadingTime(text: string): string {
 
 function isMocArticle(article: Article): boolean {
   if (!article) return false
-  const title = (article.title || '').toLowerCase().trim()
-  if (title.startsWith('moc -') || title.startsWith('moc:') || title.startsWith('moc ') || title === 'moc') {
-    return true
-  }
-  return article.parsedTags.some(t => t.toLowerCase() === 'moc')
+  return isMoc(article.title, article.parsedTags)
 }
 
 function getDomain(article: Article): string {
@@ -640,6 +640,12 @@ const secondaryArticles = computed(() => {
                   <span>{{ formatDate(leadArticle.ID) || 'Recent' }}</span>
                   <span>•</span>
                   <span>{{ getReadingTime(leadArticle.article) }}</span>
+                  <span>&bull;</span>
+                  <ArticleProgressLabel
+                    variant="meta"
+                    :status="isMocArticle(leadArticle) ? 'not_started' : leadArticle.reading_status"
+                    :progress="leadArticle.reading_progress"
+                  />
                 </div>
 
                 <!-- Tags / MOC Badge -->
@@ -780,16 +786,18 @@ const secondaryArticles = computed(() => {
                   <span class="w-1 h-1 rounded-full bg-emerald-400"></span>
                   {{ getDomain(article) }}
                 </span>
-                <span class="text-[10px] font-mono text-white/70">
-                  {{ getReadingTime(article.article) }}
-                </span>
+                <ArticleProgressLabel
+                  variant="overlay"
+                  :status="isMocArticle(article) ? 'not_started' : article.reading_status"
+                  :progress="article.reading_progress"
+                />
               </div>
               <div class="relative z-10 flex items-baseline justify-between select-none">
                 <span class="text-3xl font-bold tracking-tighter text-white/10 dark:text-white/[0.08] font-mono">
                   #{{ String(idx + 2).padStart(2, '0') }}
                 </span>
-                <span class="text-xs font-mono uppercase tracking-widest text-emerald-400/30 font-semibold">
-                  {{ getDomain(article).split('.')[0].slice(0, 10) }}
+                <span class="text-[10px] font-mono text-white/70">
+                  {{ getReadingTime(article.article) }}
                 </span>
               </div>
             </div>
@@ -800,8 +808,12 @@ const secondaryArticles = computed(() => {
                 <span class="w-1 h-1 rounded-full bg-emerald-400"></span>
                 {{ getDomain(article) }}
               </span>
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-mono bg-black/60 backdrop-blur-md text-white/85 border border-white/15 shadow-xs">
-                {{ getReadingTime(article.article) }}
+              <span class="px-2.5 py-0.5 rounded-full bg-black/60 backdrop-blur-md border border-white/15 shadow-xs inline-flex items-center">
+                <ArticleProgressLabel
+                  variant="overlay"
+                  :status="isMocArticle(article) ? 'not_started' : article.reading_status"
+                  :progress="article.reading_progress"
+                />
               </span>
             </div>
 
@@ -810,8 +822,8 @@ const secondaryArticles = computed(() => {
               <span class="text-[10px] font-mono text-white/90 font-medium drop-shadow-sm">
                 {{ formatShortDate(article.ID) || `ID #${article.ID}` }}
               </span>
-              <span class="text-[10px] font-mono text-emerald-300 font-semibold drop-shadow-sm group-hover:translate-x-0.5 transition-transform">
-                Read &rarr;
+              <span class="text-[10px] font-mono text-white/85 drop-shadow-sm">
+                {{ getReadingTime(article.article) }}
               </span>
             </div>
           </div>
@@ -971,6 +983,13 @@ const secondaryArticles = computed(() => {
                 <span class="text-[11px] text-gray-400 dark:text-gray-500 font-mono">
                   {{ getReadingTime(article.article) }}
                 </span>
+
+                <!-- Reading Status -->
+                <ArticleProgressLabel
+                  variant="meta"
+                  :status="isMocArticle(article) ? 'not_started' : article.reading_status"
+                  :progress="article.reading_progress"
+                />
 
                 <!-- MOC Badge -->
                 <span

@@ -41,7 +41,7 @@ func initTestDB() *gorm.DB {
 	if err != nil {
 		panic(err)
 	}
-	db.AutoMigrate(&Article{}, &ArticleLink{})
+	db.AutoMigrate(&Article{}, &ArticleLink{}, &ArticleStatusType{}, &ArticleStatus{})
 	db.Exec("DELETE FROM article_links")
 	db.Exec("DELETE FROM articles")
 	db.Exec("DELETE FROM articles_fts")

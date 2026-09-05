@@ -38,7 +38,7 @@ func setupTestVaultEnv(t *testing.T) (*DefaultVault, *gorm.DB, string, *mockInva
 		t.Fatalf("failed to open gorm sqlite: %v", err)
 	}
 
-	_ = db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{})
+	_ = db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{})
 	_ = db.Exec("CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(title, content, tokenize='porter')").Error
 
 	invalidator := &mockInvalidator{}
