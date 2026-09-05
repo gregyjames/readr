@@ -128,6 +128,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			})
 		}
 		hydrateReadingStatus(c.Context(), h, articles)
+		hydrateMOCProgress(c.Context(), h, articles)
 		hydrateReadingTime(articles)
 		return c.JSON(articles)
 	})

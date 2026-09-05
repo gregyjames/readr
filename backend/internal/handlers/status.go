@@ -64,6 +64,18 @@ func hydrateReadingStatus(ctx context.Context, h *HandlerContext, articles []rep
 	}
 }
 
+// hydrateMOCProgress fills the collection rollup on Map of Content hubs. Used on
+// the Vault-less path; the Vault hydrates its own results. A failure degrades to
+// no indicator rather than failing the list.
+func hydrateMOCProgress(ctx context.Context, h *HandlerContext, articles []repository.GormArticle) {
+	if len(articles) == 0 || h.DB == nil {
+		return
+	}
+	if err := repository.HydrateMOCProgress(ctx, h.DB, articles); err != nil && h.Logger != nil {
+		h.Logger.Error("Failed to load MOC progress", zap.Error(err))
+	}
+}
+
 // articleExists reports whether an article is present and not soft-deleted, so
 // progress cannot be recorded against a missing id.
 func articleExists(h *HandlerContext, id int64) (bool, error) {
