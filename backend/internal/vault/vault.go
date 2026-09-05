@@ -375,5 +375,36 @@ func (v *DefaultVault) ListArticles(ctx context.Context, filter ArticleFilter) (
 		return nil, err
 	}
 
+	if err := v.hydrateReadingStatus(ctx, articles); err != nil {
+		v.logger.Error("Failed to hydrate reading status", zap.Error(err))
+	}
+
 	return articles, nil
+}
+
+func (v *DefaultVault) hydrateReadingStatus(ctx context.Context, articles []repository.GormArticle) error {
+	if len(articles) == 0 {
+		return nil
+	}
+
+	ids := make([]int64, 0, len(articles))
+	for _, article := range articles {
+		ids = append(ids, article.ID)
+	}
+
+	statuses, err := repository.GetStatuses(ctx, v.db, ids)
+	if err != nil {
+		return err
+	}
+
+	for i := range articles {
+		status, ok := statuses[articles[i].ID]
+		if !ok {
+			articles[i].ReadingStatus = repository.StatusNotStarted
+			continue
+		}
+		articles[i].ReadingStatus = repository.DeriveStatusKey(&status)
+		articles[i].ReadingProgress = status.Progress
+	}
+	return nil
 }

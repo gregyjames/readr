@@ -78,12 +78,14 @@ func extractCandidateKeywords(title, body string, maxKeywords int) []string {
 
 type GormArticle struct {
 	gorm.Model
-	ID         int64  `gorm:"primaryKey"`
-	Article    string `json:"article"`
-	Image      string `json:"image"`
-	Title      string `json:"title"`
-	Tags       string `json:"tags"`
-	IsArchived bool   `gorm:"default:false;index" json:"is_archived"`
+	ID              int64   `gorm:"primaryKey"`
+	Article         string  `json:"article"`
+	Image           string  `json:"image"`
+	Title           string  `json:"title"`
+	Tags            string  `json:"tags"`
+	IsArchived      bool    `gorm:"default:false;index" json:"is_archived"`
+	ReadingStatus   string  `gorm:"-" json:"reading_status"`
+	ReadingProgress float64 `gorm:"-" json:"reading_progress"`
 }
 
 func (GormArticle) TableName() string {

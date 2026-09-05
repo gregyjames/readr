@@ -121,6 +121,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 				"error": "Failed to retrieve articles",
 			})
 		}
+		hydrateReadingStatus(c.Context(), h, articles)
 		return c.JSON(articles)
 	})
 

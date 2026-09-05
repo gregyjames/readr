@@ -26,13 +26,15 @@ func IsMOCArticle(title, tags string) bool {
 }
 
 type ArticleRecord struct {
-	ID         int64  `json:"id"`
-	Title      string `json:"title"`
-	ImagePath  string `json:"image"`
-	FilePath   string `json:"article"`
-	Tags       string `json:"tags"`
-	SourceURL  string `json:"sourceUrl"`
-	IsArchived bool   `json:"is_archived"`
+	ID              int64   `json:"id"`
+	Title           string  `json:"title"`
+	ImagePath       string  `json:"image"`
+	FilePath        string  `json:"article"`
+	Tags            string  `json:"tags"`
+	SourceURL       string  `json:"sourceUrl"`
+	IsArchived      bool    `json:"is_archived"`
+	ReadingStatus   string  `json:"reading_status"`
+	ReadingProgress float64 `json:"reading_progress"`
 }
 
 type LinkRecord struct {

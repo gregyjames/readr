@@ -246,6 +246,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	handlers.RegisterAuth(api, hCtx)
 	handlers.RegisterArticles(api, hCtx)
+	handlers.RegisterArticleStatus(api, hCtx)
 	handlers.RegisterGraph(api, hCtx)
 	handlers.RegisterChat(api, hCtx)
 	handlers.RegisterSettings(api, hCtx)
