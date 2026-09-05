@@ -66,6 +66,19 @@ func touchAPIKeyUsageAsync(repo *repository.GormRepository, id int64) {
 	}()
 }
 
+func touchAPIKeyByHashAsync(repo *repository.GormRepository, keyHash string) {
+	if repo == nil || keyHash == "" {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if apiKey, err := repo.FindAPIKeyByHash(ctx, keyHash); err == nil && apiKey != nil {
+			_ = repo.TouchAPIKeyLastUsed(ctx, apiKey.ID, time.Now())
+		}
+	}()
+}
+
 func AuthMiddleware(h *HandlerContext) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		path := c.Path()
@@ -79,13 +92,10 @@ func AuthMiddleware(h *HandlerContext) fiber.Handler {
 
 		token := ExtractSessionToken(c)
 
-		// If no password is set, allow access
+		// If no password is set, allow access immediately without blocking on key lookup
 		if pwdHash == "" {
 			if strings.HasPrefix(token, "rdr_live_") && h.Repo != nil {
-				hash := auth.HashAPIKey(token)
-				if apiKey, err := h.Repo.FindAPIKeyByHash(c.Context(), hash); err == nil && apiKey != nil {
-					touchAPIKeyUsageAsync(h.Repo, apiKey.ID)
-				}
+				touchAPIKeyByHashAsync(h.Repo, auth.HashAPIKey(token))
 			}
 			return c.Next()
 		}
