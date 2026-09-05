@@ -269,9 +269,15 @@ func (r *GormRepository) CreateLink(ctx context.Context, sourceID, targetID int6
 }
 
 func (r *GormRepository) DeleteArticle(ctx context.Context, id int64) error {
-	r.db.WithContext(ctx).Exec("DELETE FROM article_links WHERE source_id = ? OR target_id = ?", id, id)
-	_ = DeleteStatus(r.db.WithContext(ctx), id)
-	return r.db.WithContext(ctx).Delete(&GormArticle{}, id).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("DELETE FROM article_links WHERE source_id = ? OR target_id = ?", id, id).Error; err != nil {
+			return err
+		}
+		if err := DeleteStatus(tx, id); err != nil {
+			return err
+		}
+		return tx.Delete(&GormArticle{}, id).Error
+	})
 }
 
 func (r *GormRepository) FindCandidates(ctx context.Context, excludeID int64, title string, body string, limit int) ([]ArticleRecord, error) {

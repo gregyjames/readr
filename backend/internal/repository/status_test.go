@@ -22,7 +22,7 @@ func setupStatusTestRepo(t *testing.T) (*GormRepository, *gorm.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&GormArticle{}, &GormArticleStatusType{}, &GormArticleStatus{}); err != nil {
+	if err := db.AutoMigrate(&GormArticle{}, &GormArticleLink{}, &APIKey{}, &GormArticleStatusType{}, &GormArticleStatus{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := EnsureArticleStatusTypes(db); err != nil {
