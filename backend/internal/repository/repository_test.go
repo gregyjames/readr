@@ -45,6 +45,12 @@ func TestCalculateReadingTime(t *testing.T) {
 			wantWords:    1000,
 			wantReadTime: "5 min read",
 		},
+		{
+			name:         "frontmatter is stripped from word count",
+			content:      "---\ntitle: \"Super Long Title With Many Metadata Words\"\ntags: [golang, devops, kubernetes]\nsource: \"https://example.com/foo/bar\"\n---\n\nActual body text here with six words.",
+			wantWords:    7,
+			wantReadTime: "1 min read",
+		},
 	}
 
 	for _, tt := range tests {
@@ -57,6 +63,15 @@ func TestCalculateReadingTime(t *testing.T) {
 				t.Errorf("CalculateReadingTime() readTime = %v, want %v", readTime, tt.wantReadTime)
 			}
 		})
+	}
+}
+
+func BenchmarkCalculateReadingTime(b *testing.B) {
+	content := "---\ntitle: \"Sample\"\ntags: [test]\n---\n\n" + generateWords(2000)
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = CalculateReadingTime(content)
 	}
 }
 

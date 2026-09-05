@@ -282,3 +282,41 @@ tags: [google, gemini, legal tech, artificial intelligence, enterprise ai]
 		t.Errorf("file missing sanitized hyphenated tags:\n%s", updatedFileStr)
 	}
 }
+
+func TestMigrateLegacyWordCounts(t *testing.T) {
+	tempDir := t.TempDir()
+	articlesDir := filepath.Join(tempDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0755)
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{})
+
+	// 1. Seed article with word_count = 0 and file on disk
+	articleContent := "---\ntitle: Sample Note\n---\n\n" + strings.Repeat("word ", 350)
+	filePath := filepath.Join(articlesDir, "Sample Note.md")
+	_ = os.WriteFile(filePath, []byte(articleContent), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:        301,
+		Title:     "Sample Note",
+		Article:   "/articles/Sample Note.md",
+		WordCount: 0,
+	})
+
+	count, err := MigrateLegacyWordCounts(db, tempDir, zap.NewNop())
+	if err != nil {
+		t.Fatalf("unexpected word count migration error: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 migrated article, got %d", count)
+	}
+
+	var updated repository.GormArticle
+	db.First(&updated, 301)
+	if updated.WordCount != 350 {
+		t.Errorf("expected updated DB word_count 350, got %d", updated.WordCount)
+	}
+}

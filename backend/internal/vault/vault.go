@@ -185,9 +185,12 @@ func (v *DefaultVault) SaveArticle(ctx context.Context, input NoteInput) (*repos
 
 	// 3. Persist updated metadata and sync FTS
 	err := v.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		words, rt := repository.CalculateReadingTime(input.Content)
 		article.Title = input.Title
 		article.Tags = input.Tags
 		article.Article = relPath
+		article.WordCount = words
+		article.ReadingTime = rt
 		if input.ImagePath != "" {
 			article.Image = input.ImagePath
 		}
@@ -340,7 +343,13 @@ func (v *DefaultVault) GetArticle(ctx context.Context, id int64) (*repository.Go
 		return &article, "", fmt.Errorf("failed to read article file %s: %w", absPath, err)
 	}
 
-	article.WordCount, article.ReadingTime = repository.CalculateReadingTime(string(bytes))
+	if article.WordCount <= 0 {
+		article.WordCount, article.ReadingTime = repository.CalculateReadingTime(string(bytes))
+		_ = v.db.WithContext(ctx).Model(&repository.GormArticle{}).Where("id = ?", article.ID).Update("word_count", article.WordCount)
+	} else {
+		article.ReadingTime = repository.ReadingTimeFromWords(article.WordCount)
+	}
+
 	return &article, string(bytes), nil
 }
 
@@ -386,19 +395,7 @@ func (v *DefaultVault) ListArticles(ctx context.Context, filter ArticleFilter) (
 
 func (v *DefaultVault) hydrateReadingTime(articles []repository.GormArticle) {
 	for i := range articles {
-		filePath, err := v.ResolveFilePath(articles[i].Article)
-		if err != nil {
-			articles[i].ReadingTime = "1 min read"
-			continue
-		}
-		content, err := os.ReadFile(filePath)
-		if err != nil {
-			articles[i].ReadingTime = "1 min read"
-			continue
-		}
-		words, rt := repository.CalculateReadingTime(string(content))
-		articles[i].WordCount = words
-		articles[i].ReadingTime = rt
+		articles[i].ReadingTime = repository.ReadingTimeFromWords(articles[i].WordCount)
 	}
 }
 

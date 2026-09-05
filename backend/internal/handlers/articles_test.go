@@ -147,17 +147,14 @@ func TestArticleArchiveHandlers(t *testing.T) {
 
 	// Seed articles: 1 active, 1 archived
 	articles := []repository.GormArticle{
-		{ID: 101, Title: "Active Article", Article: "101.md", IsArchived: false},
-		{ID: 102, Title: "Archived Article", Article: "102.md", IsArchived: true},
+		{ID: 101, Title: "Active Article", Article: "101.md", IsArchived: false, WordCount: 400},
+		{ID: 102, Title: "Archived Article", Article: "102.md", IsArchived: true, WordCount: 200},
 	}
 	for _, a := range articles {
 		if err := db.Create(&a).Error; err != nil {
 			t.Fatalf("failed to seed article: %v", err)
 		}
 	}
-	// Write 400 words to 101.md to verify reading time
-	_ = os.MkdirAll(filepath.Join(tempDir, "articles"), 0755)
-	_ = os.WriteFile(filepath.Join(tempDir, "articles", "101.md"), []byte(strings.Repeat("word ", 400)), 0644)
 
 	repo := repository.NewGormRepository(db)
 	hCtx := &HandlerContext{

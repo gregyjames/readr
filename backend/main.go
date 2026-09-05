@@ -96,6 +96,7 @@ func initDB() *gorm.DB {
 	}
 	handlers.MigrateLegacyArticleFilenames(db, getDataDir(), logger)
 	handlers.MigrateLegacyArticleTags(db, getDataDir(), logger)
+	handlers.MigrateLegacyWordCounts(db, getDataDir(), logger)
 
 	return db
 }
@@ -150,6 +151,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	if err := repository.EnsureArticleStatusTypes(db); err != nil && logger != nil {
 		logger.Error("Failed to seed reading status types", zap.Error(err))
 	}
+	handlers.MigrateLegacyWordCounts(db, getDataDir(), logger)
 
 	dataDirectory := getDataDir()
 	settingsStore := handlers.NewSettingsStore(dataDirectory, logger)

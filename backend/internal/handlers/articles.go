@@ -80,27 +80,9 @@ func resolveArticleFromRecord(dataDir, recordArticlePath string) (string, error)
 	return resolveArticleFilePath(dataDir, rel)
 }
 
-func hydrateReadingTime(dataDir string, articles []repository.GormArticle) {
+func hydrateReadingTime(articles []repository.GormArticle) {
 	for i := range articles {
-		if dataDir == "" || articles[i].Article == "" {
-			if articles[i].ReadingTime == "" {
-				articles[i].ReadingTime = "1 min read"
-			}
-			continue
-		}
-		targetPath, err := resolveArticleFromRecord(dataDir, articles[i].Article)
-		if err != nil {
-			articles[i].ReadingTime = "1 min read"
-			continue
-		}
-		content, err := os.ReadFile(targetPath)
-		if err != nil {
-			articles[i].ReadingTime = "1 min read"
-			continue
-		}
-		words, rt := repository.CalculateReadingTime(string(content))
-		articles[i].WordCount = words
-		articles[i].ReadingTime = rt
+		articles[i].ReadingTime = repository.ReadingTimeFromWords(articles[i].WordCount)
 	}
 }
 
@@ -146,7 +128,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			})
 		}
 		hydrateReadingStatus(c.Context(), h, articles)
-		hydrateReadingTime(h.DataDir, articles)
+		hydrateReadingTime(articles)
 		return c.JSON(articles)
 	})
 
@@ -156,22 +138,6 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			return c.Status(500).JSON(fiber.Map{
 				"error": "Failed to retrieve articles",
 			})
-		}
-		if h.DataDir != "" {
-			for i := range articles {
-				if articles[i].FilePath != "" {
-					if targetPath, err := resolveArticleFromRecord(h.DataDir, articles[i].FilePath); err == nil {
-						if content, err := os.ReadFile(targetPath); err == nil {
-							words, rt := repository.CalculateReadingTime(string(content))
-							articles[i].WordCount = words
-							articles[i].ReadingTime = rt
-						}
-					}
-				}
-				if articles[i].ReadingTime == "" {
-					articles[i].ReadingTime = "1 min read"
-				}
-			}
 		}
 		return c.JSON(articles)
 	})
@@ -543,6 +509,9 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		if err := os.WriteFile(sourcePath, []byte(req.Content), 0644); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save article"})
 		}
+
+		words, _ := repository.CalculateReadingTime(req.Content)
+		_ = h.DB.Model(&repository.GormArticle{}).Where("id = ?", article.ID).Update("word_count", words).Error
 
 		SyncArticleToFTS(h.DB, article.ID, article.Title, article.Tags, h.Logger)
 
