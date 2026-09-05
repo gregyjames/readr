@@ -7,7 +7,7 @@ export const authState = reactive({
   isAuthenticated: false,
 })
 
-function getStoredToken(): string | null {
+export function getStoredToken(): string | null {
   try {
     return localStorage.getItem('readr_token')
   } catch {

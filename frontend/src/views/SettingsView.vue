@@ -1,7 +1,145 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { settings, saveSettingsToServer, toggleTheme, setViewMode } from '../store/settings'
-import { authState, changePassword } from '../store/auth'
+import { authState, changePassword, getStoredToken, checkAuthStatus } from '../store/auth'
+import { generateBookmarkletCode } from '../utils/bookmarklet'
+
+// API Keys State
+interface APIKeyItem {
+  id: number
+  name: string
+  key_prefix: string
+  created_at: string
+  last_used_at?: string | null
+}
+
+const apiKeys = ref<APIKeyItem[]>([])
+const isLoadingKeys = ref(false)
+const newKeyName = ref('')
+const isCreatingKey = ref(false)
+const showCreateKeyForm = ref(false)
+const newlyCreatedKey = ref<{ id: number; name: string; key: string; key_prefix: string } | null>(null)
+const copiedNewKey = ref(false)
+let copyNewKeyTimer: ReturnType<typeof setTimeout> | null = null
+const revokingKeyId = ref<number | null>(null)
+
+const fetchAPIKeys = async () => {
+  isLoadingKeys.value = true
+  try {
+    const token = getStoredToken()
+    const headers: Record<string, string> = {}
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+    const res = await fetch('/api/keys', { headers })
+    if (res.ok) {
+      apiKeys.value = await res.json()
+    }
+  } catch (err) {
+    console.error('Failed to fetch API keys:', err)
+  } finally {
+    isLoadingKeys.value = false
+  }
+}
+
+const createAPIKey = async () => {
+  if (isCreatingKey.value) return
+  isCreatingKey.value = true
+  try {
+    const token = getStoredToken()
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+    const res = await fetch('/api/keys', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: newKeyName.value.trim() || 'API Key' }),
+    })
+    if (res.ok) {
+      const data = await res.json()
+      newlyCreatedKey.value = data
+      newKeyName.value = ''
+      showCreateKeyForm.value = false
+      bookmarkletApiKey.value = data.key
+      await fetchAPIKeys()
+    }
+  } catch (err) {
+    console.error('Failed to create API key:', err)
+  } finally {
+    isCreatingKey.value = false
+  }
+}
+
+const revokeAPIKey = async (id: number) => {
+  if (!confirm('Are you sure you want to revoke this API key? Any applications or bookmarklets using it will immediately lose access.')) {
+    return
+  }
+  revokingKeyId.value = id
+  try {
+    const token = getStoredToken()
+    const headers: Record<string, string> = {}
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+    const res = await fetch(`/api/keys/${id}`, {
+      method: 'DELETE',
+      headers,
+    })
+    if (res.ok) {
+      apiKeys.value = apiKeys.value.filter(k => k.id !== id)
+      if (newlyCreatedKey.value?.id === id) {
+        newlyCreatedKey.value = null
+      }
+    }
+  } catch (err) {
+    console.error('Failed to revoke API key:', err)
+  } finally {
+    revokingKeyId.value = null
+  }
+}
+
+const copyNewKeyText = async (text: string) => {
+  try {
+    await navigator.clipboard.writeText(text)
+    copiedNewKey.value = true
+    if (copyNewKeyTimer) clearTimeout(copyNewKeyTimer)
+    copyNewKeyTimer = setTimeout(() => {
+      copiedNewKey.value = false
+      copyNewKeyTimer = null
+    }, 2500)
+  } catch (err) {
+    console.error('Failed to copy key:', err)
+  }
+}
+
+// Bookmarklet State (Configured solely via dedicated API Key)
+const bookmarkletServerUrl = ref(typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080')
+const bookmarkletApiKey = ref('')
+const showBookmarkletApiKey = ref(false)
+const copiedBookmarklet = ref(false)
+let copyTimer: ReturnType<typeof setTimeout> | null = null
+
+const generatedBookmarkletHref = computed(() => {
+  return generateBookmarkletCode({
+    serverUrl: bookmarkletServerUrl.value,
+    apiKey: bookmarkletApiKey.value || undefined,
+  })
+})
+
+const copyBookmarkletCode = async () => {
+  try {
+    await navigator.clipboard.writeText(generatedBookmarkletHref.value)
+    copiedBookmarklet.value = true
+    if (copyTimer) clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => {
+      copiedBookmarklet.value = false
+      copyTimer = null
+    }, 2500)
+  } catch (err) {
+    console.error('Failed to copy bookmarklet code:', err)
+  }
+}
 
 // Diagnostics Tab State
 const activeTab = ref<'general' | 'diagnostics'>('general')
@@ -230,9 +368,17 @@ const fetchModels = async () => {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  if (!authState.isLoaded) {
+    await checkAuthStatus()
+  }
   fetchModels()
   fetchDiagnostics()
+  fetchAPIKeys()
+})
+
+watch(() => authState.isAuthenticated, () => {
+  fetchAPIKeys()
 })
 
 onUnmounted(() => {
@@ -243,6 +389,14 @@ onUnmounted(() => {
   if (passwordTimer) {
     clearTimeout(passwordTimer)
     passwordTimer = null
+  }
+  if (copyTimer) {
+    clearTimeout(copyTimer)
+    copyTimer = null
+  }
+  if (copyNewKeyTimer) {
+    clearTimeout(copyNewKeyTimer)
+    copyNewKeyTimer = null
   }
   stopDiagnosticsPolling()
 })
@@ -400,7 +554,7 @@ const executeLibrarian = async () => {
 </script>
 
 <template>
-  <div class="mx-auto py-6 space-y-6 transition-all duration-200" :class="activeTab === 'diagnostics' ? 'max-w-5xl' : 'max-w-2xl'">
+  <div class="mx-auto py-6 space-y-6 transition-all duration-200 px-4 sm:px-6 lg:px-8" :class="activeTab === 'diagnostics' ? 'max-w-[1440px]' : 'max-w-2xl'">
     <!-- Header & Tab Navigation -->
     <div class="space-y-4">
       <div>
@@ -1157,6 +1311,312 @@ const executeLibrarian = async () => {
         </button>
       </div>
     </div>
+
+    <!-- API Keys & Integrations Card -->
+    <div class="bg-white dark:bg-[#111] rounded-3xl border border-gray-200/70 dark:border-gray-800/70 p-6 sm:p-8 space-y-6 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.2)]">
+      <div class="flex items-start justify-between gap-4 pb-5 border-b border-gray-100 dark:border-gray-800">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+            <span class="text-lg" aria-hidden="true">🔑</span>
+            API Keys & Integrations
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-400">External Access</span>
+          </h2>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            Generate persistent API keys for browser bookmarklets, Apple Shortcuts, Obsidian sync, and webhooks.
+          </p>
+        </div>
+        <button
+          type="button"
+          @click="showCreateKeyForm = !showCreateKeyForm"
+          class="shrink-0 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 12h14"/><path d="M12 5v14"/>
+          </svg>
+          Generate API Key
+        </button>
+      </div>
+
+      <!-- Create API Key Inline Form -->
+      <div v-if="showCreateKeyForm" class="p-4 rounded-2xl bg-gray-50 dark:bg-[#161616] border border-gray-200/80 dark:border-gray-800/80 space-y-3">
+        <h3 class="text-xs font-semibold text-gray-900 dark:text-gray-100">Create New API Key</h3>
+        <div class="flex flex-col sm:flex-row gap-2.5">
+          <input
+            v-model="newKeyName"
+            type="text"
+            placeholder="Key Name (e.g. Browser Bookmarklet, iOS Shortcut)"
+            @keydown.enter.prevent="createAPIKey"
+            class="flex-1 px-3.5 py-2 bg-white dark:bg-[#111] border border-gray-200 dark:border-gray-800 rounded-xl text-xs text-gray-900 dark:text-gray-100 focus:border-emerald-500"
+          />
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              @click="createAPIKey"
+              :disabled="isCreatingKey"
+              class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-xl cursor-pointer transition-colors"
+            >
+              {{ isCreatingKey ? 'Creating...' : 'Create' }}
+            </button>
+            <button
+              type="button"
+              @click="showCreateKeyForm = false"
+              class="px-3 py-2 bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs rounded-xl cursor-pointer transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Newly Generated Key Alert Banner -->
+      <div v-if="newlyCreatedKey" class="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-300/70 dark:border-emerald-700/50 space-y-3">
+        <div class="flex items-start justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span class="text-xs font-semibold text-emerald-900 dark:text-emerald-200">
+              API Key Created: "{{ newlyCreatedKey.name }}"
+            </span>
+          </div>
+          <button
+            type="button"
+            @click="newlyCreatedKey = null"
+            class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+        <p class="text-[11px] text-emerald-800 dark:text-emerald-300">
+          Make sure to copy your API key now. You will not be able to see it again!
+        </p>
+        <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+          <input
+            readonly
+            :value="newlyCreatedKey.key"
+            class="flex-1 px-3 py-2 bg-white dark:bg-[#111] border border-emerald-300 dark:border-emerald-800 rounded-xl text-xs font-mono text-gray-900 dark:text-gray-100 select-all"
+          />
+          <div class="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              @click="copyNewKeyText(newlyCreatedKey.key)"
+              class="flex-1 sm:flex-initial px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl cursor-pointer transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+            >
+              <svg v-if="copiedNewKey" class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+              {{ copiedNewKey ? 'Copied!' : 'Copy Key' }}
+            </button>
+            <button
+              type="button"
+              @click="bookmarkletApiKey = newlyCreatedKey.key"
+              class="flex-1 sm:flex-initial px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-xl cursor-pointer transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+            >
+              <span>🔖 Applied to Bookmarklet</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- API Keys Table / List -->
+      <div class="space-y-2">
+        <div v-if="isLoadingKeys" class="py-6 text-center text-xs text-gray-400">
+          Loading API keys...
+        </div>
+        <div v-else-if="apiKeys.length === 0" class="py-8 text-center text-xs text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-[#161616] rounded-2xl border border-dashed border-gray-200 dark:border-gray-800">
+          No active API keys. Click "Generate API Key" to create your first key.
+        </div>
+        <div v-else class="divide-y divide-gray-100 dark:divide-gray-800/80 rounded-2xl border border-gray-200/70 dark:border-gray-800/70 overflow-hidden bg-gray-50/50 dark:bg-[#161616]/50">
+          <div
+            v-for="key in apiKeys"
+            :key="key.id"
+            class="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-white dark:hover:bg-[#1a1a1a] transition-colors"
+          >
+            <div class="space-y-1">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-semibold text-gray-900 dark:text-gray-100">{{ key.name }}</span>
+                <code class="px-2 py-0.5 rounded bg-gray-200/70 dark:bg-gray-800 text-[11px] font-mono text-gray-700 dark:text-gray-300">
+                  {{ key.key_prefix }}
+                </code>
+              </div>
+              <div class="flex items-center gap-3 text-[11px] text-gray-400 dark:text-gray-500">
+                <span>Created: {{ formatDate(key.created_at) }}</span>
+                <span>•</span>
+                <span>Last used: {{ key.last_used_at ? formatDate(key.last_used_at) : 'Never' }}</span>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2 self-end sm:self-center">
+              <button
+                type="button"
+                @click="revokeAPIKey(key.id)"
+                :disabled="revokingKeyId === key.id"
+                class="px-2.5 py-1.5 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 text-xs font-medium rounded-lg transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+                </svg>
+                Revoke
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Browser Bookmarklet Card -->
+    <div id="browser-bookmarklet" class="bg-white dark:bg-[#111] rounded-3xl border border-gray-200/70 dark:border-gray-800/70 p-6 sm:p-8 space-y-6 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.2)]">
+      <div class="flex items-start justify-between gap-4 pb-5 border-b border-gray-100 dark:border-gray-800">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+            <span class="text-lg" aria-hidden="true">🔖</span>
+            Browser Bookmarklet
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400">1-Click Save</span>
+          </h2>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            Save articles, blog posts, and documentation directly into your Readr vault from any webpage with custom tags.
+          </p>
+        </div>
+      </div>
+
+      <!-- Config Inputs -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="space-y-2">
+          <label for="bookmarklet-server-url" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Server URL
+          </label>
+          <input
+            id="bookmarklet-server-url"
+            v-model="bookmarkletServerUrl"
+            type="text"
+            placeholder="http://localhost:8080"
+            class="w-full px-4 py-2.5 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-xl focus:bg-white dark:focus:bg-[#1a1a1a] focus:border-emerald-500 text-gray-900 dark:text-gray-100 text-xs font-mono"
+          />
+          <p class="text-[11px] text-gray-400 dark:text-gray-500">
+            Address of your Readr instance reachable from your browser.
+          </p>
+        </div>
+
+        <div class="space-y-2">
+          <label for="bookmarklet-token" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            API Key
+          </label>
+          <div class="relative">
+            <input
+              id="bookmarklet-token"
+              v-model="bookmarkletApiKey"
+              :type="showBookmarkletApiKey ? 'text' : 'password'"
+              placeholder="rdr_live_..."
+              class="w-full pl-4 pr-12 py-2.5 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-xl focus:bg-white dark:focus:bg-[#1a1a1a] focus:border-emerald-500 text-gray-900 dark:text-gray-100 text-xs font-mono"
+            />
+            <button
+              type="button"
+              @click="showBookmarkletApiKey = !showBookmarkletApiKey"
+              class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1.5 rounded-lg transition-colors cursor-pointer"
+              :title="showBookmarkletApiKey ? 'Hide key' : 'Show key'"
+            >
+              <svg v-if="!showBookmarkletApiKey" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              <svg v-else xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+                <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+                <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+                <line x1="2" y1="2" x2="22" y2="22" />
+              </svg>
+            </button>
+          </div>
+          <p class="text-[11px] text-gray-400 dark:text-gray-500">
+            <span v-if="bookmarkletApiKey.endsWith('...') || (bookmarkletApiKey.startsWith('rdr_live_') && bookmarkletApiKey.length < 25)" class="text-amber-600 dark:text-amber-400 font-medium">
+              ⚠️ Truncated key prefix detected! Please paste the full <code>rdr_live_...</code> API key or generate a new key above.
+            </span>
+            <span v-else-if="bookmarkletApiKey.startsWith('rdr_live_')" class="text-emerald-600 dark:text-emerald-400 font-medium">
+              ✓ API Key loaded. Install or update your bookmarklet button below.
+            </span>
+            <span v-else-if="bookmarkletApiKey">
+              API Key loaded. Drag or copy the button to install.
+            </span>
+            <span v-else>
+              Generate an API key in the section above or paste an existing <code>rdr_live_...</code> key.
+            </span>
+          </p>
+        </div>
+      </div>
+
+      <!-- Interactive Bookmarklet Actions -->
+      <div class="p-5 rounded-2xl bg-gradient-to-br from-emerald-50/50 to-teal-50/30 dark:from-emerald-950/20 dark:to-teal-950/10 border border-emerald-200/60 dark:border-emerald-800/40 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div class="space-y-1 text-center sm:text-left">
+          <div class="text-xs font-semibold uppercase tracking-wider text-emerald-800 dark:text-emerald-400">
+            Install Bookmarklet
+          </div>
+          <p class="text-xs text-gray-600 dark:text-gray-300">
+            Drag the button to your browser bookmarks bar, or click to copy the JavaScript code.
+          </p>
+        </div>
+
+        <div class="flex items-center gap-3 shrink-0">
+          <!-- Draggable Link Button -->
+          <a
+            :href="generatedBookmarkletHref"
+            @click.prevent="copyBookmarkletCode"
+            title="Drag to your bookmarks bar"
+            class="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-md hover:shadow-lg transition-all transform active:scale-95 cursor-grab select-none"
+          >
+            <span>📚</span>
+            <span>Save to Readr</span>
+          </a>
+
+          <!-- Copy Button -->
+          <button
+            type="button"
+            @click="copyBookmarkletCode"
+            class="px-3.5 py-2.5 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
+          >
+            <svg v-if="copiedBookmarklet" class="w-4 h-4 text-emerald-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+            <svg v-else class="w-4 h-4 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+            </svg>
+            {{ copiedBookmarklet ? 'Copied Code!' : 'Copy Code' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Quick Setup Instructions -->
+      <div class="space-y-3 pt-2">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+          Browser Installation Guide
+        </h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs text-gray-600 dark:text-gray-400">
+          <div class="p-3 bg-gray-50 dark:bg-[#161616] rounded-xl border border-gray-200/50 dark:border-gray-800/50">
+            <span class="font-semibold text-gray-800 dark:text-gray-200">Chrome / Brave</span>
+            <p class="mt-1 text-[11px] leading-relaxed">
+              Press <kbd class="px-1 py-0.5 bg-gray-200 dark:bg-gray-800 rounded font-mono">Cmd+Shift+B</kbd> to show bookmarks bar, then drag the button above into it.
+            </p>
+          </div>
+          <div class="p-3 bg-gray-50 dark:bg-[#161616] rounded-xl border border-gray-200/50 dark:border-gray-800/50">
+            <span class="font-semibold text-gray-800 dark:text-gray-200">Safari</span>
+            <p class="mt-1 text-[11px] leading-relaxed">
+              Press <kbd class="px-1 py-0.5 bg-gray-200 dark:bg-gray-800 rounded font-mono">Cmd+Shift+B</kbd> for Favorites Bar, then drag the button into Favorites.
+            </p>
+          </div>
+          <div class="p-3 bg-gray-50 dark:bg-[#161616] rounded-xl border border-gray-200/50 dark:border-gray-800/50">
+            <span class="font-semibold text-gray-800 dark:text-gray-200">Firefox</span>
+            <p class="mt-1 text-[11px] leading-relaxed">
+              Right-click the bookmarks toolbar &rarr; Bookmarks Toolbar &rarr; Always Show. Drag the button directly onto it.
+            </p>
+          </div>
+          <div class="p-3 bg-gray-50 dark:bg-[#161616] rounded-xl border border-gray-200/50 dark:border-gray-800/50">
+            <span class="font-semibold text-gray-800 dark:text-gray-200">Edge</span>
+            <p class="mt-1 text-[11px] leading-relaxed">
+              Press <kbd class="px-1 py-0.5 bg-gray-200 dark:bg-gray-800 rounded font-mono">Ctrl+Shift+B</kbd> to show favorites bar, then drag the button onto the bar.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
     </div> <!-- closes activeTab === 'general' -->
 
     <!-- Diagnostics Tab Content -->
@@ -1355,12 +1815,12 @@ const executeLibrarian = async () => {
                   </td>
 
                   <!-- Article Title -->
-                  <td class="px-5 py-3.5 font-medium text-gray-900 dark:text-gray-100 max-w-sm truncate">
-                    <div class="flex items-center gap-1.5 truncate">
+                  <td class="px-5 py-3.5 font-medium text-gray-900 dark:text-gray-100">
+                    <div class="flex items-center gap-2">
                       <span v-if="run.article_title?.startsWith('[Librarian]')" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 shrink-0">
                         Librarian
                       </span>
-                      <span class="truncate">{{ run.article_title ? run.article_title.replace('[Librarian] ', '') : ('Article #' + run.article_id) }}</span>
+                      <span class="break-words">{{ run.article_title ? run.article_title.replace('[Librarian] ', '') : ('Article #' + run.article_id) }}</span>
                       <span v-if="run.error_message" class="ml-2 text-[10px] font-normal text-rose-500 dark:text-rose-400 underline shrink-0">
                         (click to view error)
                       </span>

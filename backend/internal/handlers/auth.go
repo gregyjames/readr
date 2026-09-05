@@ -1,21 +1,36 @@
 package handlers
 
 import (
+	"context"
 	"strings"
 	"time"
 
 	"example.com/backend/internal/auth"
+	"example.com/backend/internal/repository"
 	"github.com/gofiber/fiber/v2"
 )
 
 func ExtractSessionToken(c *fiber.Ctx) string {
-	token := c.Cookies("readr_session")
+	var token string
+	authHeader := strings.TrimSpace(c.Get("Authorization"))
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	} else if authHeader != "" && !strings.Contains(authHeader, " ") {
+		token = authHeader
+	}
+
 	if token == "" {
-		authHeader := c.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+		token = strings.TrimSpace(c.Get("X-API-Key"))
+		if token == "" {
+			token = strings.TrimSpace(c.Get("X-Api-Key"))
 		}
 	}
+
+	if token == "" {
+		token = strings.TrimSpace(c.Cookies("readr_session"))
+	}
+
+	token = strings.Trim(token, "\"'`")
 	return token
 }
 
@@ -40,6 +55,30 @@ func ClearSessionCookie(c *fiber.Ctx) {
 	c.Cookie(buildSessionCookie(c, "", -1))
 }
 
+func touchAPIKeyUsageAsync(repo *repository.GormRepository, id int64) {
+	if repo == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = repo.TouchAPIKeyLastUsed(ctx, id, time.Now())
+	}()
+}
+
+func touchAPIKeyByHashAsync(repo *repository.GormRepository, keyHash string) {
+	if repo == nil || keyHash == "" {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if apiKey, err := repo.FindAPIKeyByHash(ctx, keyHash); err == nil && apiKey != nil {
+			_ = repo.TouchAPIKeyLastUsed(ctx, apiKey.ID, time.Now())
+		}
+	}()
+}
+
 func AuthMiddleware(h *HandlerContext) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		path := c.Path()
@@ -51,12 +90,29 @@ func AuthMiddleware(h *HandlerContext) fiber.Handler {
 		pwdHash := current.PasswordHash
 		secret := current.SessionSecret
 
-		// If no password is set, allow access
+		token := ExtractSessionToken(c)
+
+		// If no password is set, allow access immediately without blocking on key lookup
 		if pwdHash == "" {
+			if strings.HasPrefix(token, "rdr_live_") && h.Repo != nil {
+				touchAPIKeyByHashAsync(h.Repo, auth.HashAPIKey(token))
+			}
 			return c.Next()
 		}
 
-		token := ExtractSessionToken(c)
+		// Check if it's an API Key (starts with rdr_live_)
+		if strings.HasPrefix(token, "rdr_live_") {
+			if h.Repo != nil {
+				hash := auth.HashAPIKey(token)
+				apiKey, err := h.Repo.FindAPIKeyByHash(c.Context(), hash)
+				if err == nil && apiKey != nil {
+					touchAPIKeyUsageAsync(h.Repo, apiKey.ID)
+					return c.Next()
+				}
+			}
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid API key"})
+		}
+
 		if token == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
 		}
@@ -77,9 +133,9 @@ func RegisterAuth(router fiber.Router, h *HandlerContext) {
 		authenticated := false
 
 		if authConfigured {
-			token := ExtractSessionToken(c)
-			if token != "" {
-				valid, err := auth.VerifySession(current.SessionSecret, token, time.Now())
+			cookieOrHeaderToken := ExtractSessionToken(c)
+			if cookieOrHeaderToken != "" {
+				valid, err := auth.VerifySession(current.SessionSecret, cookieOrHeaderToken, time.Now())
 				if err == nil && valid {
 					authenticated = true
 				}
