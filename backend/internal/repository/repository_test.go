@@ -51,6 +51,12 @@ func TestCalculateReadingTime(t *testing.T) {
 			wantWords:    7,
 			wantReadTime: "1 min read",
 		},
+		{
+			name:         "unicode whitespace delimiters",
+			content:      "word1\u00A0word2\u2003word3\u3000word4",
+			wantWords:    4,
+			wantReadTime: "1 min read",
+		},
 	}
 
 	for _, tt := range tests {

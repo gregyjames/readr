@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -62,12 +63,11 @@ func CalculateReadingTime(content string) (int, string) {
 		return 0, "1 min read"
 	}
 
-	// Single-pass word counter (zero slice allocations)
+	// Single-pass word counter over runes
 	words := 0
 	inWord := false
-	for i := 0; i < len(trimmed); i++ {
-		b := trimmed[i]
-		if b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '\f' || b == '\v' {
+	for _, r := range trimmed {
+		if unicode.IsSpace(r) {
 			inWord = false
 		} else if !inWord {
 			inWord = true
