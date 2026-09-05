@@ -5,7 +5,8 @@ import emitter from '../event-bus.ts'
 import BookmarkIcon from '../assets/book.svg'
 import { settings, setViewMode as saveGlobalViewMode } from '../store/settings'
 import ArticleProgressLabel from './ArticleProgressLabel.vue'
-import { isMoc } from '../utils/moc'
+import MocProgressLabel from './MocProgressLabel.vue'
+import { isMoc, type MocProgress } from '../utils/moc'
 
 interface Article {
   ID: number
@@ -18,6 +19,7 @@ interface Article {
   reading_progress?: number
   reading_time?: string
   word_count?: number
+  moc_progress?: MocProgress | null
 }
 
 defineProps<{ msg?: string }>()
@@ -134,6 +136,12 @@ function getReadingTime(articleOrText?: Article | string | null): string {
 function isMocArticle(article: Article): boolean {
   if (!article) return false
   return isMoc(article.title, article.parsedTags)
+}
+
+// A hub with no resolvable members shows no indicator at all, so the pill that
+// floats over a cover image must collapse with it rather than sit there empty.
+function hasReadingIndicator(article: Article): boolean {
+  return !isMocArticle(article) || !!article.moc_progress
 }
 
 function getDomain(article: Article): string {
@@ -645,10 +653,16 @@ const secondaryArticles = computed(() => {
                   <span>{{ formatDate(leadArticle.ID) || 'Recent' }}</span>
                   <span>•</span>
                   <span>{{ getReadingTime(leadArticle) }}</span>
-                  <span>&bull;</span>
-                  <ArticleProgressLabel
+                  <span v-if="hasReadingIndicator(leadArticle)">&bull;</span>
+                  <MocProgressLabel
+                    v-if="isMocArticle(leadArticle)"
                     variant="meta"
-                    :status="isMocArticle(leadArticle) ? 'not_started' : leadArticle.reading_status"
+                    :progress="leadArticle.moc_progress"
+                  />
+                  <ArticleProgressLabel
+                    v-else
+                    variant="meta"
+                    :status="leadArticle.reading_status"
                     :progress="leadArticle.reading_progress"
                   />
                 </div>
@@ -791,9 +805,15 @@ const secondaryArticles = computed(() => {
                   <span class="w-1 h-1 rounded-full bg-emerald-400"></span>
                   {{ getDomain(article) }}
                 </span>
-                <ArticleProgressLabel
+                <MocProgressLabel
+                  v-if="isMocArticle(article)"
                   variant="overlay"
-                  :status="isMocArticle(article) ? 'not_started' : article.reading_status"
+                  :progress="article.moc_progress"
+                />
+                <ArticleProgressLabel
+                  v-else
+                  variant="overlay"
+                  :status="article.reading_status"
                   :progress="article.reading_progress"
                 />
               </div>
@@ -813,10 +833,16 @@ const secondaryArticles = computed(() => {
                 <span class="w-1 h-1 rounded-full bg-emerald-400"></span>
                 {{ getDomain(article) }}
               </span>
-              <span class="px-2.5 py-0.5 rounded-full bg-black/60 backdrop-blur-md border border-white/15 shadow-xs inline-flex items-center">
-                <ArticleProgressLabel
+              <span v-if="hasReadingIndicator(article)" class="px-2.5 py-0.5 rounded-full bg-black/60 backdrop-blur-md border border-white/15 shadow-xs inline-flex items-center">
+                <MocProgressLabel
+                  v-if="isMocArticle(article)"
                   variant="overlay"
-                  :status="isMocArticle(article) ? 'not_started' : article.reading_status"
+                  :progress="article.moc_progress"
+                />
+                <ArticleProgressLabel
+                  v-else
+                  variant="overlay"
+                  :status="article.reading_status"
                   :progress="article.reading_progress"
                 />
               </span>
@@ -989,13 +1015,6 @@ const secondaryArticles = computed(() => {
                   {{ getReadingTime(article) }}
                 </span>
 
-                <!-- Reading Status -->
-                <ArticleProgressLabel
-                  variant="meta"
-                  :status="isMocArticle(article) ? 'not_started' : article.reading_status"
-                  :progress="article.reading_progress"
-                />
-
                 <!-- MOC Badge -->
                 <span
                   v-if="isMocArticle(article)"
@@ -1003,6 +1022,19 @@ const secondaryArticles = computed(() => {
                 >
                   ★ MOC
                 </span>
+
+                <!-- Reading Status -->
+                <MocProgressLabel
+                  v-if="isMocArticle(article)"
+                  variant="meta"
+                  :progress="article.moc_progress"
+                />
+                <ArticleProgressLabel
+                  v-else
+                  variant="meta"
+                  :status="article.reading_status"
+                  :progress="article.reading_progress"
+                />
 
                 <!-- Tags -->
                 <button
