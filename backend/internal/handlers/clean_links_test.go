@@ -24,7 +24,7 @@ func TestCleanBrokenLinks_UnlinksAndPurgesDanglingLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{})
+	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{})
 
 	// 1. Create Active Target Article (ID 201)
 	db.Create(&repository.GormArticle{
@@ -118,7 +118,7 @@ func TestCleanLinksEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{})
+	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{})
 
 	db.Create(&repository.GormArticle{
 		ID:      301,
@@ -168,7 +168,7 @@ func TestCleanBrokenLinks_PreservesFilePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{})
+	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{})
 
 	notePath := filepath.Join(articlesDir, "Custom Perms Note.md")
 	_ = os.WriteFile(notePath, []byte("Content with [[Missing Article|broken]]"), 0600)
@@ -207,7 +207,7 @@ func TestCleanBrokenLinks_SurfacesWriteErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{})
+	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{})
 
 	notePath := filepath.Join(articlesDir, "ReadOnly.md")
 	// Temporarily allow write to create file

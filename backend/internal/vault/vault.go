@@ -234,6 +234,9 @@ func (v *DefaultVault) DeleteArticle(ctx context.Context, id int64) error {
 		if err := tx.Exec("DELETE FROM article_links WHERE source_id = ? OR target_id = ?", id, id).Error; err != nil {
 			return err
 		}
+		if err := repository.DeleteStatus(tx, id); err != nil {
+			return err
+		}
 		if err := tx.Exec("DELETE FROM articles_fts WHERE rowid = ?", id).Error; err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "no such table") {
 				return err

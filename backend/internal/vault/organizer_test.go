@@ -26,7 +26,7 @@ func setupTestDBAndOrganizer(t *testing.T) (*gorm.DB, *VaultOrganizer, string) {
 	if err != nil {
 		t.Fatalf("failed to initialize gorm: %v", err)
 	}
-	if err := db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}); err != nil {
+	if err := db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{}); err != nil {
 		t.Fatalf("failed to automigrate: %v", err)
 	}
 

@@ -26,7 +26,7 @@ func setupTestLibrarianHandler(t *testing.T) (*fiber.App, *HandlerContext, *agen
 		t.Fatal(err)
 	}
 
-	_ = db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.PipelineMetric{})
+	_ = db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.PipelineMetric{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{})
 	repo := repository.NewGormRepository(db)
 	settingsStore := NewSettingsStore(tempDir, zap.NewNop())
 

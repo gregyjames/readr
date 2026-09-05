@@ -54,7 +54,7 @@ func TestFindCandidates_FTS5AndFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db.AutoMigrate(&GormArticle{})
+	db.AutoMigrate(&GormArticle{}, &GormArticleStatusType{}, &GormArticleStatus{})
 	db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
 		title, 
 		content, 
@@ -120,7 +120,7 @@ func TestGetDistinctTags_And_UpdateArticleTags(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db.AutoMigrate(&GormArticle{})
+	db.AutoMigrate(&GormArticle{}, &GormArticleStatusType{}, &GormArticleStatus{})
 	repo := NewGormRepository(db)
 	ctx := context.Background()
 
@@ -178,7 +178,7 @@ func TestFindRelevantTags(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db.AutoMigrate(&GormArticle{})
+	db.AutoMigrate(&GormArticle{}, &GormArticleStatusType{}, &GormArticleStatus{})
 	db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
 		title, 
 		content, 
@@ -255,7 +255,7 @@ func TestArchiveRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := db.AutoMigrate(&GormArticle{}); err != nil {
+	if err := db.AutoMigrate(&GormArticle{}, &GormArticleStatusType{}, &GormArticleStatus{}); err != nil {
 		t.Fatal(err)
 	}
 

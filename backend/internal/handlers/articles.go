@@ -294,6 +294,9 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			if err := tx.Exec("DELETE FROM article_links WHERE source_id = ? OR target_id = ?", id, id).Error; err != nil {
 				return err
 			}
+			if err := repository.DeleteStatus(tx, id); err != nil {
+				return err
+			}
 			return nil
 		})
 		if txErr != nil {

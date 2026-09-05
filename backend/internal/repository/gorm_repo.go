@@ -253,6 +253,7 @@ func (r *GormRepository) CreateLink(ctx context.Context, sourceID, targetID int6
 
 func (r *GormRepository) DeleteArticle(ctx context.Context, id int64) error {
 	r.db.WithContext(ctx).Exec("DELETE FROM article_links WHERE source_id = ? OR target_id = ?", id, id)
+	_ = DeleteStatus(r.db.WithContext(ctx), id)
 	return r.db.WithContext(ctx).Delete(&GormArticle{}, id).Error
 }
 

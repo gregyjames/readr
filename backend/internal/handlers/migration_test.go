@@ -23,7 +23,7 @@ func TestMigrateLegacyArticleFilenames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.AutoMigrate(&repository.GormArticle{})
+	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{})
 
 	// 1. Seed legacy numeric articles
 	db.Create(&repository.GormArticle{
@@ -102,7 +102,7 @@ func TestGetArticleContent_EndpointVariations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.AutoMigrate(&repository.GormArticle{})
+	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{})
 
 	_ = os.WriteFile(filepath.Join(articlesDir, "Building Distributed Systems in Go.md"), []byte("# Distributed Systems Content"), 0644)
 	db.Create(&repository.GormArticle{
@@ -191,7 +191,7 @@ func TestGetArticleContent_PathTraversalRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.AutoMigrate(&repository.GormArticle{})
+	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{})
 
 	repo := repository.NewGormRepository(db)
 	hCtx := &HandlerContext{
@@ -233,7 +233,7 @@ func TestMigrateLegacyArticleTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.AutoMigrate(&repository.GormArticle{})
+	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleStatusType{}, &repository.GormArticleStatus{})
 
 	// 1. Seed article with spaces in tags and markdown frontmatter
 	articleContent := `---
