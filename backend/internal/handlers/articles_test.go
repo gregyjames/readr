@@ -155,6 +155,9 @@ func TestArticleArchiveHandlers(t *testing.T) {
 			t.Fatalf("failed to seed article: %v", err)
 		}
 	}
+	// Write 400 words to 101.md to verify reading time
+	_ = os.MkdirAll(filepath.Join(tempDir, "articles"), 0755)
+	_ = os.WriteFile(filepath.Join(tempDir, "articles", "101.md"), []byte(strings.Repeat("word ", 400)), 0644)
 
 	repo := repository.NewGormRepository(db)
 	hCtx := &HandlerContext{
@@ -184,6 +187,12 @@ func TestArticleArchiveHandlers(t *testing.T) {
 		}
 		if len(list) != 1 || list[0].ID != 101 {
 			t.Fatalf("expected 1 active article with ID 101, got: %+v", list)
+		}
+		if list[0].ReadingTime != "2 min read" {
+			t.Errorf("expected ReadingTime = %q, got %q", "2 min read", list[0].ReadingTime)
+		}
+		if list[0].WordCount != 400 {
+			t.Errorf("expected WordCount = %d, got %d", 400, list[0].WordCount)
 		}
 	})
 

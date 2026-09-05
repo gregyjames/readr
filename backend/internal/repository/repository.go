@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"strings"
 )
 
@@ -25,6 +27,21 @@ func IsMOCArticle(title, tags string) bool {
 	return false
 }
 
+// CalculateReadingTime computes the word count and estimated reading time string (e.g. "5 min read")
+// for markdown content assuming an average reading speed of 200 words per minute.
+func CalculateReadingTime(content string) (int, string) {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return 0, "1 min read"
+	}
+	words := len(strings.Fields(trimmed))
+	minutes := int(math.Ceil(float64(words) / 200.0))
+	if minutes < 1 {
+		minutes = 1
+	}
+	return words, fmt.Sprintf("%d min read", minutes)
+}
+
 type ArticleRecord struct {
 	ID              int64   `json:"id"`
 	Title           string  `json:"title"`
@@ -35,6 +52,8 @@ type ArticleRecord struct {
 	IsArchived      bool    `json:"is_archived"`
 	ReadingStatus   string  `json:"reading_status"`
 	ReadingProgress float64 `json:"reading_progress"`
+	ReadingTime     string  `json:"reading_time"`
+	WordCount       int     `json:"word_count"`
 }
 
 type LinkRecord struct {

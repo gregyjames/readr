@@ -324,3 +324,46 @@ func TestVault_SaveArticle_AllocatesUniqueIDsAndDistinctPaths(t *testing.T) {
 		t.Errorf("expected disk file for art2 at %s", diskPath2)
 	}
 }
+
+func TestVault_ListArticles_HydratesReadingTime(t *testing.T) {
+	v, _, _, _ := setupTestVaultEnv(t)
+	ctx := context.Background()
+
+	// Create an article with 600 words (~3 min read)
+	longContent := strings.Repeat("word ", 600)
+	art, err := v.SaveArticle(ctx, NoteInput{
+		Title:   "Long Read Article",
+		Content: longContent,
+		Tags:    "test",
+	})
+	if err != nil {
+		t.Fatalf("failed to save article: %v", err)
+	}
+
+	// 1. Check GetArticle
+	gotArt, _, err := v.GetArticle(ctx, art.ID)
+	if err != nil {
+		t.Fatalf("failed to get article: %v", err)
+	}
+	if gotArt.ReadingTime != "3 min read" {
+		t.Errorf("GetArticle ReadingTime = %q, want %q", gotArt.ReadingTime, "3 min read")
+	}
+	if gotArt.WordCount != 600 {
+		t.Errorf("GetArticle WordCount = %d, want 600", gotArt.WordCount)
+	}
+
+	// 2. Check ListArticles
+	list, err := v.ListArticles(ctx, ArticleFilter{})
+	if err != nil {
+		t.Fatalf("failed to list articles: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 article in list, got %d", len(list))
+	}
+	if list[0].ReadingTime != "3 min read" {
+		t.Errorf("ListArticles ReadingTime = %q, want %q", list[0].ReadingTime, "3 min read")
+	}
+	if list[0].WordCount != 600 {
+		t.Errorf("ListArticles WordCount = %d, want 600", list[0].WordCount)
+	}
+}

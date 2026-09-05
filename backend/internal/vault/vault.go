@@ -340,6 +340,7 @@ func (v *DefaultVault) GetArticle(ctx context.Context, id int64) (*repository.Go
 		return &article, "", fmt.Errorf("failed to read article file %s: %w", absPath, err)
 	}
 
+	article.WordCount, article.ReadingTime = repository.CalculateReadingTime(string(bytes))
 	return &article, string(bytes), nil
 }
 
@@ -378,8 +379,27 @@ func (v *DefaultVault) ListArticles(ctx context.Context, filter ArticleFilter) (
 	if err := v.hydrateReadingStatus(ctx, articles); err != nil {
 		v.logger.Error("Failed to hydrate reading status", zap.Error(err))
 	}
+	v.hydrateReadingTime(articles)
 
 	return articles, nil
+}
+
+func (v *DefaultVault) hydrateReadingTime(articles []repository.GormArticle) {
+	for i := range articles {
+		filePath, err := v.ResolveFilePath(articles[i].Article)
+		if err != nil {
+			articles[i].ReadingTime = "1 min read"
+			continue
+		}
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			articles[i].ReadingTime = "1 min read"
+			continue
+		}
+		words, rt := repository.CalculateReadingTime(string(content))
+		articles[i].WordCount = words
+		articles[i].ReadingTime = rt
+	}
 }
 
 func (v *DefaultVault) hydrateReadingStatus(ctx context.Context, articles []repository.GormArticle) error {

@@ -80,6 +80,30 @@ func resolveArticleFromRecord(dataDir, recordArticlePath string) (string, error)
 	return resolveArticleFilePath(dataDir, rel)
 }
 
+func hydrateReadingTime(dataDir string, articles []repository.GormArticle) {
+	for i := range articles {
+		if dataDir == "" || articles[i].Article == "" {
+			if articles[i].ReadingTime == "" {
+				articles[i].ReadingTime = "1 min read"
+			}
+			continue
+		}
+		targetPath, err := resolveArticleFromRecord(dataDir, articles[i].Article)
+		if err != nil {
+			articles[i].ReadingTime = "1 min read"
+			continue
+		}
+		content, err := os.ReadFile(targetPath)
+		if err != nil {
+			articles[i].ReadingTime = "1 min read"
+			continue
+		}
+		words, rt := repository.CalculateReadingTime(string(content))
+		articles[i].WordCount = words
+		articles[i].ReadingTime = rt
+	}
+}
+
 func RegisterArticles(router fiber.Router, h *HandlerContext) {
 	router.Get("/getarticles", func(c *fiber.Ctx) error {
 		archivedParam := c.Query("archived")
@@ -122,6 +146,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			})
 		}
 		hydrateReadingStatus(c.Context(), h, articles)
+		hydrateReadingTime(h.DataDir, articles)
 		return c.JSON(articles)
 	})
 
@@ -131,6 +156,22 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			return c.Status(500).JSON(fiber.Map{
 				"error": "Failed to retrieve articles",
 			})
+		}
+		if h.DataDir != "" {
+			for i := range articles {
+				if articles[i].FilePath != "" {
+					if targetPath, err := resolveArticleFromRecord(h.DataDir, articles[i].FilePath); err == nil {
+						if content, err := os.ReadFile(targetPath); err == nil {
+							words, rt := repository.CalculateReadingTime(string(content))
+							articles[i].WordCount = words
+							articles[i].ReadingTime = rt
+						}
+					}
+				}
+				if articles[i].ReadingTime == "" {
+					articles[i].ReadingTime = "1 min read"
+				}
+			}
 		}
 		return c.JSON(articles)
 	})

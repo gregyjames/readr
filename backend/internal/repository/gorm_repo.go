@@ -86,6 +86,8 @@ type GormArticle struct {
 	IsArchived      bool    `gorm:"default:false;index" json:"is_archived"`
 	ReadingStatus   string  `gorm:"-" json:"reading_status"`
 	ReadingProgress float64 `gorm:"-" json:"reading_progress"`
+	ReadingTime     string  `gorm:"-" json:"reading_time"`
+	WordCount       int     `gorm:"-" json:"word_count"`
 }
 
 func (GormArticle) TableName() string {
@@ -183,12 +185,16 @@ func (r *GormRepository) GetAllArticles(ctx context.Context) ([]ArticleRecord, e
 	result := make([]ArticleRecord, len(articles))
 	for i, a := range articles {
 		result[i] = ArticleRecord{
-			ID:         a.ID,
-			Title:      a.Title,
-			ImagePath:  a.Image,
-			FilePath:   a.Article,
-			Tags:       a.Tags,
-			IsArchived: a.IsArchived,
+			ID:              a.ID,
+			Title:           a.Title,
+			ImagePath:       a.Image,
+			FilePath:        a.Article,
+			Tags:            a.Tags,
+			IsArchived:      a.IsArchived,
+			ReadingStatus:   a.ReadingStatus,
+			ReadingProgress: a.ReadingProgress,
+			ReadingTime:     a.ReadingTime,
+			WordCount:       a.WordCount,
 		}
 	}
 	return result, nil
@@ -203,12 +209,16 @@ func (r *GormRepository) GetArchivedArticles(ctx context.Context) ([]ArticleReco
 	result := make([]ArticleRecord, len(articles))
 	for i, a := range articles {
 		result[i] = ArticleRecord{
-			ID:         a.ID,
-			Title:      a.Title,
-			ImagePath:  a.Image,
-			FilePath:   a.Article,
-			Tags:       a.Tags,
-			IsArchived: a.IsArchived,
+			ID:              a.ID,
+			Title:           a.Title,
+			ImagePath:       a.Image,
+			FilePath:        a.Article,
+			Tags:            a.Tags,
+			IsArchived:      a.IsArchived,
+			ReadingStatus:   a.ReadingStatus,
+			ReadingProgress: a.ReadingProgress,
+			ReadingTime:     a.ReadingTime,
+			WordCount:       a.WordCount,
 		}
 	}
 	return result, nil
