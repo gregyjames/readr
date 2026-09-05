@@ -9,6 +9,8 @@ import 'highlight.js/styles/github-dark.css'
 import { Network } from 'vis-network'
 import ArticleHoverPreview from './ArticleHoverPreview.vue'
 import ArticleStatusRing from './ArticleStatusRing.vue'
+import MocProgressLabel from './MocProgressLabel.vue'
+import type { MocProgress } from '../utils/moc'
 import GraphZoomControls from './GraphZoomControls.vue'
 import { useGraphZoom } from '../composables/useGraphZoom'
 import emitter from '../event-bus'
@@ -32,6 +34,7 @@ interface ArticleData {
   reading_progress?: number
   reading_time?: string
   word_count?: number
+  moc_progress?: MocProgress | null
 }
 
 const allArticles = ref<ArticleData[]>([])
@@ -1206,9 +1209,24 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="flex items-center gap-1.5 sm:gap-2">
+          <!--
+            Collection Progress: a hub has no reading state of its own, so it
+            reports how much of what it indexes is read. Read-only — there is no
+            Finish button, because finishing a hub means reading its notes.
+          -->
+          <div
+            v-if="isMOC && currentArticle?.moc_progress"
+            class="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-gray-100/80 dark:bg-white/[0.04] border border-gray-200/50 dark:border-white/[0.04]"
+          >
+            <MocProgressLabel
+              :progress="currentArticle?.moc_progress"
+              variant="reader"
+            />
+          </div>
+
           <!-- Reading Status: same ring the vault shows, live as you scroll -->
           <div
-            v-if="!isMOC"
+            v-else-if="!isMOC"
             class="flex items-center gap-1 pl-2 pr-1 py-1 rounded-xl bg-gray-100/80 dark:bg-white/[0.04] border border-gray-200/50 dark:border-white/[0.04]"
           >
             <ArticleStatusRing
