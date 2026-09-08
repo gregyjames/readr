@@ -33,7 +33,7 @@
     "@types/node": "^26.4.1",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/tsconfig": "0.9.1",
-    "autoprefixer": "^10.5.4",
+    "autoprefixer": "^10.5.5",
     "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",
     "typescript": "5.8.2",
