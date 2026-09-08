@@ -390,6 +390,9 @@ func (v *DefaultVault) ListArticles(ctx context.Context, filter ArticleFilter) (
 	if err := v.hydrateReadingStatus(ctx, articles); err != nil {
 		v.logger.Error("Failed to hydrate reading status", zap.Error(err))
 	}
+	if err := repository.HydrateMOCProgress(ctx, v.db, articles); err != nil {
+		v.logger.Error("Failed to hydrate MOC progress", zap.Error(err))
+	}
 	v.hydrateReadingTime(articles)
 
 	return articles, nil
