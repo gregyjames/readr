@@ -480,3 +480,82 @@ func TestEditArticle_UpdatesWordCount_And_RollsBack(t *testing.T) {
 		t.Errorf("expected disk file to be restored to %q, got %q", currentContentOnDisk, string(restoredBytes))
 	}
 }
+
+func TestEditArticle_UpdatesFrontmatterAndSyncsLinks(t *testing.T) {
+	tempDir := t.TempDir()
+	articlesDir := filepath.Join(tempDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0755)
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{})
+
+	// Seed target articles for wikilinks
+	db.Create(&repository.GormArticle{ID: 10, Title: "Golang Concurrency"})
+	db.Create(&repository.GormArticle{ID: 20, Title: "Distributed Systems"})
+
+	// Seed source article
+	filePath := filepath.Join(articlesDir, "Source.md")
+	initialContent := "---\ntitle: Old Title\ntags: [old-tag]\n---\n# Old Title\nProse content."
+	_ = os.WriteFile(filePath, []byte(initialContent), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      50,
+		Title:   "Old Title",
+		Article: "/articles/Source.md",
+		Tags:    "old-tag",
+	})
+
+	app := fiber.New()
+	api := app.Group("/api")
+	hCtx := &HandlerContext{
+		DB:      db,
+		DataDir: tempDir,
+		Logger:  zap.NewNop(),
+	}
+	RegisterArticles(api, hCtx)
+
+	// Edit with new frontmatter and multiple wikilinks (including duplicate reference)
+	editedContent := "---\ntitle: Modern Distributed Go\ntags: [golang, distributed, consensus]\n---\n# Modern Distributed Go\nSee [[Golang Concurrency]] and [[Distributed Systems|DistSys]], plus a second reference to [[Golang Concurrency]]."
+	bodyBytes, _ := json.Marshal(map[string]string{"content": editedContent})
+	req := httptest.NewRequest("POST", "/api/edit/50", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatalf("edit request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	// 1. Verify DB title and tags were synchronized from frontmatter
+	var updated repository.GormArticle
+	db.First(&updated, 50)
+	if updated.Title != "Modern Distributed Go" {
+		t.Errorf("expected Title 'Modern Distributed Go', got %q", updated.Title)
+	}
+	if !strings.Contains(updated.Tags, "golang") || !strings.Contains(updated.Tags, "distributed") {
+		t.Errorf("expected updated tags, got %q", updated.Tags)
+	}
+
+	// 2. Verify links were synchronized and deduplicated (target 10 and target 20)
+	var links []repository.GormArticleLink
+	db.Where("source_id = ?", 50).Find(&links)
+	if len(links) != 2 {
+		t.Fatalf("expected 2 deduplicated links, got %d", len(links))
+	}
+	targetIDs := map[int64]bool{links[0].TargetID: true, links[1].TargetID: true}
+	if !targetIDs[10] || !targetIDs[20] {
+		t.Errorf("expected links to targets 10 and 20, got %+v", links)
+	}
+
+	// 3. Verify disk file content was updated atomically
+	diskBytes, _ := os.ReadFile(filePath)
+	if string(diskBytes) != editedContent {
+		t.Errorf("expected disk file to match edited content")
+	}
+}
