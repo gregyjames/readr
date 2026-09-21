@@ -213,3 +213,31 @@ func MigrateLegacyWordCounts(db *gorm.DB, dataDir string, logger *zap.Logger) (i
 
 	return migratedCount, nil
 }
+
+// DeduplicateArticleLinks removes duplicate (source_id, target_id) edges prior to unique index creation.
+func DeduplicateArticleLinks(db *gorm.DB, logger *zap.Logger) error {
+	if db == nil {
+		return nil
+	}
+	if !db.Migrator().HasTable("article_links") {
+		return nil
+	}
+	res := db.Exec(`
+		DELETE FROM article_links
+		WHERE rowid NOT IN (
+			SELECT MIN(rowid)
+			FROM article_links
+			GROUP BY source_id, target_id
+		)
+	`)
+	if res.Error != nil {
+		if logger != nil {
+			logger.Warn("Failed to deduplicate article_links", zap.Error(res.Error))
+		}
+		return res.Error
+	}
+	if res.RowsAffected > 0 && logger != nil {
+		logger.Info("Deduplicated article_links edges", zap.Int64("removed", res.RowsAffected))
+	}
+	return nil
+}

@@ -111,7 +111,7 @@ func initDB() *gorm.DB {
 		}
 		panic(err)
 	}
-
+	_ = handlers.DeduplicateArticleLinks(db, logger)
 	db.AutoMigrate(&Article{}, &ArticleLink{}, &repository.PipelineMetric{},
 		&ArticleStatusType{}, &ArticleStatus{}, &APIKey{})
 	handlers.EnsureFTS(db, logger)
@@ -147,6 +147,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		if err != nil {
 			panic(err)
 		}
+		_ = handlers.DeduplicateArticleLinks(db, logger)
 		db.AutoMigrate(&Article{}, &ArticleLink{}, &repository.PipelineMetric{},
 			&ArticleStatusType{}, &ArticleStatus{}, &APIKey{})
 
