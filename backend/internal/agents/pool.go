@@ -88,34 +88,48 @@ func InitPool(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataD
 
 func (p *AgentPool) worker(id int) {
 	for job := range p.Queue {
-		p.mu.Lock()
-		if p.activeJobs == nil {
-			p.activeJobs = make(map[int]ActiveJobInfo)
-		}
-		p.activeJobs[id] = ActiveJobInfo{
-			ArticleID: job.ArticleID,
-			Type:      job.Type,
-			WorkerID:  id,
-			StartedAt: time.Now(),
-		}
-		p.mu.Unlock()
+		p.executeJob(id, job)
+	}
+}
 
-		p.logger.Info("Agent processing job", zap.Int("worker_id", id), zap.Int64("article_id", job.ArticleID), zap.String("type", string(job.Type)))
+func (p *AgentPool) executeJob(id int, job Job) {
+	p.mu.Lock()
+	if p.activeJobs == nil {
+		p.activeJobs = make(map[int]ActiveJobInfo)
+	}
+	p.activeJobs[id] = ActiveJobInfo{
+		ArticleID: job.ArticleID,
+		Type:      job.Type,
+		WorkerID:  id,
+		StartedAt: time.Now(),
+	}
+	p.mu.Unlock()
 
-		switch job.Type {
-		case JobTypePipeline:
-			p.processPipeline(job)
-		default:
-			p.logger.Warn("Unknown job type", zap.String("type", string(job.Type)))
+	defer func() {
+		if r := recover(); r != nil {
+			p.logger.Error("Agent worker recovered from panic",
+				zap.Int("worker_id", id),
+				zap.Int64("article_id", job.ArticleID),
+				zap.String("type", string(job.Type)),
+				zap.Any("panic", r),
+			)
 		}
-
-		if p.InvalidateGraphCache != nil {
-			p.InvalidateGraphCache()
-		}
-
 		p.mu.Lock()
 		delete(p.activeJobs, id)
 		p.mu.Unlock()
+	}()
+
+	p.logger.Info("Agent processing job", zap.Int("worker_id", id), zap.Int64("article_id", job.ArticleID), zap.String("type", string(job.Type)))
+
+	switch job.Type {
+	case JobTypePipeline:
+		p.processPipeline(job)
+	default:
+		p.logger.Warn("Unknown job type", zap.String("type", string(job.Type)))
+	}
+
+	if p.InvalidateGraphCache != nil {
+		p.InvalidateGraphCache()
 	}
 }
 
