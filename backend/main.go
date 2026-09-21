@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -68,6 +69,27 @@ func getDataDir() string {
 	return "./data"
 }
 
+func configureSQLite(sqlDB *sql.DB, isMemory bool) {
+	if !isMemory {
+		if _, err := sqlDB.Exec("PRAGMA journal_mode=WAL;"); err != nil && logger != nil {
+			logger.Warn("Failed to set PRAGMA journal_mode=WAL", zap.Error(err))
+		}
+	}
+	if _, err := sqlDB.Exec("PRAGMA busy_timeout=5000;"); err != nil && logger != nil {
+		logger.Warn("Failed to set PRAGMA busy_timeout=5000", zap.Error(err))
+	}
+	if _, err := sqlDB.Exec("PRAGMA synchronous=NORMAL;"); err != nil && logger != nil {
+		logger.Warn("Failed to set PRAGMA synchronous=NORMAL", zap.Error(err))
+	}
+	if _, err := sqlDB.Exec("PRAGMA foreign_keys=ON;"); err != nil && logger != nil {
+		logger.Warn("Failed to set PRAGMA foreign_keys=ON", zap.Error(err))
+	}
+
+	maxConns := max(4, runtime.NumCPU())
+	sqlDB.SetMaxOpenConns(maxConns)
+	sqlDB.SetMaxIdleConns(2)
+}
+
 func initDB() *gorm.DB {
 	dataDirectory := getDataDir()
 	dbPath := filepath.Join(dataDirectory, "data.sqlite")
@@ -79,6 +101,8 @@ func initDB() *gorm.DB {
 		}
 		panic(err)
 	}
+
+	configureSQLite(sqlDB, false)
 
 	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{})
 	if err != nil {
@@ -118,6 +142,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		if err != nil {
 			panic(err)
 		}
+		configureSQLite(sqlDB, true)
 		db, err = gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{})
 		if err != nil {
 			panic(err)

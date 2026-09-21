@@ -1313,3 +1313,47 @@ func TestAuthMiddleware_Protection(t *testing.T) {
 		t.Fatalf("expected 200 for authenticated /api/articles/1.md, got %d", resp.StatusCode)
 	}
 }
+
+func TestConfigureSQLite_Pragmas(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_pragma.db")
+	sqlDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("failed to open sqlite: %v", err)
+	}
+	defer sqlDB.Close()
+
+	configureSQLite(sqlDB, false)
+
+	var journalMode string
+	if err := sqlDB.QueryRow("PRAGMA journal_mode;").Scan(&journalMode); err != nil {
+		t.Fatalf("failed to query journal_mode: %v", err)
+	}
+	if strings.ToLower(journalMode) != "wal" {
+		t.Fatalf("expected journal_mode=wal, got %s", journalMode)
+	}
+
+	var busyTimeout int
+	if err := sqlDB.QueryRow("PRAGMA busy_timeout;").Scan(&busyTimeout); err != nil {
+		t.Fatalf("failed to query busy_timeout: %v", err)
+	}
+	if busyTimeout != 5000 {
+		t.Fatalf("expected busy_timeout=5000, got %d", busyTimeout)
+	}
+
+	var foreignKeys int
+	if err := sqlDB.QueryRow("PRAGMA foreign_keys;").Scan(&foreignKeys); err != nil {
+		t.Fatalf("failed to query foreign_keys: %v", err)
+	}
+	if foreignKeys != 1 {
+		t.Fatalf("expected foreign_keys=1, got %d", foreignKeys)
+	}
+
+	var synchronous int
+	if err := sqlDB.QueryRow("PRAGMA synchronous;").Scan(&synchronous); err != nil {
+		t.Fatalf("failed to query synchronous: %v", err)
+	}
+	if synchronous != 1 {
+		t.Fatalf("expected synchronous=1 (NORMAL), got %d", synchronous)
+	}
+}
