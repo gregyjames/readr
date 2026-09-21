@@ -83,6 +83,7 @@ type GormArticle struct {
 	Image           string       `json:"image"`
 	Title           string       `gorm:"index" json:"title"`
 	Tags            string       `json:"tags"`
+	SourceURL       string       `gorm:"index" json:"source_url"`
 	IsArchived      bool         `gorm:"default:false;index" json:"is_archived"`
 	WordCount       int          `gorm:"default:0" json:"word_count"`
 	ReadingStatus   string       `gorm:"-" json:"reading_status"`
@@ -130,7 +131,7 @@ func NewGormRepository(db *gorm.DB) *GormRepository {
 
 func (r *GormRepository) FindBySourceURL(ctx context.Context, sourceURL string) (*ArticleRecord, error) {
 	var a GormArticle
-	if err := r.db.WithContext(ctx).Where("title = ?", sourceURL).First(&a).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("(source_url = ? OR title = ?) AND deleted_at IS NULL", sourceURL, sourceURL).First(&a).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
@@ -142,7 +143,7 @@ func (r *GormRepository) FindBySourceURL(ctx context.Context, sourceURL string) 
 		ImagePath:   a.Image,
 		FilePath:    a.Article,
 		Tags:        a.Tags,
-		SourceURL:   sourceURL,
+		SourceURL:   a.SourceURL,
 		IsArchived:  a.IsArchived,
 		WordCount:   a.WordCount,
 		ReadingTime: ReadingTimeFromWords(a.WordCount),
@@ -163,6 +164,7 @@ func (r *GormRepository) FindByID(ctx context.Context, id int64) (*ArticleRecord
 		ImagePath:   a.Image,
 		FilePath:    a.Article,
 		Tags:        a.Tags,
+		SourceURL:   a.SourceURL,
 		IsArchived:  a.IsArchived,
 		WordCount:   a.WordCount,
 		ReadingTime: ReadingTimeFromWords(a.WordCount),
@@ -176,6 +178,7 @@ func (r *GormRepository) SaveArticle(ctx context.Context, a *ArticleRecord) erro
 		Image:      a.ImagePath,
 		Article:    a.FilePath,
 		Tags:       a.Tags,
+		SourceURL:  a.SourceURL,
 		IsArchived: a.IsArchived,
 		WordCount:  a.WordCount,
 	}

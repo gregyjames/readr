@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
@@ -557,5 +559,130 @@ func TestEditArticle_UpdatesFrontmatterAndSyncsLinks(t *testing.T) {
 	diskBytes, _ := os.ReadFile(filePath)
 	if string(diskBytes) != editedContent {
 		t.Errorf("expected disk file to match edited content")
+	}
+}
+
+func TestAddArticle_Integration(t *testing.T) {
+	tempDir := t.TempDir()
+	articlesDir := filepath.Join(tempDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0755)
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "add_test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.PipelineMetric{})
+	EnsureFTS(db, zap.NewNop())
+
+	repo := repository.NewGormRepository(db)
+	fetcher := ingest.NewHTTPFetcher(10 * time.Second)
+	extractor := ingest.NewContentExtractor()
+	storage := ingest.NewDiskStorage(tempDir)
+	ingester := ingest.NewIngester(fetcher, extractor, storage, repo)
+	settingsStore := NewSettingsStore(tempDir, zap.NewNop())
+
+	hCtx := &HandlerContext{
+		DB:            db,
+		DataDir:       tempDir,
+		Logger:        zap.NewNop(),
+		Repo:          repo,
+		Ingester:      ingester,
+		SettingsStore: settingsStore,
+	}
+
+	app := fiber.New()
+	api := app.Group("/api")
+	RegisterArticles(api, hCtx)
+
+	// 1. Invalid JSON returns 400
+	reqBadJSON := httptest.NewRequest("POST", "/api/add", bytes.NewReader([]byte("{invalid-json")))
+	reqBadJSON.Header.Set("Content-Type", "application/json")
+	respBadJSON, err := app.Test(reqBadJSON, 5000)
+	if err != nil || respBadJSON.StatusCode != 400 {
+		t.Fatalf("expected 400 for invalid JSON, got %d, err: %v", respBadJSON.StatusCode, err)
+	}
+
+	// 2. Empty URL returns 400
+	bodyEmpty, _ := json.Marshal(map[string]string{"url": ""})
+	reqEmpty := httptest.NewRequest("POST", "/api/add", bytes.NewReader(bodyEmpty))
+	reqEmpty.Header.Set("Content-Type", "application/json")
+	respEmpty, err := app.Test(reqEmpty, 5000)
+	if err != nil || respEmpty.StatusCode != 400 {
+		t.Fatalf("expected 400 for empty URL, got %d, err: %v", respEmpty.StatusCode, err)
+	}
+
+	// 3. Mock external web page server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<!DOCTYPE html>
+<html>
+<head><title>Distributed Storage Architecture</title></head>
+<body>
+  <article>
+    <h1>Distributed Storage Architecture</h1>
+    <p>Consensus protocols and Raft quorum ensure reliable distributed replication across clusters.</p>
+  </article>
+</body>
+</html>`))
+	}))
+	defer server.Close()
+
+	// 4. Successful ingestion
+	addPayload, _ := json.Marshal(map[string]interface{}{
+		"url":  server.URL + "/architecture",
+		"tags": []string{"distributed", "storage"},
+	})
+	reqAdd := httptest.NewRequest("POST", "/api/add", bytes.NewReader(addPayload))
+	reqAdd.Header.Set("Content-Type", "application/json")
+	respAdd, err := app.Test(reqAdd, 10000)
+	if err != nil || respAdd.StatusCode != 200 {
+		t.Fatalf("expected 200 for valid ingest, got %d, err: %v", respAdd.StatusCode, err)
+	}
+
+	var addResp struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+		ID      int64  `json:"id"`
+	}
+	_ = json.NewDecoder(respAdd.Body).Decode(&addResp)
+	if addResp.Status != "success" || addResp.ID <= 0 {
+		t.Fatalf("expected success with valid ID, got %+v", addResp)
+	}
+
+	// Verify database record
+	var created repository.GormArticle
+	if err := db.First(&created, addResp.ID).Error; err != nil {
+		t.Fatalf("failed to query created article: %v", err)
+	}
+	if !strings.Contains(created.Title, "Distributed Storage") {
+		t.Errorf("expected Title to contain 'Distributed Storage', got %q", created.Title)
+	}
+
+	// Verify on-disk file
+	diskPath := filepath.Join(tempDir, strings.TrimPrefix(created.Article, "/"))
+	diskContent, err := os.ReadFile(diskPath)
+	if err != nil {
+		t.Fatalf("failed to read created markdown file: %v", err)
+	}
+	if !strings.Contains(string(diskContent), "Consensus protocols") {
+		t.Errorf("expected file to contain extracted prose")
+	}
+
+	// 5. Duplicate ingestion returns exists status with matching ID
+	reqDup := httptest.NewRequest("POST", "/api/add", bytes.NewReader(addPayload))
+	reqDup.Header.Set("Content-Type", "application/json")
+	respDup, err := app.Test(reqDup, 10000)
+	if err != nil || respDup.StatusCode != 200 {
+		t.Fatalf("expected 200 for duplicate ingest, got %d, err: %v", respDup.StatusCode, err)
+	}
+
+	var dupResp struct {
+		Status string `json:"status"`
+		ID     int64  `json:"id"`
+	}
+	_ = json.NewDecoder(respDup.Body).Decode(&dupResp)
+	if dupResp.Status != "exists" || dupResp.ID != addResp.ID {
+		t.Errorf("expected duplicate response with id %d, got %+v", addResp.ID, dupResp)
 	}
 }
