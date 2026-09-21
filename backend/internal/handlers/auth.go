@@ -214,13 +214,6 @@ func RegisterAuth(router fiber.Router, h *HandlerContext) {
 	})
 
 	router.Post("/auth/logout", func(c *fiber.Ctx) error {
-		_, _ = h.SettingsStore.Update(func(s *ServerSettings) error {
-			if newSecret, err := auth.GenerateRandomSecret(); err == nil {
-				s.SessionSecret = newSecret
-			}
-			return nil
-		})
-
 		ClearSessionCookie(c)
 		return c.JSON(fiber.Map{"status": "success"})
 	})
