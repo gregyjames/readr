@@ -1,4 +1,5 @@
 import * as yaml from 'js-yaml';
+import DOMPurify from 'dompurify';
 
 export interface ArticleFrontmatter {
   title?: string;
@@ -116,5 +117,36 @@ export function getHostname(rawUrl?: string): string {
   } catch {
     return rawUrl;
   }
+}
+
+/**
+ * Sanitizes search excerpts to prevent XSS while preserving <mark> highlight tags.
+ */
+export function sanitizeSearchExcerpt(rawHtml?: string): string {
+  if (!rawHtml) return '';
+  if (typeof DOMPurify?.sanitize === 'function') {
+    return DOMPurify.sanitize(rawHtml, {
+      ALLOWED_TAGS: ['mark'],
+      ALLOWED_ATTR: [],
+    });
+  }
+  if (typeof window !== 'undefined' && typeof DOMPurify === 'function') {
+    const purify = (DOMPurify as unknown as (w: Window) => typeof DOMPurify)(window);
+    if (purify && typeof purify.sanitize === 'function') {
+      return purify.sanitize(rawHtml, {
+        ALLOWED_TAGS: ['mark'],
+        ALLOWED_ATTR: [],
+      });
+    }
+  }
+
+  // Fallback for non-DOM test/SSR environments
+  return rawHtml
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
+    .replace(/<img\b[^>]*>/gi, '')
+    .replace(/<(\/?)mark\b[^>]*>/gi, '<$1mark>')
+    .replace(/<(?!mark\b|\/mark\b)[^>]*>/gi, '');
 }
 
