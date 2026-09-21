@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"example.com/backend/internal/ingest"
+	"example.com/backend/internal/markdown"
 	"example.com/backend/internal/repository"
 	"go.uber.org/zap"
-	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
 
@@ -136,20 +136,10 @@ func MigrateLegacyArticleTags(db *gorm.DB, dataDir string, logger *zap.Logger) (
 			filePath := filepath.Join(dataDir, strings.TrimPrefix(a.Article, "/"))
 			if contentBytes, err := os.ReadFile(filePath); err == nil {
 				content := string(contentBytes)
-				if strings.HasPrefix(content, "---\n") {
-					parts := strings.SplitN(content[4:], "\n---\n", 2)
-					if len(parts) == 2 {
-						frontmatterRaw := parts[0]
-						body := parts[1]
-
-						var rawMap map[string]interface{}
-						if err := yaml.Unmarshal([]byte(frontmatterRaw), &rawMap); err == nil && rawMap != nil {
-							rawMap["tags"] = sanitizedTags
-							if newYaml, err := yaml.Marshal(rawMap); err == nil {
-								newDoc := "---\n" + string(newYaml) + "---\n" + body
-								_ = os.WriteFile(filePath, []byte(newDoc), 0644)
-							}
-						}
+				if doc, err := markdown.SplitDocument(content); err == nil && doc.HasFrontmatter {
+					doc.Frontmatter["tags"] = sanitizedTags
+					if newDoc, err := markdown.AssembleDocument(doc); err == nil {
+						_ = os.WriteFile(filePath, []byte(newDoc), 0644)
 					}
 				}
 			}

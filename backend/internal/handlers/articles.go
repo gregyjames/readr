@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -563,44 +562,31 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		SyncArticleToFTS(h.DB, article.ID, article.Title, article.Tags, h.Logger)
 
 		// Sync links to database using batched query
-		linkRegex := regexp.MustCompile(`\[\[([^\]|]+)(?:\|([^\]]+))?\]\]`)
-		matches := linkRegex.FindAllStringSubmatch(req.Content, -1)
-
-		// Delete existing outgoing links to prevent stale links
 		h.DB.Where("source_id = ?", article.ID).Delete(&repository.GormArticleLink{})
 
-		if len(matches) > 0 {
-			uniqueTitlesMap := make(map[string]struct{}, len(matches))
-			uniqueTitles := make([]string, 0, len(matches))
-			for _, m := range matches {
-				t := strings.ToLower(strings.TrimSpace(m[1]))
-				if t != "" {
-					if _, exists := uniqueTitlesMap[t]; !exists {
-						uniqueTitlesMap[t] = struct{}{}
-						uniqueTitles = append(uniqueTitles, t)
-					}
-				}
+		uniqueTargets := markdown.ExtractUniqueWikilinkTargets(req.Content)
+		if len(uniqueTargets) > 0 {
+			uniqueTitles := make([]string, len(uniqueTargets))
+			for i, t := range uniqueTargets {
+				uniqueTitles[i] = strings.ToLower(t)
 			}
-
-			if len(uniqueTitles) > 0 {
-				var targets []repository.GormArticle
-				if err := h.DB.Where("LOWER(title) IN (?) AND deleted_at IS NULL", uniqueTitles).Find(&targets).Error; err == nil {
-					newLinks := make([]repository.GormArticleLink, 0, len(targets))
-					seenTargetIDs := make(map[int64]struct{}, len(targets))
-					for _, target := range targets {
-						if target.ID != article.ID {
-							if _, seen := seenTargetIDs[target.ID]; !seen {
-								seenTargetIDs[target.ID] = struct{}{}
-								newLinks = append(newLinks, repository.GormArticleLink{
-									SourceID: article.ID,
-									TargetID: target.ID,
-								})
-							}
+			var targets []repository.GormArticle
+			if err := h.DB.Where("LOWER(title) IN (?) AND deleted_at IS NULL", uniqueTitles).Find(&targets).Error; err == nil {
+				newLinks := make([]repository.GormArticleLink, 0, len(targets))
+				seenTargetIDs := make(map[int64]struct{}, len(targets))
+				for _, target := range targets {
+					if target.ID != article.ID {
+						if _, seen := seenTargetIDs[target.ID]; !seen {
+							seenTargetIDs[target.ID] = struct{}{}
+							newLinks = append(newLinks, repository.GormArticleLink{
+								SourceID: article.ID,
+								TargetID: target.ID,
+							})
 						}
 					}
-					if len(newLinks) > 0 {
-						h.DB.CreateInBatches(newLinks, 100)
-					}
+				}
+				if len(newLinks) > 0 {
+					h.DB.CreateInBatches(newLinks, 100)
 				}
 			}
 		}

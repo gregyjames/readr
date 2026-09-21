@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
+	"example.com/backend/internal/markdown"
 	"example.com/backend/internal/repository"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -21,7 +21,7 @@ type CleanLinksResult struct {
 	Errors          []string `json:"errors,omitempty"`
 }
 
-var wikilinkRegex = regexp.MustCompile(`\[\[([^\]|]+)(?:\|([^\]]+))?\]\]`)
+var wikilinkRegex = markdown.WikilinkRegex
 
 // CleanBrokenLinks scans all articles in the vault, converts broken wikilinks to clean plain text
 // (preserving the original sentence phrasing), and purges orphaned rows in article_links.

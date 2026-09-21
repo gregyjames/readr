@@ -8,8 +8,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var frontmatterRegex = regexp.MustCompile(`(?s)^---\r?\n(.*?)\r?\n---\r?\n?(.*)$`)
-var emptyFrontmatterRegex = regexp.MustCompile(`(?s)^---\r?\n?---\r?\n?(.*)$`)
+var FrontmatterRegex = regexp.MustCompile(`(?s)^---\r?\n(.*?)\r?\n---\r?\n?(.*)$`)
+var EmptyFrontmatterRegex = regexp.MustCompile(`(?s)^---\r?\n?---\r?\n?(.*)$`)
+var frontmatterRegex = FrontmatterRegex
+var emptyFrontmatterRegex = EmptyFrontmatterRegex
 
 // Document represents a parsed Markdown document containing frontmatter and body.
 type Document struct {

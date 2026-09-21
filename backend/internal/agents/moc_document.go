@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"example.com/backend/internal/ingest"
+	"example.com/backend/internal/markdown"
 	"gopkg.in/yaml.v3"
 )
 
@@ -91,29 +92,22 @@ type MOCDocument struct {
 	UserNotesBody    string
 }
 
-var mocFrontmatterRegex = regexp.MustCompile(`(?s)^---\r?\n(.*?)\r?\n---\r?\n?(.*)$`)
-
-// ParseMOCDocument parses a markdown string into a structured MOCDocument.
 func ParseMOCDocument(raw string) (*MOCDocument, error) {
 	doc := &MOCDocument{
 		Frontmatter: make(map[string]interface{}),
 	}
 
 	cleanRaw := strings.TrimPrefix(raw, "\ufeff")
-	body := raw
-
-	if strings.HasPrefix(cleanRaw, "---") {
-		matches := mocFrontmatterRegex.FindStringSubmatch(cleanRaw)
+	body := cleanRaw
+	if mdDoc, err := markdown.SplitDocument(cleanRaw); err == nil && mdDoc.HasFrontmatter {
+		doc.Frontmatter = mdDoc.Frontmatter
+		doc.RawYAML = mdDoc.RawYAML
+		body = mdDoc.Body
+	} else if strings.HasPrefix(cleanRaw, "---") {
+		matches := markdown.FrontmatterRegex.FindStringSubmatch(cleanRaw)
 		if len(matches) >= 3 {
-			yamlStr := strings.TrimSpace(matches[1])
-			body = matches[2]
 			doc.RawYAML = matches[1]
-			if yamlStr != "" {
-				_ = yaml.Unmarshal([]byte(yamlStr), &doc.Frontmatter)
-				if doc.Frontmatter == nil {
-					doc.Frontmatter = make(map[string]interface{})
-				}
-			}
+			body = matches[2]
 		}
 	}
 
@@ -126,7 +120,7 @@ func ParseMOCDocument(raw string) (*MOCDocument, error) {
 
 	lines := strings.Split(curatedArea, "\n")
 	var currentSection *MOCParsedSection
-	reWikilink := regexp.MustCompile(`\[\[([^\]\|]+)(?:\|([^\]]+))?\]\]`)
+	reWikilink := markdown.WikilinkRegex
 
 	inExecutiveOverview := false
 	var overviewLines []string
