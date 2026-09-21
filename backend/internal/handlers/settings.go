@@ -68,12 +68,20 @@ func (s *SettingsStore) loadFromDisk() ServerSettings {
 			_ = s.saveToDisk(defaults)
 			return defaults
 		}
-		s.logger.Fatal("Failed to read settings file", zap.String("path", settingsPath), zap.Error(err))
+		s.logger.Error("Failed to read settings file", zap.String("path", settingsPath), zap.Error(err))
+		if s.settings.SessionSecret != "" {
+			return s.settings
+		}
+		return defaults
 	}
 
 	res := defaults
 	if err := json.Unmarshal(data, &res); err != nil {
-		s.logger.Fatal("Failed to parse settings file", zap.String("path", settingsPath), zap.Error(err))
+		s.logger.Error("Failed to parse settings file", zap.String("path", settingsPath), zap.Error(err))
+		if s.settings.SessionSecret != "" {
+			return s.settings
+		}
+		return defaults
 	}
 	if res.Model == "" {
 		res.Model = "openai/gpt-4o-mini"
@@ -91,7 +99,11 @@ func (s *SettingsStore) saveToDisk(settings ServerSettings) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(settingsPath, bytes, 0600)
+	tmpPath := settingsPath + ".tmp"
+	if err := os.WriteFile(tmpPath, bytes, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, settingsPath)
 }
 
 func (s *SettingsStore) Get() ServerSettings {
