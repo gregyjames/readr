@@ -28,6 +28,15 @@ globalThis.window = win as unknown as Window & typeof globalThis
 globalThis.document = win.document as unknown as Document
 globalThis.navigator = win.navigator as unknown as Navigator
 
+// Ensure window.location has a valid HTTP origin for relative axios/fetch requests
+if (typeof window !== 'undefined' && (!window.location.origin || window.location.origin === 'null')) {
+  try {
+    window.location.href = 'http://localhost:5173/'
+  } catch {
+    // Ignore if location is read-only
+  }
+}
+
 // Polyfill Node.prototype.nodeName getter so DOMPurify accurately identifies element and text nodes in happy-dom
 Object.defineProperty(Node.prototype, 'nodeName', {
   get(this: Node) {
@@ -48,6 +57,45 @@ Object.defineProperty(Node.prototype, 'nodeName', {
   },
   configurable: true,
 })
+
+// Mock CanvasRenderingContext2D for headless vis-network graph tests
+if (typeof HTMLCanvasElement !== 'undefined') {
+  HTMLCanvasElement.prototype.getContext = function (type: string) {
+    if (type === '2d') {
+      return {
+        canvas: this,
+        save: () => {},
+        restore: () => {},
+        scale: () => {},
+        rotate: () => {},
+        translate: () => {},
+        transform: () => {},
+        setTransform: () => {},
+        resetTransform: () => {},
+        clearRect: () => {},
+        fillRect: () => {},
+        strokeRect: () => {},
+        beginPath: () => {},
+        closePath: () => {},
+        moveTo: () => {},
+        lineTo: () => {},
+        arc: () => {},
+        fill: () => {},
+        stroke: () => {},
+        measureText: (text: string) => ({ width: (text || '').length * 8 }),
+        fillText: () => {},
+        strokeText: () => {},
+        drawImage: () => {},
+        createLinearGradient: () => ({ addColorStop: () => {} }),
+        createRadialGradient: () => ({ addColorStop: () => {} }),
+        createPattern: () => null,
+        getImageData: () => ({ data: [] }),
+        putImageData: () => {},
+      } as unknown as CanvasRenderingContext2D
+    }
+    return null
+  }
+}
 
 // 2. Register Bun loader plugin for .vue SFC files
 plugin({
