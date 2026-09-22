@@ -684,7 +684,10 @@ const fetchArticles = async () => {
     // Merge, deduplicating by ID (active takes precedence)
     const seen = new Set(active.map((a) => a.ID))
     allArticles.value = [...active, ...archived.filter((a) => !seen.has(a.ID))]
-  } catch (err) {
+  } catch (err: any) {
+    if (axios.isCancel(err) || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') {
+      return
+    }
     console.error('Failed to fetch articles', err)
     articleError.value = 'Failed to fetch articles'
   }

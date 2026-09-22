@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -84,15 +85,17 @@ func configureSQLite(sqlDB *sql.DB, isMemory bool) {
 		logger.Warn("Failed to set PRAGMA foreign_keys=ON", zap.Error(err))
 	}
 
-	sqlDB.SetMaxOpenConns(1)
-	sqlDB.SetMaxIdleConns(1)
+	maxConns := max(4, runtime.NumCPU())
+	sqlDB.SetMaxOpenConns(maxConns)
+	sqlDB.SetMaxIdleConns(2)
 }
 
 func initDB() *gorm.DB {
 	dataDirectory := getDataDir()
 	dbPath := filepath.Join(dataDirectory, "data.sqlite")
+	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
 
-	sqlDB, err := sql.Open("sqlite", dbPath)
+	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		if logger != nil {
 			logger.Fatal("sql.Open failed", zap.Error(err))
