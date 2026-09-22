@@ -12,7 +12,8 @@
         v-for="link in backlinks"
         :key="link.ID"
         :to="`/articles/${link.ID}`"
-        class="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-gray-700 dark:text-gray-300 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-white/[0.04] transition-all group"
+        :data-id="link.ID"
+        class="backlink-row flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-gray-700 dark:text-gray-300 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-white/[0.04] transition-all group"
       >
         <span class="truncate pr-2 font-medium">{{ link.title }}</span>
         <span class="text-gray-400 text-[10px] group-hover:translate-x-0.5 transition-transform">&rarr;</span>

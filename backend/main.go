@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -85,9 +84,8 @@ func configureSQLite(sqlDB *sql.DB, isMemory bool) {
 		logger.Warn("Failed to set PRAGMA foreign_keys=ON", zap.Error(err))
 	}
 
-	maxConns := max(4, runtime.NumCPU())
-	sqlDB.SetMaxOpenConns(maxConns)
-	sqlDB.SetMaxIdleConns(2)
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
 }
 
 func initDB() *gorm.DB {
@@ -111,7 +109,12 @@ func initDB() *gorm.DB {
 		}
 		panic(err)
 	}
-	_ = handlers.DeduplicateArticleLinks(db, logger)
+	if err := handlers.DeduplicateArticleLinks(db, logger); err != nil {
+		if logger != nil {
+			logger.Fatal("Failed to deduplicate article_links", zap.Error(err))
+		}
+		panic(err)
+	}
 	db.AutoMigrate(&Article{}, &ArticleLink{}, &repository.PipelineMetric{},
 		&ArticleStatusType{}, &ArticleStatus{}, &APIKey{})
 	handlers.EnsureFTS(db, logger)
@@ -147,7 +150,12 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		if err != nil {
 			panic(err)
 		}
-		_ = handlers.DeduplicateArticleLinks(db, logger)
+		if err := handlers.DeduplicateArticleLinks(db, logger); err != nil {
+			if logger != nil {
+				logger.Fatal("Failed to deduplicate article_links", zap.Error(err))
+			}
+			panic(err)
+		}
 		db.AutoMigrate(&Article{}, &ArticleLink{}, &repository.PipelineMetric{},
 			&ArticleStatusType{}, &ArticleStatus{}, &APIKey{})
 

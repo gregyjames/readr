@@ -38,7 +38,7 @@ test-frontend:
 	@if command -v bun >/dev/null 2>&1; then \
 		(cd frontend && bun test); \
 	else \
-		(cd frontend && npm test); \
+		(cd frontend && npx bun test); \
 	fi
 
 typecheck:

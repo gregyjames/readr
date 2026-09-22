@@ -54,11 +54,12 @@ watch(() => props.show, (isVisible) => {
 })
 
 const filteredArticles = computed(() => {
-  const query = searchQuery.value.toLowerCase().trim()
-  if (!query) return props.articles.slice(0, 10)
-  const currentNum = Number(props.currentId)
-  return props.articles.filter(a =>
-    a.title.toLowerCase().includes(query) && a.ID !== currentNum
-  )
+	const query = searchQuery.value.toLowerCase().trim()
+	const currentNum = Number(props.currentId)
+	const available = props.articles.filter((a) => a.ID !== currentNum)
+	if (!query) {
+		return available.slice(0, 10)
+	}
+	return available.filter((a) => a.title.toLowerCase().includes(query))
 })
 </script>

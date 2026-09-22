@@ -15,6 +15,7 @@ var (
 	revokedTokensMu sync.RWMutex
 	revokedTokens   = make(map[string]time.Time)
 )
+
 func revokeSessionToken(token string) {
 	if token == "" {
 		return

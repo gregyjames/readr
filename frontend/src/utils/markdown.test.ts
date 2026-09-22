@@ -118,15 +118,14 @@ And a real [[Real Note|Link]].`;
     // Keeps plain text and <mark> tags
     expect(sanitizeSearchExcerpt('Found in <mark>Kubernetes</mark> clusters')).toBe('Found in <mark>Kubernetes</mark> clusters');
 
-    // Strips script tags
-    expect(sanitizeSearchExcerpt('<script>alert("xss")</script>Hello <mark>World</mark>')).toBe('Hello <mark>World</mark>');
+    // Strips script tags and escapes unsafe HTML
+    expect(sanitizeSearchExcerpt('<script>alert("xss")</script>Hello <mark>World</mark>')).toBe('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;Hello <mark>World</mark>');
 
-    // Strips onerror handlers on img
-    expect(sanitizeSearchExcerpt('<img src="x" onerror="alert(1)">Result <mark>Text</mark>')).toBe('Result <mark>Text</mark>');
+    // Strips onerror handlers on img and escapes
+    expect(sanitizeSearchExcerpt('<img src="x" onerror="alert(1)">Result <mark>Text</mark>')).toBe('&lt;img src=&quot;x&quot; onerror=&quot;alert(1)&quot;&gt;Result <mark>Text</mark>');
 
     // Strips attributes on mark tags
     expect(sanitizeSearchExcerpt('<mark onclick="alert(1)" class="evil">Highlighted</mark>')).toBe('<mark>Highlighted</mark>');
-
     // Handles empty or falsy inputs
     expect(sanitizeSearchExcerpt('')).toBe('');
     expect(sanitizeSearchExcerpt(undefined)).toBe('');

@@ -100,12 +100,13 @@ func TestGetMOCProgressExcludesDeletedMembers(t *testing.T) {
 	}
 }
 
-// article_links has no unique constraint, so a duplicated edge must not inflate
-// the member count.
+// TestGetMOCProgressDedupesDuplicateLinks verifies that even if legacy unconstrained
+// duplicate edges exist, the SQL aggregation query correctly dedupes them.
 func TestGetMOCProgressDedupesDuplicateLinks(t *testing.T) {
 	_, db := setupStatusTestRepo(t)
 	moc := seedMOCVault(t, db, 100, 101)
 
+	_ = db.Exec("DROP INDEX IF EXISTS idx_article_links_source_target").Error
 	if err := db.Exec("INSERT INTO article_links (source_id, target_id) VALUES (?, ?)", moc, 101).Error; err != nil {
 		t.Fatal(err)
 	}

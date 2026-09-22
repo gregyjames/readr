@@ -98,8 +98,8 @@ func (GormArticle) TableName() string {
 
 type GormArticleLink struct {
 	ID       int64 `gorm:"primaryKey" json:"id"`
-	SourceID int64 `gorm:"index;index:idx_article_links_source_target" json:"sourceId"`
-	TargetID int64 `gorm:"index;index:idx_article_links_source_target" json:"targetId"`
+	SourceID int64 `gorm:"index;index:idx_article_links_source_target,unique" json:"sourceId"`
+	TargetID int64 `gorm:"index;index:idx_article_links_source_target,unique" json:"targetId"`
 }
 
 func (GormArticleLink) TableName() string {

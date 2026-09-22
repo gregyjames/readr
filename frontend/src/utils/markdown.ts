@@ -140,13 +140,20 @@ export function sanitizeSearchExcerpt(rawHtml?: string): string {
     }
   }
 
-  // Fallback for non-DOM test/SSR environments
-  return rawHtml
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
-    .replace(/<img\b[^>]*>/gi, '')
-    .replace(/<(\/?)mark\b[^>]*>/gi, '<$1mark>')
-    .replace(/<(?!mark\b|\/mark\b)[^>]*>/gi, '');
-}
+  // Fallback for non-DOM test/SSR environments: escape HTML safely but preserve <mark> and </mark>
+  // Fallback for non-DOM test/SSR environments: preserve <mark> (with any attributes stripped) and escape rest
+  const unmark = rawHtml
+    .replace(/<mark\b[^>]*?>/gi, '__MARK_START__')
+    .replace(/<\/mark>/gi, '__MARK_END__');
 
+  const escaped = unmark
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
+  return escaped
+    .replace(/__MARK_START__/g, '<mark>')
+    .replace(/__MARK_END__/g, '</mark>');
+}
