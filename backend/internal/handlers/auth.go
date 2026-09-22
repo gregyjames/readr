@@ -3,12 +3,37 @@ package handlers
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"example.com/backend/internal/auth"
 	"example.com/backend/internal/repository"
 	"github.com/gofiber/fiber/v2"
 )
+
+var (
+	revokedTokensMu sync.RWMutex
+	revokedTokens   = make(map[string]time.Time)
+)
+func revokeSessionToken(token string) {
+	if token == "" {
+		return
+	}
+	cloned := strings.Clone(token)
+	revokedTokensMu.Lock()
+	revokedTokens[cloned] = time.Now()
+	revokedTokensMu.Unlock()
+}
+
+func isSessionTokenRevoked(token string) bool {
+	if token == "" {
+		return false
+	}
+	revokedTokensMu.RLock()
+	_, exists := revokedTokens[token]
+	revokedTokensMu.RUnlock()
+	return exists
+}
 
 func ExtractSessionToken(c *fiber.Ctx) string {
 	var token string
@@ -86,11 +111,19 @@ func AuthMiddleware(h *HandlerContext) fiber.Handler {
 			return c.Next()
 		}
 
+		if h.SettingsStore != nil && h.SettingsStore.IsDegraded() {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"error": "Configuration corrupted; access temporarily locked for security",
+			})
+		}
 		current := h.SettingsStore.Get()
 		pwdHash := current.PasswordHash
 		secret := current.SessionSecret
 
 		token := ExtractSessionToken(c)
+		if isSessionTokenRevoked(token) {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Session revoked"})
+		}
 
 		// If no password is set, allow access immediately without blocking on key lookup
 		if pwdHash == "" {
@@ -214,6 +247,10 @@ func RegisterAuth(router fiber.Router, h *HandlerContext) {
 	})
 
 	router.Post("/auth/logout", func(c *fiber.Ctx) error {
+		token := ExtractSessionToken(c)
+		if token != "" {
+			revokeSessionToken(token)
+		}
 		ClearSessionCookie(c)
 		return c.JSON(fiber.Map{"status": "success"})
 	})

@@ -69,3 +69,36 @@ func TestSettingsHTTPRouteWithCorruptFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
+
+func TestSettingsStoreColdStartCorruptFile_BlocksAuth(t *testing.T) {
+	tempDir := t.TempDir()
+	logger := zap.NewNop()
+
+	// Pre-create a corrupt settings.json before NewSettingsStore (cold start)
+	settingsPath := filepath.Join(tempDir, "settings.json")
+	require.NoError(t, os.WriteFile(settingsPath, []byte("invalid-json-content"), 0600))
+
+	store := NewSettingsStore(tempDir, logger)
+	assert.True(t, store.IsDegraded(), "cold start on corrupt settings must be marked degraded")
+
+	// Set up App with AuthMiddleware
+	hCtx := &HandlerContext{
+		DataDir:       tempDir,
+		Logger:        logger,
+		SettingsStore: store,
+	}
+
+	app := fiber.New()
+	api := app.Group("/api")
+	api.Use(AuthMiddleware(hCtx))
+
+	api.Get("/protected-vault-data", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"data": "secret"})
+	})
+
+	// Request without auth must NOT bypass authentication; it must receive 503
+	req := httptest.NewRequest("GET", "/api/protected-vault-data", nil)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, "must deny access when configuration is degraded")
+}

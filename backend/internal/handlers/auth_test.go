@@ -65,7 +65,7 @@ func TestAuthLogoutDoesNotInvalidateOtherSessions(t *testing.T) {
 	require.NoError(t, err)
 
 	// Generate tokens for two distinct sessions (e.g., Device A and Device B)
-	tokenA := auth.SignSession(secret, time.Now())
+	tokenA := auth.SignSession(secret, time.Now().Add(-time.Minute))
 	tokenB := auth.SignSession(secret, time.Now())
 
 	// Verify both tokens access protected resource
@@ -102,9 +102,15 @@ func TestAuthLogoutDoesNotInvalidateOtherSessions(t *testing.T) {
 			break
 		}
 	}
-	if sessionCookie != nil {
-		assert.True(t, sessionCookie.Value == "" || sessionCookie.Expires.Before(time.Now()) || sessionCookie.MaxAge < 0, "session cookie must be expired or emptied")
-	}
+	require.NotNil(t, sessionCookie, "readr_session clearing cookie must be present")
+	assert.True(t, sessionCookie.Value == "" || sessionCookie.Expires.Before(time.Now()) || sessionCookie.MaxAge < 0, "session cookie must be expired or emptied")
+
+	// 3. Verify Device A's tokenA is now rejected with 401
+	reqAAfter := httptest.NewRequest("GET", "/api/protected", nil)
+	reqAAfter.Header.Set("Authorization", "Bearer "+tokenA)
+	respAAfter, err := app.Test(reqAAfter, 10000)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, respAAfter.StatusCode, "revoked tokenA must receive 401")
 
 	// 3. Device B's session MUST still be valid (no global session invalidation DoS)
 	reqBAfter := httptest.NewRequest("GET", "/api/protected", nil)

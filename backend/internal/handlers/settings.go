@@ -28,10 +28,11 @@ type ServerSettings struct {
 }
 
 type SettingsStore struct {
-	mu       sync.RWMutex
-	dataDir  string
-	settings ServerSettings
-	logger   *zap.Logger
+	mu         sync.RWMutex
+	dataDir    string
+	settings   ServerSettings
+	logger     *zap.Logger
+	loadFailed bool
 }
 
 func NewSettingsStore(dataDir string, logger *zap.Logger) *SettingsStore {
@@ -66,12 +67,14 @@ func (s *SettingsStore) loadFromDisk() ServerSettings {
 		if os.IsNotExist(err) {
 			defaults.SessionSecret, _ = auth.GenerateRandomSecret()
 			_ = s.saveToDisk(defaults)
+			s.loadFailed = false
 			return defaults
 		}
 		s.logger.Error("Failed to read settings file", zap.String("path", settingsPath), zap.Error(err))
 		if s.settings.SessionSecret != "" {
 			return s.settings
 		}
+		s.loadFailed = true
 		return defaults
 	}
 
@@ -81,8 +84,10 @@ func (s *SettingsStore) loadFromDisk() ServerSettings {
 		if s.settings.SessionSecret != "" {
 			return s.settings
 		}
+		s.loadFailed = true
 		return defaults
 	}
+	s.loadFailed = false
 	if res.Model == "" {
 		res.Model = "openai/gpt-4o-mini"
 	}
@@ -104,6 +109,12 @@ func (s *SettingsStore) saveToDisk(settings ServerSettings) error {
 		return err
 	}
 	return os.Rename(tmpPath, settingsPath)
+}
+
+func (s *SettingsStore) IsDegraded() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.loadFailed
 }
 
 func (s *SettingsStore) Get() ServerSettings {
