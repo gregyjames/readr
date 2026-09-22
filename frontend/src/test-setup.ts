@@ -37,6 +37,31 @@ if (typeof window !== 'undefined' && (!window.location.origin || window.location
   }
 }
 
+// Suppress expected unmocked network error logs during component mount tests
+const originalConsoleError = console.error
+console.error = (...args: unknown[]) => {
+  const first = typeof args[0] === 'string' ? args[0] : ''
+  if (
+    first.includes('Failed to load local graph') ||
+    first.includes('Failed to load graph') ||
+    first.includes('Failed to save reading progress') ||
+    first.includes('Search failed') ||
+    first.includes('Failed to fetch templates')
+  ) {
+    return
+  }
+  originalConsoleError(...args)
+}
+
+const originalConsoleWarn = console.warn
+console.warn = (...args: unknown[]) => {
+  const first = typeof args[0] === 'string' ? args[0] : ''
+  if (first.includes('EventSource failed')) {
+    return
+  }
+  originalConsoleWarn(...args)
+}
+
 // Mock EventSource for Server-Sent Events tests
 if (typeof EventSource === 'undefined') {
   class MockEventSource {
