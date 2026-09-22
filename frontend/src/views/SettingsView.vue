@@ -374,11 +374,15 @@ onMounted(async () => {
   }
   fetchModels()
   fetchDiagnostics()
-  fetchAPIKeys()
+  if (authState.isAuthenticated) {
+    fetchAPIKeys()
+  }
 })
 
-watch(() => authState.isAuthenticated, () => {
-  fetchAPIKeys()
+watch(() => authState.isAuthenticated, (isAuth) => {
+  if (isAuth) {
+    fetchAPIKeys()
+  }
 })
 
 onUnmounted(() => {
@@ -590,7 +594,7 @@ const executeLibrarian = async () => {
           </svg>
           Pipeline Diagnostics
           <span
-            v-if="diagnosticsData && ((diagnosticsData.queue.total_in_flight ?? diagnosticsData.queue.pending_jobs) > 0)"
+            v-if="diagnosticsData?.queue && ((diagnosticsData.queue.total_in_flight ?? diagnosticsData.queue.pending_jobs) > 0)"
             class="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-emerald-500 text-white"
           >
             {{ diagnosticsData.queue.total_in_flight ?? diagnosticsData.queue.pending_jobs }}

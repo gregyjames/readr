@@ -37,6 +37,20 @@ if (typeof window !== 'undefined' && (!window.location.origin || window.location
   }
 }
 
+// Mock EventSource for Server-Sent Events tests
+if (typeof EventSource === 'undefined') {
+  class MockEventSource {
+    url: string
+    onmessage: ((event: { data: string }) => void) | null = null
+    onerror: (() => void) | null = null
+    constructor(url: string) {
+      this.url = url
+    }
+    close() {}
+  }
+  globalThis.EventSource = MockEventSource as unknown as typeof EventSource
+}
+
 // Polyfill Node.prototype.nodeName getter so DOMPurify accurately identifies element and text nodes in happy-dom
 Object.defineProperty(Node.prototype, 'nodeName', {
   get(this: Node) {
