@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -68,17 +69,41 @@ func getDataDir() string {
 	return "./data"
 }
 
+func configureSQLite(sqlDB *sql.DB, isMemory bool) {
+	if !isMemory {
+		if _, err := sqlDB.Exec("PRAGMA journal_mode=WAL;"); err != nil && logger != nil {
+			logger.Warn("Failed to set PRAGMA journal_mode=WAL", zap.Error(err))
+		}
+	}
+	if _, err := sqlDB.Exec("PRAGMA busy_timeout=5000;"); err != nil && logger != nil {
+		logger.Warn("Failed to set PRAGMA busy_timeout=5000", zap.Error(err))
+	}
+	if _, err := sqlDB.Exec("PRAGMA synchronous=NORMAL;"); err != nil && logger != nil {
+		logger.Warn("Failed to set PRAGMA synchronous=NORMAL", zap.Error(err))
+	}
+	if _, err := sqlDB.Exec("PRAGMA foreign_keys=ON;"); err != nil && logger != nil {
+		logger.Warn("Failed to set PRAGMA foreign_keys=ON", zap.Error(err))
+	}
+
+	maxConns := max(4, runtime.NumCPU())
+	sqlDB.SetMaxOpenConns(maxConns)
+	sqlDB.SetMaxIdleConns(2)
+}
+
 func initDB() *gorm.DB {
 	dataDirectory := getDataDir()
 	dbPath := filepath.Join(dataDirectory, "data.sqlite")
+	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
 
-	sqlDB, err := sql.Open("sqlite", dbPath)
+	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		if logger != nil {
 			logger.Fatal("sql.Open failed", zap.Error(err))
 		}
 		panic(err)
 	}
+
+	configureSQLite(sqlDB, false)
 
 	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{})
 	if err != nil {
@@ -87,7 +112,12 @@ func initDB() *gorm.DB {
 		}
 		panic(err)
 	}
-
+	if err := handlers.DeduplicateArticleLinks(db, logger); err != nil {
+		if logger != nil {
+			logger.Fatal("Failed to deduplicate article_links", zap.Error(err))
+		}
+		panic(err)
+	}
 	db.AutoMigrate(&Article{}, &ArticleLink{}, &repository.PipelineMetric{},
 		&ArticleStatusType{}, &ArticleStatus{}, &APIKey{})
 	handlers.EnsureFTS(db, logger)
@@ -118,8 +148,15 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		if err != nil {
 			panic(err)
 		}
+		configureSQLite(sqlDB, true)
 		db, err = gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{})
 		if err != nil {
+			panic(err)
+		}
+		if err := handlers.DeduplicateArticleLinks(db, logger); err != nil {
+			if logger != nil {
+				logger.Fatal("Failed to deduplicate article_links", zap.Error(err))
+			}
 			panic(err)
 		}
 		db.AutoMigrate(&Article{}, &ArticleLink{}, &repository.PipelineMetric{},

@@ -79,10 +79,11 @@ func extractCandidateKeywords(title, body string, maxKeywords int) []string {
 type GormArticle struct {
 	gorm.Model
 	ID              int64        `gorm:"primaryKey"`
-	Article         string       `json:"article"`
+	Article         string       `gorm:"index" json:"article"`
 	Image           string       `json:"image"`
-	Title           string       `json:"title"`
+	Title           string       `gorm:"index" json:"title"`
 	Tags            string       `json:"tags"`
+	SourceURL       string       `gorm:"index" json:"source_url"`
 	IsArchived      bool         `gorm:"default:false;index" json:"is_archived"`
 	WordCount       int          `gorm:"default:0" json:"word_count"`
 	ReadingStatus   string       `gorm:"-" json:"reading_status"`
@@ -97,8 +98,8 @@ func (GormArticle) TableName() string {
 
 type GormArticleLink struct {
 	ID       int64 `gorm:"primaryKey" json:"id"`
-	SourceID int64 `json:"sourceId"`
-	TargetID int64 `json:"targetId"`
+	SourceID int64 `gorm:"index;index:idx_article_links_source_target,unique" json:"sourceId"`
+	TargetID int64 `gorm:"index;index:idx_article_links_source_target,unique" json:"targetId"`
 }
 
 func (GormArticleLink) TableName() string {
@@ -130,7 +131,7 @@ func NewGormRepository(db *gorm.DB) *GormRepository {
 
 func (r *GormRepository) FindBySourceURL(ctx context.Context, sourceURL string) (*ArticleRecord, error) {
 	var a GormArticle
-	if err := r.db.WithContext(ctx).Where("title = ?", sourceURL).First(&a).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("(source_url = ? OR title = ?) AND deleted_at IS NULL", sourceURL, sourceURL).First(&a).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
@@ -142,7 +143,7 @@ func (r *GormRepository) FindBySourceURL(ctx context.Context, sourceURL string) 
 		ImagePath:   a.Image,
 		FilePath:    a.Article,
 		Tags:        a.Tags,
-		SourceURL:   sourceURL,
+		SourceURL:   a.SourceURL,
 		IsArchived:  a.IsArchived,
 		WordCount:   a.WordCount,
 		ReadingTime: ReadingTimeFromWords(a.WordCount),
@@ -163,6 +164,7 @@ func (r *GormRepository) FindByID(ctx context.Context, id int64) (*ArticleRecord
 		ImagePath:   a.Image,
 		FilePath:    a.Article,
 		Tags:        a.Tags,
+		SourceURL:   a.SourceURL,
 		IsArchived:  a.IsArchived,
 		WordCount:   a.WordCount,
 		ReadingTime: ReadingTimeFromWords(a.WordCount),
@@ -176,6 +178,7 @@ func (r *GormRepository) SaveArticle(ctx context.Context, a *ArticleRecord) erro
 		Image:      a.ImagePath,
 		Article:    a.FilePath,
 		Tags:       a.Tags,
+		SourceURL:  a.SourceURL,
 		IsArchived: a.IsArchived,
 		WordCount:  a.WordCount,
 	}

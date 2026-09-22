@@ -320,3 +320,55 @@ func TestMigrateLegacyWordCounts(t *testing.T) {
 		t.Errorf("expected updated DB word_count 350, got %d", updated.WordCount)
 	}
 }
+
+func TestDeduplicateArticleLinks(t *testing.T) {
+	tempDir := t.TempDir()
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "dedupe_test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create table manually without unique constraint to simulate legacy database with duplicate edges
+	err = db.Exec(`CREATE TABLE article_links (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		source_id INTEGER,
+		target_id INTEGER
+	)`).Error
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert duplicate edges:
+	// source 1 -> target 2 (twice)
+	// source 1 -> target 3 (once)
+	// source 2 -> target 3 (three times)
+	db.Exec("INSERT INTO article_links (source_id, target_id) VALUES (1, 2)")
+	db.Exec("INSERT INTO article_links (source_id, target_id) VALUES (1, 2)")
+	db.Exec("INSERT INTO article_links (source_id, target_id) VALUES (1, 3)")
+	db.Exec("INSERT INTO article_links (source_id, target_id) VALUES (2, 3)")
+	db.Exec("INSERT INTO article_links (source_id, target_id) VALUES (2, 3)")
+	db.Exec("INSERT INTO article_links (source_id, target_id) VALUES (2, 3)")
+
+	var initialCount int64
+	db.Table("article_links").Count(&initialCount)
+	if initialCount != 6 {
+		t.Fatalf("expected 6 initial rows, got %d", initialCount)
+	}
+
+	// Run DeduplicateArticleLinks
+	logger := zap.NewNop()
+	if err := DeduplicateArticleLinks(db, logger); err != nil {
+		t.Fatalf("DeduplicateArticleLinks failed: %v", err)
+	}
+
+	var afterCount int64
+	db.Table("article_links").Count(&afterCount)
+	if afterCount != 3 {
+		t.Fatalf("expected 3 rows after deduplication, got %d", afterCount)
+	}
+
+	// Now AutoMigrate with unique constraint must succeed without errors!
+	if err := db.AutoMigrate(&repository.GormArticleLink{}); err != nil {
+		t.Fatalf("AutoMigrate with unique constraint failed: %v", err)
+	}
+}

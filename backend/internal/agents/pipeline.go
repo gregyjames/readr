@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"example.com/backend/internal/ingest"
+	"example.com/backend/internal/markdown"
 	"example.com/backend/internal/repository"
 	"github.com/hashicorp/go-retryablehttp"
 	"go.uber.org/zap"
@@ -102,12 +103,11 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	// Separate frontmatter and body
 	frontmatter := ""
 	body := content
-	if strings.HasPrefix(content, "---\n") {
-		parts := strings.SplitN(content, "---\n", 3)
-		if len(parts) == 3 {
-			frontmatter = "---\n" + parts[1] + "---\n"
-			body = parts[2]
+	if doc, err := markdown.SplitDocument(content); err == nil && doc.HasFrontmatter {
+		if doc.RawYAML != "" {
+			frontmatter = "---\n" + doc.RawYAML + "\n---\n"
 		}
+		body = doc.Body
 	}
 
 	sourceURL := extractSourceURLFromFrontmatter(frontmatter)

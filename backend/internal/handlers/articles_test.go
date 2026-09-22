@@ -11,9 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
 	"github.com/gofiber/fiber/v2"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -478,5 +481,225 @@ func TestEditArticle_UpdatesWordCount_And_RollsBack(t *testing.T) {
 	restoredBytes, _ := os.ReadFile(filePath)
 	if string(restoredBytes) != currentContentOnDisk {
 		t.Errorf("expected disk file to be restored to %q, got %q", currentContentOnDisk, string(restoredBytes))
+	}
+}
+
+func TestEditArticle_UpdatesFrontmatterAndSyncsLinks(t *testing.T) {
+	tempDir := t.TempDir()
+	articlesDir := filepath.Join(tempDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0755)
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	require.NoError(t, db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}))
+
+	// Seed target articles for wikilinks
+	db.Create(&repository.GormArticle{ID: 10, Title: "Golang Concurrency"})
+	db.Create(&repository.GormArticle{ID: 20, Title: "Distributed Systems"})
+
+	// Seed source article
+	filePath := filepath.Join(articlesDir, "Source.md")
+	initialContent := "---\ntitle: Old Title\ntags: [old-tag]\n---\n# Old Title\nProse content."
+	_ = os.WriteFile(filePath, []byte(initialContent), 0644)
+
+	db.Create(&repository.GormArticle{
+		ID:      50,
+		Title:   "Old Title",
+		Article: "/articles/Source.md",
+		Tags:    "old-tag",
+	})
+
+	app := fiber.New()
+	api := app.Group("/api")
+	hCtx := &HandlerContext{
+		DB:      db,
+		DataDir: tempDir,
+		Logger:  zap.NewNop(),
+	}
+	RegisterArticles(api, hCtx)
+
+	// Edit with new frontmatter and multiple wikilinks (including duplicate reference)
+	editedContent := "---\ntitle: Modern Distributed Go\ntags: [golang, distributed, consensus]\n---\n# Modern Distributed Go\nSee [[Golang Concurrency]] and [[Distributed Systems|DistSys]], plus a second reference to [[Golang Concurrency]]."
+	bodyBytes, _ := json.Marshal(map[string]string{"content": editedContent})
+	req := httptest.NewRequest("POST", "/api/edit/50", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatalf("edit request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	// 1. Verify DB title and tags were synchronized from frontmatter
+	var updated repository.GormArticle
+	db.First(&updated, 50)
+	if updated.Title != "Modern Distributed Go" {
+		t.Errorf("expected Title 'Modern Distributed Go', got %q", updated.Title)
+	}
+	if !strings.Contains(updated.Tags, "golang") || !strings.Contains(updated.Tags, "distributed") {
+		t.Errorf("expected updated tags, got %q", updated.Tags)
+	}
+
+	// 2. Verify links were synchronized and deduplicated (target 10 and target 20)
+	var links []repository.GormArticleLink
+	db.Where("source_id = ?", 50).Find(&links)
+	if len(links) != 2 {
+		t.Fatalf("expected 2 deduplicated links, got %d", len(links))
+	}
+	targetIDs := map[int64]bool{links[0].TargetID: true, links[1].TargetID: true}
+	if !targetIDs[10] || !targetIDs[20] {
+		t.Errorf("expected links to targets 10 and 20, got %+v", links)
+	}
+
+	// 3. Verify disk file content was updated atomically
+	diskBytes, _ := os.ReadFile(filePath)
+	if string(diskBytes) != editedContent {
+		t.Errorf("expected disk file to match edited content")
+	}
+
+	// 4. Edit with empty tags: [] to verify tags are cleared in DB
+	clearTagsContent := "---\ntitle: Modern Distributed Go\ntags: []\n---\n# Modern Distributed Go\nContent without tags."
+	clearBodyBytes, _ := json.Marshal(map[string]string{"content": clearTagsContent})
+	reqClear := httptest.NewRequest("POST", "/api/edit/50", bytes.NewReader(clearBodyBytes))
+	reqClear.Header.Set("Content-Type", "application/json")
+	respClear, err := app.Test(reqClear, 5000)
+	require.NoError(t, err)
+	defer respClear.Body.Close()
+	require.Equal(t, 200, respClear.StatusCode)
+
+	var clearedArticle repository.GormArticle
+	db.First(&clearedArticle, 50)
+	if clearedArticle.Tags != "" {
+		t.Errorf("expected tags to be cleared, got %q", clearedArticle.Tags)
+	}
+}
+
+func TestAddArticle_Integration(t *testing.T) {
+	tempDir := t.TempDir()
+	articlesDir := filepath.Join(tempDir, "articles")
+	_ = os.MkdirAll(articlesDir, 0755)
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "add_test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	require.NoError(t, db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.PipelineMetric{}))
+	EnsureFTS(db, zap.NewNop())
+
+	repo := repository.NewGormRepository(db)
+	fetcher := ingest.NewHTTPFetcher(10 * time.Second)
+	extractor := ingest.NewContentExtractor()
+	storage := ingest.NewDiskStorage(tempDir)
+	ingester := ingest.NewIngester(fetcher, extractor, storage, repo)
+	settingsStore := NewSettingsStore(tempDir, zap.NewNop())
+
+	hCtx := &HandlerContext{
+		DB:            db,
+		DataDir:       tempDir,
+		Logger:        zap.NewNop(),
+		Repo:          repo,
+		Ingester:      ingester,
+		SettingsStore: settingsStore,
+	}
+
+	app := fiber.New()
+	api := app.Group("/api")
+	RegisterArticles(api, hCtx)
+
+	// 1. Invalid JSON returns 400
+	reqBadJSON := httptest.NewRequest("POST", "/api/add", bytes.NewReader([]byte("{invalid-json")))
+	reqBadJSON.Header.Set("Content-Type", "application/json")
+	respBadJSON, err := app.Test(reqBadJSON, 5000)
+	if err != nil || respBadJSON.StatusCode != 400 {
+		t.Fatalf("expected 400 for invalid JSON, got %d, err: %v", respBadJSON.StatusCode, err)
+	}
+
+	// 2. Empty URL returns 400
+	bodyEmpty, _ := json.Marshal(map[string]string{"url": ""})
+	reqEmpty := httptest.NewRequest("POST", "/api/add", bytes.NewReader(bodyEmpty))
+	reqEmpty.Header.Set("Content-Type", "application/json")
+	respEmpty, err := app.Test(reqEmpty, 5000)
+	if err != nil || respEmpty.StatusCode != 400 {
+		t.Fatalf("expected 400 for empty URL, got %d, err: %v", respEmpty.StatusCode, err)
+	}
+
+	// 3. Mock external web page server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<!DOCTYPE html>
+<html>
+<head><title>Distributed Storage Architecture</title></head>
+<body>
+  <article>
+    <h1>Distributed Storage Architecture</h1>
+    <p>Consensus protocols and Raft quorum ensure reliable distributed replication across clusters.</p>
+  </article>
+</body>
+</html>`))
+	}))
+	defer server.Close()
+
+	// 4. Successful ingestion
+	addPayload, _ := json.Marshal(map[string]interface{}{
+		"url":  server.URL + "/architecture",
+		"tags": []string{"distributed", "storage"},
+	})
+	reqAdd := httptest.NewRequest("POST", "/api/add", bytes.NewReader(addPayload))
+	reqAdd.Header.Set("Content-Type", "application/json")
+	respAdd, err := app.Test(reqAdd, 10000)
+	if err != nil || respAdd.StatusCode != 200 {
+		t.Fatalf("expected 200 for valid ingest, got %d, err: %v", respAdd.StatusCode, err)
+	}
+
+	var addResp struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+		ID      int64  `json:"id"`
+	}
+	_ = json.NewDecoder(respAdd.Body).Decode(&addResp)
+	if addResp.Status != "success" || addResp.ID <= 0 {
+		t.Fatalf("expected success with valid ID, got %+v", addResp)
+	}
+
+	// Verify database record
+	var created repository.GormArticle
+	if err := db.First(&created, addResp.ID).Error; err != nil {
+		t.Fatalf("failed to query created article: %v", err)
+	}
+	if !strings.Contains(created.Title, "Distributed Storage") {
+		t.Errorf("expected Title to contain 'Distributed Storage', got %q", created.Title)
+	}
+
+	// Verify on-disk file
+	diskPath := filepath.Join(tempDir, strings.TrimPrefix(created.Article, "/"))
+	diskContent, err := os.ReadFile(diskPath)
+	if err != nil {
+		t.Fatalf("failed to read created markdown file: %v", err)
+	}
+	if !strings.Contains(string(diskContent), "Consensus protocols") {
+		t.Errorf("expected file to contain extracted prose")
+	}
+
+	// 5. Duplicate ingestion returns exists status with matching ID
+	reqDup := httptest.NewRequest("POST", "/api/add", bytes.NewReader(addPayload))
+	reqDup.Header.Set("Content-Type", "application/json")
+	respDup, err := app.Test(reqDup, 10000)
+	if err != nil || respDup.StatusCode != 200 {
+		t.Fatalf("expected 200 for duplicate ingest, got %d, err: %v", respDup.StatusCode, err)
+	}
+
+	var dupResp struct {
+		Status string `json:"status"`
+		ID     int64  `json:"id"`
+	}
+	_ = json.NewDecoder(respDup.Body).Decode(&dupResp)
+	if dupResp.Status != "exists" || dupResp.ID != addResp.ID {
+		t.Errorf("expected duplicate response with id %d, got %+v", addResp.ID, dupResp)
 	}
 }

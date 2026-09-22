@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"example.com/backend/internal/ingest"
+	"example.com/backend/internal/markdown"
 	"example.com/backend/internal/repository"
 	"go.uber.org/zap"
-	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
 
@@ -134,27 +134,45 @@ func MigrateLegacyArticleTags(db *gorm.DB, dataDir string, logger *zap.Logger) (
 		// Update markdown frontmatter on disk if file exists
 		if a.Article != "" {
 			filePath := filepath.Join(dataDir, strings.TrimPrefix(a.Article, "/"))
-			if contentBytes, err := os.ReadFile(filePath); err == nil {
-				content := string(contentBytes)
-				if strings.HasPrefix(content, "---\n") {
-					parts := strings.SplitN(content[4:], "\n---\n", 2)
-					if len(parts) == 2 {
-						frontmatterRaw := parts[0]
-						body := parts[1]
+			info, statErr := os.Stat(filePath)
+			if statErr != nil {
+				continue
+			}
+			contentBytes, err := os.ReadFile(filePath)
+			if err != nil {
+				continue
+			}
+			content := string(contentBytes)
+			doc, err := markdown.SplitDocument(content)
+			if err != nil || !doc.HasFrontmatter {
+				continue
+			}
+			doc.Frontmatter["tags"] = sanitizedTags
+			newDoc, err := markdown.AssembleDocument(doc)
+			if err != nil {
+				continue
+			}
 
-						var rawMap map[string]interface{}
-						if err := yaml.Unmarshal([]byte(frontmatterRaw), &rawMap); err == nil && rawMap != nil {
-							rawMap["tags"] = sanitizedTags
-							if newYaml, err := yaml.Marshal(rawMap); err == nil {
-								newDoc := "---\n" + string(newYaml) + "---\n" + body
-								_ = os.WriteFile(filePath, []byte(newDoc), 0644)
-							}
-						}
-					}
-				}
+			dir := filepath.Dir(filePath)
+			tmp, err := os.CreateTemp(dir, filepath.Base(filePath)+".tmp.*")
+			if err != nil {
+				logger.Warn("Failed to create temporary file for tag migration", zap.Int64("id", a.ID), zap.Error(err))
+				continue
+			}
+			tmpName := tmp.Name()
+			if _, err := tmp.Write([]byte(newDoc)); err != nil {
+				_ = tmp.Close()
+				_ = os.Remove(tmpName)
+				continue
+			}
+			_ = tmp.Close()
+			_ = os.Chmod(tmpName, info.Mode().Perm())
+			if err := os.Rename(tmpName, filePath); err != nil {
+				_ = os.Remove(tmpName)
+				logger.Warn("Failed to atomically commit migrated markdown file", zap.Int64("id", a.ID), zap.Error(err))
+				continue
 			}
 		}
-
 		migratedCount++
 		logger.Info("Migrated article tags to Obsidian format",
 			zap.Int64("id", a.ID),
@@ -212,4 +230,32 @@ func MigrateLegacyWordCounts(db *gorm.DB, dataDir string, logger *zap.Logger) (i
 	}
 
 	return migratedCount, nil
+}
+
+// DeduplicateArticleLinks removes duplicate (source_id, target_id) edges prior to unique index creation.
+func DeduplicateArticleLinks(db *gorm.DB, logger *zap.Logger) error {
+	if db == nil {
+		return nil
+	}
+	if !db.Migrator().HasTable("article_links") {
+		return nil
+	}
+	res := db.Exec(`
+		DELETE FROM article_links
+		WHERE rowid NOT IN (
+			SELECT MIN(rowid)
+			FROM article_links
+			GROUP BY source_id, target_id
+		)
+	`)
+	if res.Error != nil {
+		if logger != nil {
+			logger.Warn("Failed to deduplicate article_links", zap.Error(res.Error))
+		}
+		return res.Error
+	}
+	if res.RowsAffected > 0 && logger != nil {
+		logger.Info("Deduplicated article_links edges", zap.Int64("removed", res.RowsAffected))
+	}
+	return nil
 }

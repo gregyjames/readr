@@ -15,6 +15,10 @@ import { resolveWikilinkTarget } from '../utils/wikilink'
 import GraphZoomControls from './GraphZoomControls.vue'
 import { useGraphZoom } from '../composables/useGraphZoom'
 import emitter from '../event-bus'
+import ArticleProperties from './ArticleProperties.vue'
+import ArticleBacklinks from './ArticleBacklinks.vue'
+import ArticleInlineLinker from './ArticleInlineLinker.vue'
+import ArticleResumeToast from './ArticleResumeToast.vue'
 
 defineProps<{ id?: string }>()
 
@@ -648,16 +652,6 @@ const articleError = ref('')
 const showLinker = ref(false)
 const linkerPos = ref({ top: 0, left: 0 })
 const selectedText = ref('')
-const searchInput = ref('')
-
-const filteredArticles = computed(() => {
-  const query = searchInput.value.toLowerCase()
-  const currentId = Number(getArticleId())
-  return allArticles.value.filter(a => 
-    a.title.toLowerCase().includes(query) && a.ID !== currentId
-  )
-})
-
 
 const graphDataCache = ref<any>(null)
 
@@ -690,7 +684,10 @@ const fetchArticles = async () => {
     // Merge, deduplicating by ID (active takes precedence)
     const seen = new Set(active.map((a) => a.ID))
     allArticles.value = [...active, ...archived.filter((a) => !seen.has(a.ID))]
-  } catch (err) {
+  } catch (err: any) {
+    if (axios.isCancel(err) || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') {
+      return
+    }
     console.error('Failed to fetch articles', err)
     articleError.value = 'Failed to fetch articles'
   }
@@ -1560,76 +1557,14 @@ onBeforeUnmount(() => {
 
       <!-- Scrollable Document Metadata & Backlinks Section -->
       <div class="flex-1 overflow-y-auto divide-y divide-black/[0.06] dark:divide-white/[0.06]">
-        <!-- Document Properties -->
-        <div class="p-3.5 space-y-3 bg-white dark:bg-[#0C0E14]">
-          <div class="flex items-center justify-between text-[10px] font-mono text-gray-400 uppercase tracking-wider font-semibold">
-            <span>Properties</span>
-            <span v-if="knownProperties.date" class="text-gray-400 font-normal">
-              {{ formatDisplayDate(knownProperties.date) }}
-            </span>
-          </div>
-
-          <div class="grid grid-cols-2 gap-2 text-xs font-mono">
-            <div class="p-2.5 rounded-xl bg-gray-50 dark:bg-white/[0.02] border border-black/[0.04] dark:border-white/[0.04]">
-              <span class="text-[10px] text-gray-400 block mb-0.5">READ TIME</span>
-              <span class="font-semibold text-gray-800 dark:text-gray-200">{{ estimatedReadingTime }}</span>
-            </div>
-            <div class="p-2.5 rounded-xl bg-gray-50 dark:bg-white/[0.02] border border-black/[0.04] dark:border-white/[0.04]">
-              <span class="text-[10px] text-gray-400 block mb-0.5">WORD COUNT</span>
-              <span class="font-semibold text-gray-800 dark:text-gray-200">{{ wordCount }} words</span>
-            </div>
-          </div>
-
-          <!-- Tags in Properties -->
-          <div v-if="knownProperties.tags && knownProperties.tags.length > 0" class="pt-0.5 space-y-1.5">
-            <span class="text-[10px] font-mono text-gray-400 block uppercase font-semibold">TAGS</span>
-            <div class="flex flex-wrap gap-1.5">
-              <span
-                v-for="tag in knownProperties.tags"
-                :key="tag"
-                class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-gray-100/90 dark:bg-white/[0.05] text-gray-600 dark:text-gray-300 border border-black/[0.04] dark:border-white/[0.04]"
-              >
-                #{{ tag }}
-              </span>
-            </div>
-          </div>
-
-          <div v-if="knownProperties.source" class="pt-0.5">
-            <a
-              :href="knownProperties.source"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-mono bg-gray-50 hover:bg-emerald-500/10 dark:bg-white/[0.03] dark:hover:bg-emerald-500/10 border border-black/[0.04] dark:border-white/[0.04] text-gray-700 dark:text-gray-300 hover:text-emerald-600 dark:hover:text-emerald-400 transition-all group"
-            >
-              <span class="truncate">Original Source</span>
-              <span class="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform text-[11px]">&nearr;</span>
-            </a>
-          </div>
-        </div>
-
-        <!-- Obsidian-Style Backlinks / Connected Notes Section -->
-        <div class="flex flex-col bg-white dark:bg-[#0C0E14]">
-          <div class="px-3.5 py-2 border-b border-black/[0.06] dark:border-white/[0.06] bg-gray-50/50 dark:bg-white/[0.01] flex items-center justify-between text-[10px] font-mono text-gray-400 uppercase tracking-wider font-semibold">
-            <span>Linked Mentions</span>
-            <span>{{ backlinks.length }}</span>
-          </div>
-          <div class="p-2 space-y-1">
-            <div v-if="backlinks.length === 0" class="text-xs text-gray-400 font-mono py-4 text-center">
-              No incoming backlinks
-            </div>
-            <router-link
-              v-for="link in backlinks"
-              :key="link.ID"
-              :to="`/articles/${link.ID}`"
-              class="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-gray-700 dark:text-gray-300 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-white/[0.04] transition-all group"
-            >
-              <span class="truncate pr-2 font-medium">{{ link.title }}</span>
-              <span class="text-gray-400 text-[10px] group-hover:translate-x-0.5 transition-transform">&rarr;</span>
-            </router-link>
-          </div>
-        </div>
+        <!-- Document Properties & Backlinks -->
+        <ArticleProperties
+          :properties="knownProperties"
+          :reading-time="estimatedReadingTime"
+          :word-count="wordCount"
+        />
+        <ArticleBacklinks :backlinks="backlinks" />
       </div>
-
     </aside>
 
     <!-- Obsidian-Style Collapsed Edge Button (Desktop) -->
@@ -1647,31 +1582,13 @@ onBeforeUnmount(() => {
       <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
     </button>
 
-    <div 
-      v-if="showLinker" 
-      @mousedown.prevent
-      class="linker-popup absolute z-50 transform -translate-x-1/2 bg-white/90 dark:bg-[#1a1a1a]/90 backdrop-blur-xl border border-gray-200/50 dark:border-white/10 shadow-[0_20px_60px_rgb(0,0,0,0.1)] dark:shadow-[0_20px_60px_rgb(0,0,0,0.8)] rounded-2xl p-2 w-72 transition-all duration-200 ease-out animate-in fade-in zoom-in-95"
-      :style="{ top: linkerPos.top + 'px', left: linkerPos.left + 'px' }"
-    >
-      <input 
-        v-model="searchInput" 
-        placeholder="Link to article..." 
-        class="w-full bg-gray-100/50 dark:bg-black/50 text-sm px-4 py-2.5 rounded-xl border-transparent focus:ring-2 focus:ring-emerald-500 outline-none text-gray-900 dark:text-gray-100 mb-2 font-medium placeholder-gray-500 dark:placeholder-gray-500"
-      />
-      <div class="max-h-48 overflow-y-auto space-y-1 px-1 pb-1">
-        <button 
-          v-for="article in filteredArticles"
-          :key="article.ID"
-          @click="createLink(article.ID)"
-          class="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-white/5 rounded-xl text-gray-700 dark:text-gray-300 font-medium truncate transition-colors active:scale-[0.98]"
-        >
-          {{ article.title }}
-        </button>
-        <div v-if="filteredArticles.length === 0" class="text-xs text-gray-500 font-medium text-center py-4">
-          No matching articles
-        </div>
-      </div>
-    </div>
+    <ArticleInlineLinker
+      :show="showLinker"
+      :pos="linkerPos"
+      :articles="allArticles"
+      :current-id="getArticleId()"
+      @link="createLink"
+    />
   </div>
 
   <ArticleHoverPreview 
@@ -1683,41 +1600,12 @@ onBeforeUnmount(() => {
   />
 
   <!-- Resume Toast: shown when reopening an article restores your position -->
-  <transition name="toast-slide">
-    <div
-      v-if="resumeNotice"
-      role="status"
-      class="fixed bottom-8 left-1/2 -translate-x-1/2 md:left-auto md:translate-x-0 md:right-8 z-50 max-w-[calc(100vw-2rem)] backdrop-blur-xl bg-white/95 dark:bg-[#161616]/95 border border-blue-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.15)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.7)] rounded-2xl pl-3 pr-2 py-2.5 flex items-center gap-2"
-    >
-      <!-- show-value off: the percentage already reads in the sentence beside it -->
-      <ArticleStatusRing
-        status="not_finished"
-        :progress="resumeNotice.percent"
-        :size="18"
-        :show-value="false"
-      />
-      <span class="text-xs font-mono text-gray-600 dark:text-gray-300 whitespace-nowrap">
-        Resumed at {{ resumeNotice.percent }}%
-      </span>
-      <button
-        @click="backToTop"
-        class="shrink-0 px-2 py-1 rounded-lg text-xs font-mono font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 transition-colors cursor-pointer whitespace-nowrap"
-      >
-        Back to top
-      </button>
-      <div class="h-4 w-px shrink-0 bg-gray-200 dark:bg-white/10"></div>
-      <button
-        @click="dismissResumeNotice"
-        class="shrink-0 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 transition-colors cursor-pointer"
-        aria-label="Dismiss"
-      >
-        <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
-        </svg>
-      </button>
-    </div>
-  </transition>
+  <ArticleResumeToast
+    :show="Boolean(resumeNotice)"
+    :percent="resumeNotice ? resumeNotice.percent : 0"
+    @back-to-top="backToTop"
+    @dismiss="dismissResumeNotice"
+  />
 
   <!-- Floating Toast Notification for Reparsing Lifecycle -->
   <transition name="toast-slide">

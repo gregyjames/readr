@@ -91,7 +91,7 @@ func LinkArticles(db *gorm.DB, dataDir string, req LinkRequest) (*repository.Gor
 
 	// 4. Save DB link only after file update succeeds
 	link := repository.GormArticleLink{SourceID: req.SourceID, TargetID: req.TargetID}
-	if err := db.Create(&link).Error; err != nil {
+	if err := db.Where("source_id = ? AND target_id = ?", req.SourceID, req.TargetID).FirstOrCreate(&link).Error; err != nil {
 		return nil, &LinkError{StatusCode: fiber.StatusInternalServerError, Message: "Could not create link"}
 	}
 

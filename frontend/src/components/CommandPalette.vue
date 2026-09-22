@@ -87,7 +87,7 @@
             
             <p 
               class="text-sm text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed ml-7 search-excerpt"
-              v-html="result.excerpt"
+              v-html="sanitizeSearchExcerpt(result.excerpt)"
             ></p>
           </button>
         </div>
@@ -105,7 +105,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMagicKeys, watchDebounced } from '@vueuse/core'
 import axios from 'axios'
-import DOMPurify from 'dompurify'
+import { sanitizeSearchExcerpt } from '../utils/markdown'
 import emitter from '../event-bus'
 import { authState } from '../store/auth'
 
@@ -284,7 +284,7 @@ watchDebounced(query, async (newQuery) => {
     // The excerpt is server-built HTML (FTS5 snippet); keep only the <mark> highlight.
     results.value = (res.data || []).map(r => ({
       ...r,
-      excerpt: DOMPurify.sanitize(r.excerpt ?? '', { ALLOWED_TAGS: ['mark'], ALLOWED_ATTR: [] })
+      excerpt: sanitizeSearchExcerpt(r.excerpt)
     }))
     if (filteredCommands.value.length > 0) {
       selectedCommandIndex.value = 0

@@ -18,12 +18,23 @@ cd ..
 # Start Vue frontend in the background
 echo "Starting frontend (Vite)..."
 cd frontend
+# Detect package manager (prefer bun if available, fall back to npm)
+if command -v bun >/dev/null 2>&1; then
+    PM="bun"
+    INSTALL_CMD="bun install"
+    DEV_CMD="bun run dev"
+else
+    PM="npm"
+    INSTALL_CMD="npm install"
+    DEV_CMD="npm run dev"
+fi
+
 # Ensure dependencies are installed
 if [ ! -d "node_modules" ]; then
-    echo "Installing frontend dependencies..."
-    npm install
+    echo "Installing frontend dependencies with $PM..."
+    $INSTALL_CMD
 fi
-npm run dev &
+$DEV_CMD &
 FRONTEND_PID=$!
 cd ..
 

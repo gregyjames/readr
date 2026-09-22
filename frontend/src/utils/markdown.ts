@@ -1,4 +1,5 @@
 import * as yaml from 'js-yaml';
+import DOMPurify from 'dompurify';
 
 export interface ArticleFrontmatter {
   title?: string;
@@ -118,3 +119,41 @@ export function getHostname(rawUrl?: string): string {
   }
 }
 
+/**
+ * Sanitizes search excerpts to prevent XSS while preserving <mark> highlight tags.
+ */
+export function sanitizeSearchExcerpt(rawHtml?: string): string {
+  if (!rawHtml) return '';
+  if (typeof DOMPurify?.sanitize === 'function') {
+    return DOMPurify.sanitize(rawHtml, {
+      ALLOWED_TAGS: ['mark'],
+      ALLOWED_ATTR: [],
+    });
+  }
+  if (typeof window !== 'undefined' && typeof DOMPurify === 'function') {
+    const purify = (DOMPurify as unknown as (w: Window) => typeof DOMPurify)(window);
+    if (purify && typeof purify.sanitize === 'function') {
+      return purify.sanitize(rawHtml, {
+        ALLOWED_TAGS: ['mark'],
+        ALLOWED_ATTR: [],
+      });
+    }
+  }
+
+  // Fallback for non-DOM test/SSR environments: escape HTML safely but preserve <mark> and </mark>
+  // Fallback for non-DOM test/SSR environments: preserve <mark> (with any attributes stripped) and escape rest
+  const unmark = rawHtml
+    .replace(/<mark\b[^>]*?>/gi, '__MARK_START__')
+    .replace(/<\/mark>/gi, '__MARK_END__');
+
+  const escaped = unmark
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
+  return escaped
+    .replace(/__MARK_START__/g, '<mark>')
+    .replace(/__MARK_END__/g, '</mark>');
+}
