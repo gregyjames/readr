@@ -27,7 +27,7 @@ defineProps<{
   backlinks: Array<{
     ID: number
     title: string
-    [key: string]: any
+    [key: string]: unknown
   }>
 }>()
 </script>
