@@ -74,7 +74,7 @@ Object.defineProperty(Node.prototype, 'nodeName', {
 
 // Mock CanvasRenderingContext2D for headless vis-network graph tests
 if (typeof HTMLCanvasElement !== 'undefined') {
-  HTMLCanvasElement.prototype.getContext = function (type: string) {
+  HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, type: string, ..._rest: unknown[]) {
     if (type === '2d') {
       return {
         canvas: this,
@@ -108,7 +108,7 @@ if (typeof HTMLCanvasElement !== 'undefined') {
       } as unknown as CanvasRenderingContext2D
     }
     return null
-  }
+  } as unknown as typeof HTMLCanvasElement.prototype.getContext
 }
 
 // 2. Register Bun loader plugin for .vue SFC files
