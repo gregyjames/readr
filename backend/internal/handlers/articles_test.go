@@ -16,6 +16,7 @@ import (
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
 	"github.com/gofiber/fiber/v2"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -492,7 +493,7 @@ func TestEditArticle_UpdatesFrontmatterAndSyncsLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{})
+	require.NoError(t, db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}))
 
 	// Seed target articles for wikilinks
 	db.Create(&repository.GormArticle{ID: 10, Title: "Golang Concurrency"})
@@ -560,6 +561,22 @@ func TestEditArticle_UpdatesFrontmatterAndSyncsLinks(t *testing.T) {
 	if string(diskBytes) != editedContent {
 		t.Errorf("expected disk file to match edited content")
 	}
+
+	// 4. Edit with empty tags: [] to verify tags are cleared in DB
+	clearTagsContent := "---\ntitle: Modern Distributed Go\ntags: []\n---\n# Modern Distributed Go\nContent without tags."
+	clearBodyBytes, _ := json.Marshal(map[string]string{"content": clearTagsContent})
+	reqClear := httptest.NewRequest("POST", "/api/edit/50", bytes.NewReader(clearBodyBytes))
+	reqClear.Header.Set("Content-Type", "application/json")
+	respClear, err := app.Test(reqClear, 5000)
+	require.NoError(t, err)
+	defer respClear.Body.Close()
+	require.Equal(t, 200, respClear.StatusCode)
+
+	var clearedArticle repository.GormArticle
+	db.First(&clearedArticle, 50)
+	if clearedArticle.Tags != "" {
+		t.Errorf("expected tags to be cleared, got %q", clearedArticle.Tags)
+	}
 }
 
 func TestAddArticle_Integration(t *testing.T) {
@@ -571,7 +588,7 @@ func TestAddArticle_Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.PipelineMetric{})
+	require.NoError(t, db.AutoMigrate(&repository.GormArticle{}, &repository.GormArticleLink{}, &repository.PipelineMetric{}))
 	EnsureFTS(db, zap.NewNop())
 
 	repo := repository.NewGormRepository(db)

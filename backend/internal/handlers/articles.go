@@ -508,8 +508,19 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		}
 
 		previousContent, prevReadErr := os.ReadFile(sourcePath)
-		tmpFile := sourcePath + ".tmp"
-		if err := os.WriteFile(tmpFile, []byte(req.Content), 0644); err != nil {
+		dir := filepath.Dir(sourcePath)
+		tmp, err := os.CreateTemp(dir, filepath.Base(sourcePath)+".tmp.*")
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not create temporary file"})
+		}
+		tmpFile := tmp.Name()
+		if _, err := tmp.Write([]byte(req.Content)); err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmpFile)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save article"})
+		}
+		if err := tmp.Close(); err != nil {
+			_ = os.Remove(tmpFile)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save article"})
 		}
 		if err := os.Rename(tmpFile, sourcePath); err != nil {
@@ -536,15 +547,14 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 						}
 					}
 				case string:
-					tagStrs = strings.Split(v, ",")
-				}
-				if len(tagStrs) > 0 {
-					for i, s := range tagStrs {
-						tagStrs[i] = strings.TrimSpace(s)
+					for _, s := range strings.Split(v, ",") {
+						if trimmed := strings.TrimSpace(s); trimmed != "" {
+							tagStrs = append(tagStrs, trimmed)
+						}
 					}
-					article.Tags = strings.Join(tagStrs, ", ")
-					updates["tags"] = article.Tags
 				}
+				article.Tags = strings.Join(tagStrs, ", ")
+				updates["tags"] = article.Tags
 			}
 		}
 
@@ -561,36 +571,51 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 
 		SyncArticleToFTS(h.DB, article.ID, article.Title, article.Tags, h.Logger)
 
-		// Sync links to database using batched query
-		h.DB.Where("source_id = ?", article.ID).Delete(&repository.GormArticleLink{})
-
+		// Sync links to database using batched query within a transaction
 		uniqueTargets := markdown.ExtractUniqueWikilinkTargets(req.Content)
-		if len(uniqueTargets) > 0 {
+		linkTxErr := h.DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Where("source_id = ?", article.ID).Delete(&repository.GormArticleLink{}).Error; err != nil {
+				return err
+			}
+			if len(uniqueTargets) == 0 {
+				return nil
+			}
+
 			uniqueTitles := make([]string, len(uniqueTargets))
 			for i, t := range uniqueTargets {
 				uniqueTitles[i] = strings.ToLower(t)
 			}
 			var targets []repository.GormArticle
-			if err := h.DB.Where("LOWER(title) IN (?) AND deleted_at IS NULL", uniqueTitles).Find(&targets).Error; err == nil {
-				newLinks := make([]repository.GormArticleLink, 0, len(targets))
-				seenTargetIDs := make(map[int64]struct{}, len(targets))
-				for _, target := range targets {
-					if target.ID != article.ID {
-						if _, seen := seenTargetIDs[target.ID]; !seen {
-							seenTargetIDs[target.ID] = struct{}{}
-							newLinks = append(newLinks, repository.GormArticleLink{
-								SourceID: article.ID,
-								TargetID: target.ID,
-							})
-						}
+			if err := tx.Where("LOWER(title) IN (?) AND deleted_at IS NULL", uniqueTitles).Find(&targets).Error; err != nil {
+				return err
+			}
+
+			newLinks := make([]repository.GormArticleLink, 0, len(targets))
+			seenTargetIDs := make(map[int64]struct{}, len(targets))
+			for _, target := range targets {
+				if target.ID != article.ID {
+					if _, seen := seenTargetIDs[target.ID]; !seen {
+						seenTargetIDs[target.ID] = struct{}{}
+						newLinks = append(newLinks, repository.GormArticleLink{
+							SourceID: article.ID,
+							TargetID: target.ID,
+						})
 					}
 				}
-				if len(newLinks) > 0 {
-					h.DB.CreateInBatches(newLinks, 100)
+			}
+			if len(newLinks) > 0 {
+				if err := tx.CreateInBatches(newLinks, 100).Error; err != nil {
+					return err
 				}
 			}
+			return nil
+		})
+		if linkTxErr != nil {
+			if h.Logger != nil {
+				h.Logger.Error("Failed to update article links in DB", zap.Int64("id", article.ID), zap.Error(linkTxErr))
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update article links"})
 		}
-
 		if h.GraphEngine != nil {
 			h.GraphEngine.InvalidateCache()
 		}
