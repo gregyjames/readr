@@ -5,8 +5,7 @@ Before finalizing changes or reporting completion:
 1. Run `make check` from the workspace root (runs format check, `go vet`, backend race tests, frontend tests, and typecheck).
 2. Alternatively, run individual checks:
    - Backend: `cd backend && go fmt ./... && go mod tidy && go vet ./... && go test -race ./...`
-   - Frontend: `cd frontend && bun test && bun x vue-tsc -b && bun run build`
-
+   - Frontend: `cd frontend && (bun test || npx bun test) && (bun x vue-tsc -b || npx vue-tsc -b) && (bun run build || npm run build)`
 ## Architectural Conventions & Key Learnings
 
 ### 1. Database & SQLite Concurrency

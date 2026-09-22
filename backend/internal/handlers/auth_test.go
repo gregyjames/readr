@@ -103,7 +103,8 @@ func TestAuthLogoutDoesNotInvalidateOtherSessions(t *testing.T) {
 		}
 	}
 	require.NotNil(t, sessionCookie, "readr_session clearing cookie must be present")
-	assert.True(t, sessionCookie.Value == "" || sessionCookie.Expires.Before(time.Now()) || sessionCookie.MaxAge < 0, "session cookie must be expired or emptied")
+	assert.Equal(t, "", sessionCookie.Value, "session cookie value must be empty")
+	assert.True(t, sessionCookie.MaxAge < 0 || (!sessionCookie.Expires.IsZero() && sessionCookie.Expires.Before(time.Now())), "session cookie must have negative MaxAge or past Expires timestamp")
 
 	// 3. Verify Device A's tokenA is now rejected with 401
 	reqAAfter := httptest.NewRequest("GET", "/api/protected", nil)

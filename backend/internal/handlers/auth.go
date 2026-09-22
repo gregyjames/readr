@@ -62,7 +62,7 @@ func ExtractSessionToken(c *fiber.Ctx) string {
 
 func buildSessionCookie(c *fiber.Ctx, value string, maxAge int) *fiber.Cookie {
 	isSecure := c.Protocol() == "https" || c.Get("X-Forwarded-Proto") == "https"
-	return &fiber.Cookie{
+	cookie := &fiber.Cookie{
 		Name:     "readr_session",
 		Value:    value,
 		Path:     "/",
@@ -71,6 +71,12 @@ func buildSessionCookie(c *fiber.Ctx, value string, maxAge int) *fiber.Cookie {
 		Secure:   isSecure,
 		SameSite: "Lax",
 	}
+	if maxAge < 0 {
+		cookie.Expires = time.Now().Add(-24 * time.Hour)
+	} else if maxAge > 0 {
+		cookie.Expires = time.Now().Add(time.Duration(maxAge) * time.Second)
+	}
+	return cookie
 }
 
 func SetSessionCookie(c *fiber.Ctx, token string) {
