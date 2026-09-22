@@ -36,6 +36,9 @@ func TestAgentPoolWorkerRecoversFromPanic(t *testing.T) {
 	// 2. Verify worker goroutine survives a job and continues processing subsequent jobs
 	var wg sync.WaitGroup
 	wg.Add(2)
+	pool.InvalidateGraphCache = func() {
+		wg.Done()
+	}
 
 	// Start worker in background
 	go pool.worker(1)
@@ -44,9 +47,17 @@ func TestAgentPoolWorkerRecoversFromPanic(t *testing.T) {
 	pool.Queue <- Job{ArticleID: 101, Type: "test_job_1"}
 	pool.Queue <- Job{ArticleID: 102, Type: "test_job_2"}
 
-	// Allow a brief moment for worker to process both jobs
-	time.Sleep(50 * time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
 
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for worker to process jobs")
+	}
 	pool.mu.RLock()
 	assert.Empty(t, pool.activeJobs, "worker should have processed jobs and cleaned up active tracking")
 	pool.mu.RUnlock()
