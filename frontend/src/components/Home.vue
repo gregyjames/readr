@@ -75,7 +75,10 @@ const fetchArticles = async () => {
     }))
     await nextTick()
     initReveal()
-  } catch (err) {
+  } catch (err: any) {
+    if (axios.isCancel(err) || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') {
+      return
+    }
     console.error('Failed to load articles', err)
   }
 }
