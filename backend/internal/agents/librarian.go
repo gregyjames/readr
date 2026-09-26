@@ -231,6 +231,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				sanitized := ingest.SanitizeTitleFilename(a.Title, a.ID)
 				activeMemberTitles[sanitized] = true
 				activeMemberTitles[strings.ToLower(sanitized)] = true
+				activeMemberTitles[fmt.Sprint(a.ID)] = true
 			}
 			reconciledContent, linksPruned := ReconcileMOCLinks(existingContent, activeMemberTitles)
 

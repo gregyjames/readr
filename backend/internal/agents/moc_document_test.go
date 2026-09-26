@@ -320,3 +320,95 @@ Keep this analysis.
 		t.Errorf("expected not to inject duplicate ## Notes & Synthesis when custom header present, got:\n%s", assembled)
 	}
 }
+
+func TestReconcileMOCLinks_MultiKeyAndSectionPruning(t *testing.T) {
+	raw := `---
+type: moc
+title: MOC - Cloud Computing
+tags:
+  - moc
+  - cloud-computing
+---
+
+# MOC - Cloud Computing
+
+## Executive Overview
+Overview of cloud services.
+
+## Curated Index
+
+### Compute & Virtualization
+- [[AWS EC2|Amazon EC2]] - Elastic compute cloud.
+- [[gcp-compute-engine|Google Compute Engine]] - Virtual machines on GCP.
+- [[99-obsolete-vm|Legacy VM]] - Obsolete instance type.
+
+### Deprecated Services
+- [[SimpleDB]] - Old cloud database.
+
+### Storage & Database
+- [[AWS S3|Amazon Simple Storage Service]] - Object store.
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+### Personal Observations
+Keep these user notes intact!
+- Need to evaluate cost optimizations for EC2.
+`
+
+	// Active member titles map simulated with multi-key entries
+	activeMemberTitles := map[string]bool{
+		// EC2 matches: Target is "AWS EC2", alias is "Amazon EC2"
+		"Amazon EC2": true, // alias
+		"amazon ec2": true,
+		// GCP matches: Target is "gcp-compute-engine", alias is "Google Compute Engine"
+		"gcp-compute-engine":    true, // target / basename / slug
+		"google compute engine": true,
+		// S3 matches: Target is "AWS S3", alias is "Amazon Simple Storage Service"
+		"AWS S3": true,
+		"aws s3": true,
+		// SimpleDB and Legacy VM are NOT in activeMemberTitles (pruned)
+	}
+
+	reconciled, changed := ReconcileMOCLinks(raw, activeMemberTitles)
+	if !changed {
+		t.Fatalf("expected ReconcileMOCLinks to report changed=true")
+	}
+
+	// 1. Active links with aliases or slugs remain in MOC
+	if !strings.Contains(reconciled, "[[AWS EC2|Amazon EC2]]") {
+		t.Errorf("expected [[AWS EC2|Amazon EC2]] to remain in reconciled MOC, got:\n%s", reconciled)
+	}
+	if !strings.Contains(reconciled, "[[gcp-compute-engine|Google Compute Engine]]") {
+		t.Errorf("expected [[gcp-compute-engine|Google Compute Engine]] to remain in reconciled MOC, got:\n%s", reconciled)
+	}
+	if !strings.Contains(reconciled, "[[AWS S3|Amazon Simple Storage Service]]") {
+		t.Errorf("expected [[AWS S3|Amazon Simple Storage Service]] to remain in reconciled MOC, got:\n%s", reconciled)
+	}
+
+	// 2. Deleted / archived article links are pruned
+	if strings.Contains(reconciled, "[[99-obsolete-vm|Legacy VM]]") || strings.Contains(reconciled, "Legacy VM") {
+		t.Errorf("expected obsolete VM link to be pruned, got:\n%s", reconciled)
+	}
+	if strings.Contains(reconciled, "[[SimpleDB]]") || strings.Contains(reconciled, "Old cloud database") {
+		t.Errorf("expected SimpleDB link to be pruned, got:\n%s", reconciled)
+	}
+
+	// 3. Entire subsection "Deprecated Services" has 0 remaining items -> cleanly removed without orphaned header
+	if strings.Contains(reconciled, "Deprecated Services") || strings.Contains(reconciled, "### Deprecated Services") {
+		t.Errorf("expected empty subsection '### Deprecated Services' to be cleanly removed, got:\n%s", reconciled)
+	}
+
+	// Subsection with items remains
+	if !strings.Contains(reconciled, "### Compute & Virtualization") {
+		t.Errorf("expected '### Compute & Virtualization' section header to remain, got:\n%s", reconciled)
+	}
+	if !strings.Contains(reconciled, "### Storage & Database") {
+		t.Errorf("expected '### Storage & Database' section header to remain, got:\n%s", reconciled)
+	}
+
+	// 4. User notes sections following curated index are kept intact
+	if !strings.Contains(reconciled, "### Personal Observations") || !strings.Contains(reconciled, "Keep these user notes intact!") || !strings.Contains(reconciled, "Need to evaluate cost optimizations for EC2.") {
+		t.Errorf("expected user notes section to be kept intact, got:\n%s", reconciled)
+	}
+}
+
