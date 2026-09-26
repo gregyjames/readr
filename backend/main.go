@@ -317,6 +317,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	hCtx.DistDir = distDir
 	handlers.RegisterBookmarklet(app, hCtx)
+	handlers.RegisterHealth(app, hCtx)
 
 	if distDir != "" {
 		if info, err := os.Stat(distDir); err == nil && info.IsDir() {
