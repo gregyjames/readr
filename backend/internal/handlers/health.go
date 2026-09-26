@@ -23,7 +23,7 @@ func RegisterHealth(app *fiber.App, hCtx *HandlerContext) {
 		// 1. Verify Database
 		if hCtx != nil && hCtx.DB != nil {
 			sqlDB, err := hCtx.DB.DB()
-			if err != nil || sqlDB.Ping() != nil {
+			if err != nil || sqlDB.PingContext(c.Context()) != nil {
 				if hCtx.Logger != nil {
 					hCtx.Logger.Warn("Readiness check failed: database unreachable")
 				}

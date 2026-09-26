@@ -375,4 +375,3 @@ func TestPool_Shutdown_NilPoolAndShutdownPoolHelper(t *testing.T) {
 	}
 	assert.NoError(t, ShutdownPool(500*time.Millisecond))
 }
-
