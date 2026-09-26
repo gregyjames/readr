@@ -324,6 +324,57 @@ func (p *AgentPool) GetQueueStatus() QueueStatus {
 	}
 }
 
+func (p *AgentPool) Shutdown(timeout time.Duration) error {
+	if p == nil {
+		return nil
+	}
+	if p.logger != nil {
+		p.logger.Info("Shutting down agent pool...")
+	}
+
+	p.mu.Lock()
+	if p.Queue != nil {
+		q := p.Queue
+		p.Queue = nil
+		func() {
+			defer func() {
+				_ = recover()
+			}()
+			close(q)
+		}()
+	}
+	p.mu.Unlock()
+
+	deadline := time.Now().Add(timeout)
+	for {
+		p.mu.RLock()
+		activeCount := len(p.activeJobs)
+		p.mu.RUnlock()
+
+		if activeCount == 0 {
+			if p.logger != nil {
+				p.logger.Info("Agent pool drained cleanly")
+			}
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			if p.logger != nil {
+				p.logger.Warn("Agent pool shutdown timed out with active jobs", zap.Int("active", activeCount))
+			}
+			return fmt.Errorf("timeout waiting for %d active jobs to finish", activeCount)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func ShutdownPool(timeout time.Duration) error {
+	if Pool != nil {
+		return Pool.Shutdown(timeout)
+	}
+	return nil
+}
+
 func SubmitJob(job Job) {
 	if Pool != nil {
 		if Pool.db != nil {
@@ -339,13 +390,33 @@ func SubmitJob(job Job) {
 			}
 		}
 
-		select {
-		case Pool.Queue <- job:
-		default:
+		Pool.mu.RLock()
+		q := Pool.Queue
+		Pool.mu.RUnlock()
+
+		if q == nil {
 			if Pool.logger != nil {
-				Pool.logger.Warn("Agent pool queue full, dropping job from memory channel", zap.Int64("article_id", job.ArticleID))
+				Pool.logger.Warn("Agent pool is shut down, dropping job from memory channel", zap.Int64("article_id", job.ArticleID))
 			}
+			return
 		}
+
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					if Pool.logger != nil {
+						Pool.logger.Warn("Agent pool queue closed, dropping job from memory channel", zap.Int64("article_id", job.ArticleID))
+					}
+				}
+			}()
+			select {
+			case q <- job:
+			default:
+				if Pool.logger != nil {
+					Pool.logger.Warn("Agent pool queue full, dropping job from memory channel", zap.Int64("article_id", job.ArticleID))
+				}
+			}
+		}()
 	}
 }
 

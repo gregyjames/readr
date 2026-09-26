@@ -2,10 +2,14 @@ package main
 
 import (
 	"database/sql"
+	"errors"
+	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"example.com/backend/internal/agents"
@@ -349,8 +353,35 @@ func main() {
 		port = ":" + port
 	}
 
+	// Trap SIGINT and SIGTERM for graceful shutdown
+	shutdownChan := make(chan os.Signal, 1)
+	signal.Notify(shutdownChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-shutdownChan
+		logger.Info("Shutdown signal received, commencing graceful shutdown...")
+
+		// Step 1: Stop accepting new requests with 10s timeout
+		if err := app.ShutdownWithTimeout(10 * time.Second); err != nil {
+			logger.Error("Fiber shutdown error", zap.Error(err))
+		}
+
+		// Step 2: Drain background agent pool
+		if agents.Pool != nil {
+			_ = agents.Pool.Shutdown(15 * time.Second)
+		}
+
+		// Step 3: Close database
+		if sqlDB, err := db.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+
+		logger.Info("Server stopped cleanly")
+		os.Exit(0)
+	}()
+
 	logger.Info("Starting server on port", zap.String("port", port))
-	if err := app.Listen(port); err != nil {
+	if err := app.Listen(port); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Fatal("Failed to start server", zap.Error(err))
 	}
 }

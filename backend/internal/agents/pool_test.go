@@ -260,3 +260,119 @@ func TestPool_PipelineErrorPropagatesToCircuitBreaker(t *testing.T) {
 	assert.Contains(t, failedJob.Error, "API key not configured")
 	assert.Equal(t, 1, Pool.CircuitBreaker.failureCount)
 }
+
+func TestPool_Shutdown_DrainsCleanly(t *testing.T) {
+	logger := zap.NewNop()
+	pool := &AgentPool{
+		Queue:      make(chan Job, 10),
+		logger:     logger,
+		activeJobs: make(map[int]ActiveJobInfo),
+		numWorkers: 1,
+	}
+
+	jobDone := make(chan struct{})
+	go func() {
+		pool.mu.Lock()
+		pool.activeJobs[0] = ActiveJobInfo{
+			ArticleID: 1,
+			WorkerID:  0,
+			StartedAt: time.Now(),
+		}
+		pool.mu.Unlock()
+
+		time.Sleep(100 * time.Millisecond)
+
+		pool.mu.Lock()
+		delete(pool.activeJobs, 0)
+		pool.mu.Unlock()
+		close(jobDone)
+	}()
+
+	err := pool.Shutdown(1 * time.Second)
+	assert.NoError(t, err)
+
+	pool.mu.RLock()
+	assert.Empty(t, pool.activeJobs)
+	pool.mu.RUnlock()
+
+	<-jobDone
+}
+
+func TestPool_Shutdown_Timeout(t *testing.T) {
+	logger := zap.NewNop()
+	pool := &AgentPool{
+		Queue:      make(chan Job, 10),
+		logger:     logger,
+		activeJobs: make(map[int]ActiveJobInfo),
+		numWorkers: 1,
+	}
+
+	releaseJob := make(chan struct{})
+	go func() {
+		pool.mu.Lock()
+		pool.activeJobs[0] = ActiveJobInfo{
+			ArticleID: 2,
+			WorkerID:  0,
+			StartedAt: time.Now(),
+		}
+		pool.mu.Unlock()
+
+		<-releaseJob
+
+		pool.mu.Lock()
+		delete(pool.activeJobs, 0)
+		pool.mu.Unlock()
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+
+	err := pool.Shutdown(80 * time.Millisecond)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "timeout waiting for 1 active jobs to finish")
+
+	close(releaseJob)
+	time.Sleep(50 * time.Millisecond)
+
+	pool.mu.RLock()
+	assert.Empty(t, pool.activeJobs)
+	pool.mu.RUnlock()
+}
+
+func TestPool_Shutdown_MultipleCallsNoPanic(t *testing.T) {
+	logger := zap.NewNop()
+	pool := &AgentPool{
+		Queue:      make(chan Job, 10),
+		logger:     logger,
+		activeJobs: make(map[int]ActiveJobInfo),
+		numWorkers: 1,
+	}
+
+	assert.NotPanics(t, func() {
+		err := pool.Shutdown(500 * time.Millisecond)
+		assert.NoError(t, err)
+
+		// Second shutdown call on already closed/nil queue must not panic
+		err = pool.Shutdown(500 * time.Millisecond)
+		assert.NoError(t, err)
+	})
+}
+
+func TestPool_Shutdown_NilPoolAndShutdownPoolHelper(t *testing.T) {
+	var nilPool *AgentPool
+	assert.NoError(t, nilPool.Shutdown(100*time.Millisecond))
+
+	oldPool := Pool
+	defer func() { Pool = oldPool }()
+
+	Pool = nil
+	assert.NoError(t, ShutdownPool(100*time.Millisecond))
+
+	Pool = &AgentPool{
+		Queue:      make(chan Job, 10),
+		logger:     zap.NewNop(),
+		activeJobs: make(map[int]ActiveJobInfo),
+		numWorkers: 1,
+	}
+	assert.NoError(t, ShutdownPool(500*time.Millisecond))
+}
+
