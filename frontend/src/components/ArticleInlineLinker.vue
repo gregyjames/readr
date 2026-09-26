@@ -33,7 +33,7 @@ import { ref, computed, watch, nextTick } from 'vue'
 const props = defineProps<{
   show: boolean
   pos: { top: number; left: number }
-  articles: Array<{ ID: number; title: string; [key: string]: any }>
+  articles: Array<{ ID: number; title: string; [key: string]: unknown }>
   currentId?: string | number
 }>()
 

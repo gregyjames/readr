@@ -73,8 +73,9 @@ export async function login(password: string): Promise<{ success: boolean; error
     }
     const data = await res.json().catch(() => ({}))
     return { success: false, error: data.error || 'Invalid password' }
-  } catch (err: any) {
-    return { success: false, error: err.message || 'Network error' }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    return { success: false, error: message }
   }
 }
 
@@ -97,8 +98,9 @@ export async function setupMasterPassword(password: string): Promise<{ success: 
     }
     const data = await res.json().catch(() => ({}))
     return { success: false, error: data.error || 'Setup failed' }
-  } catch (err: any) {
-    return { success: false, error: err.message || 'Network error' }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    return { success: false, error: message }
   }
 }
 
@@ -124,8 +126,9 @@ export async function changePassword(currentPassword: string, newPassword: strin
     }
     const data = await res.json().catch(() => ({}))
     return { success: false, error: data.error || 'Password update failed' }
-  } catch (err: any) {
-    return { success: false, error: err.message || 'Network error' }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    return { success: false, error: message }
   }
 }
 

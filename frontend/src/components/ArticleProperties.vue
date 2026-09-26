@@ -52,7 +52,7 @@ defineProps<{
     date?: string
     tags?: string[]
     source?: string
-    [key: string]: any
+    [key: string]: unknown
   }
   readingTime: string
   wordCount: number

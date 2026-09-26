@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "bun test"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
@@ -29,11 +30,14 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
     "@tailwindcss/typography": "^0.5.20",
+    "@types/bun": "^1.4.2",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.6.2",
     "@vitejs/plugin-vue": "^6.0.9",
+    "@vue/test-utils": "^2.5.1",
     "@vue/tsconfig": "0.9.1",
     "autoprefixer": "^10.6.1",
+    "happy-dom": "^20.14.5",
     "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",
     "typescript": "5.8.2",
