@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"example.com/backend/internal/repository"
@@ -31,9 +32,10 @@ type IntegrityReport struct {
 
 // MaintenanceService handles database backups and vault integrity auditing.
 type MaintenanceService struct {
-	dataDir string
-	db      *gorm.DB
-	logger  *zap.Logger
+	dataDir  string
+	db       *gorm.DB
+	logger   *zap.Logger
+	backupMu sync.Mutex
 }
 
 // NewMaintenanceService creates a new MaintenanceService instance.
@@ -50,6 +52,9 @@ func NewMaintenanceService(dataDir string, db *gorm.DB, logger *zap.Logger) *Mai
 
 // CreateBackup initiates a consistent hot SQLite backup using VACUUM INTO.
 func (m *MaintenanceService) CreateBackup(ctx context.Context) (string, error) {
+	m.backupMu.Lock()
+	defer m.backupMu.Unlock()
+
 	backupsDir := filepath.Join(m.dataDir, "backups")
 	if err := os.MkdirAll(backupsDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create backups directory: %w", err)
@@ -106,7 +111,7 @@ func (m *MaintenanceService) AuditIntegrity(ctx context.Context) (*IntegrityRepo
 	}
 
 	var articles []repository.GormArticle
-	if err := m.db.WithContext(ctx).Where("deleted_at IS NULL").Find(&articles).Error; err != nil {
+	if err := m.db.WithContext(ctx).Select("id, title, article").Where("deleted_at IS NULL").Find(&articles).Error; err != nil {
 		m.logger.Error("failed to query articles for integrity audit", zap.Error(err))
 		return nil, fmt.Errorf("failed to query articles: %w", err)
 	}
