@@ -356,6 +356,7 @@ func main() {
 	// Trap SIGINT and SIGTERM for graceful shutdown
 	shutdownChan := make(chan os.Signal, 1)
 	signal.Notify(shutdownChan, os.Interrupt, syscall.SIGTERM)
+	shutdownDone := make(chan struct{})
 
 	go func() {
 		<-shutdownChan
@@ -377,11 +378,13 @@ func main() {
 		}
 
 		logger.Info("Server stopped cleanly")
-		os.Exit(0)
+		close(shutdownDone)
 	}()
 
 	logger.Info("Starting server on port", zap.String("port", port))
 	if err := app.Listen(port); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Fatal("Failed to start server", zap.Error(err))
 	}
+
+	<-shutdownDone
 }
