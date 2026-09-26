@@ -96,6 +96,7 @@ func TestPool_PersistentJobQueueAndRecovery(t *testing.T) {
 	select {
 	case j := <-Pool.Queue:
 		assert.Equal(t, int64(42), j.ArticleID)
+		assert.True(t, j.ID > 0, "job ID should be populated from persistent storage")
 		Pool.executeJob(0, j)
 	case <-time.After(1 * time.Second):
 		t.Fatal("expected job in queue")
@@ -134,6 +135,7 @@ func TestPool_PersistentJobQueueAndRecovery(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		select {
 		case j := <-Pool.Queue:
+			assert.True(t, j.ID > 0, "re-enqueued job ID must be populated")
 			reEnqueuedIDs[j.ArticleID] = true
 		case <-time.After(1 * time.Second):
 			t.Fatalf("expected 2 re-enqueued jobs, timed out at %d", i)
@@ -221,5 +223,40 @@ func TestPool_JobPanicUpdatesStatusAndTripsBreaker(t *testing.T) {
 	assert.NoError(t, db.Where("article_id = ?", 301).First(&panickedJob).Error)
 	assert.Equal(t, "failed", panickedJob.Status)
 	assert.Contains(t, panickedJob.Error, "simulated panic in pipeline")
+	assert.Equal(t, 1, Pool.CircuitBreaker.failureCount)
+}
+
+func TestPool_PipelineErrorPropagatesToCircuitBreaker(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "pipeline_error_test.db")
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	assert.NoError(t, err)
+
+	logger := zap.NewNop()
+	InitPool(logger, db, nil, tempDir, 0, nil)
+
+	// Pipeline job with an active stage (e.g. summarizer), but no API key configured
+	// processPipeline will fail with "API key not configured" error
+	job := Job{
+		ArticleID: 555,
+		Type:      JobTypePipeline,
+		Settings: PipelineSettings{
+			Summarizer: true,
+		},
+	}
+	SubmitJob(job)
+
+	select {
+	case j := <-Pool.Queue:
+		assert.True(t, j.ID > 0, "job ID should be bound on submission")
+		Pool.executeJob(0, j)
+	case <-time.After(1 * time.Second):
+		t.Fatal("expected job in queue")
+	}
+
+	var failedJob GormAgentJob
+	assert.NoError(t, db.Where("article_id = ?", 555).First(&failedJob).Error)
+	assert.Equal(t, "failed", failedJob.Status)
+	assert.Contains(t, failedJob.Error, "API key not configured")
 	assert.Equal(t, 1, Pool.CircuitBreaker.failureCount)
 }

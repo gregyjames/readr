@@ -27,6 +27,7 @@ type PipelineSettings struct {
 }
 
 type Job struct {
+	ID        int64
 	ArticleID int64
 	Type      JobType
 	Payload   map[string]interface{}
@@ -114,6 +115,7 @@ func InitPool(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataD
 		if err := db.Where("status = ?", "queued").Order("id asc").Limit(100).Find(&queued).Error; err == nil {
 			for _, qj := range queued {
 				job := Job{
+					ID:        qj.ID,
 					ArticleID: qj.ArticleID,
 					Type:      JobType(qj.Type),
 					Settings: PipelineSettings{
@@ -157,20 +159,24 @@ func (p *AgentPool) executeJob(id int, job Job) {
 	}
 	p.mu.Unlock()
 
-	var jobID int64
+	jobID := job.ID
 	if p.db != nil {
-		var agentJob GormAgentJob
-		if err := p.db.Where("article_id = ? AND type = ? AND status = ?", job.ArticleID, string(job.Type), "queued").
-			Order("id asc").
-			First(&agentJob).Error; err == nil {
-			jobID = agentJob.ID
-			p.db.Model(&agentJob).Update("status", "processing")
+		if jobID > 0 {
+			p.db.Model(&GormAgentJob{}).Where("id = ?", jobID).Update("status", "processing")
 		} else {
-			var processingJob GormAgentJob
-			if err := p.db.Where("article_id = ? AND type = ? AND status = ?", job.ArticleID, string(job.Type), "processing").
+			var agentJob GormAgentJob
+			if err := p.db.Where("article_id = ? AND type = ? AND status = ?", job.ArticleID, string(job.Type), "queued").
 				Order("id asc").
-				First(&processingJob).Error; err == nil {
-				jobID = processingJob.ID
+				First(&agentJob).Error; err == nil {
+				jobID = agentJob.ID
+				p.db.Model(&agentJob).Update("status", "processing")
+			} else {
+				var processingJob GormAgentJob
+				if err := p.db.Where("article_id = ? AND type = ? AND status = ?", job.ArticleID, string(job.Type), "processing").
+					Order("id asc").
+					First(&processingJob).Error; err == nil {
+					jobID = processingJob.ID
+				}
 			}
 		}
 	}
@@ -186,7 +192,7 @@ func (p *AgentPool) executeJob(id int, job Job) {
 			zap.String("type", string(job.Type)),
 		)
 		if p.db != nil {
-			if jobID != 0 {
+			if jobID > 0 {
 				p.db.Model(&GormAgentJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
 					"status": "failed",
 					"error":  "circuit breaker open",
@@ -220,7 +226,7 @@ func (p *AgentPool) executeJob(id int, job Job) {
 
 		if p.db != nil {
 			if jobErr != nil {
-				if jobID != 0 {
+				if jobID > 0 {
 					p.db.Model(&GormAgentJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
 						"status": "failed",
 						"error":  jobErr.Error(),
@@ -234,7 +240,7 @@ func (p *AgentPool) executeJob(id int, job Job) {
 						})
 				}
 			} else {
-				if jobID != 0 {
+				if jobID > 0 {
 					p.db.Model(&GormAgentJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
 						"status": "completed",
 						"error":  "",
@@ -270,7 +276,7 @@ func (p *AgentPool) executeJob(id int, job Job) {
 		if job.Payload != nil && job.Payload["panic"] == true {
 			panic("simulated panic in pipeline")
 		}
-		p.processPipeline(job)
+		jobErr = p.processPipeline(job)
 	default:
 		p.logger.Warn("Unknown job type", zap.String("type", string(job.Type)))
 		if strings.HasPrefix(string(job.Type), "fail") || strings.HasPrefix(string(job.Type), "error") {
@@ -328,6 +334,8 @@ func SubmitJob(job Job) {
 			}
 			if err := Pool.db.Create(&agentJob).Error; err != nil && Pool.logger != nil {
 				Pool.logger.Error("Failed to persist agent job", zap.Error(err), zap.Int64("article_id", job.ArticleID))
+			} else {
+				job.ID = agentJob.ID
 			}
 		}
 

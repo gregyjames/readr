@@ -16,12 +16,13 @@ const (
 
 // CircuitBreaker guards against cascading failures when calling external services like LLMs.
 type CircuitBreaker struct {
-	mu           sync.RWMutex
-	state        CircuitState
-	failureCount int
-	threshold    int
-	cooldown     time.Duration
-	lastFailure  time.Time
+	mu                sync.RWMutex
+	state             CircuitState
+	failureCount      int
+	threshold         int
+	cooldown          time.Duration
+	lastFailure       time.Time
+	halfOpenAttempted bool
 }
 
 // NewCircuitBreaker creates a new CircuitBreaker with the given failure threshold and cooldown period.
@@ -50,11 +51,16 @@ func (cb *CircuitBreaker) Allow() bool {
 	case StateOpen:
 		if time.Since(cb.lastFailure) >= cb.cooldown {
 			cb.state = StateHalfOpen
+			cb.halfOpenAttempted = true
 			return true
 		}
 		return false
 	case StateHalfOpen:
-		return true
+		if !cb.halfOpenAttempted {
+			cb.halfOpenAttempted = true
+			return true
+		}
+		return false
 	default:
 		return true
 	}
@@ -67,6 +73,7 @@ func (cb *CircuitBreaker) RecordSuccess() {
 
 	cb.failureCount = 0
 	cb.state = StateClosed
+	cb.halfOpenAttempted = false
 }
 
 // RecordFailure registers a failure. If threshold is met or the circuit is half-open, it trips to open.
@@ -76,6 +83,7 @@ func (cb *CircuitBreaker) RecordFailure() {
 
 	cb.failureCount++
 	cb.lastFailure = time.Now()
+	cb.halfOpenAttempted = false
 
 	if cb.state == StateHalfOpen || cb.failureCount >= cb.threshold {
 		cb.state = StateOpen

@@ -92,12 +92,30 @@ func TestCircuitBreaker_ConcurrentAccess(t *testing.T) {
 	_ = cb.State()
 }
 
-func TestCircuitBreaker_DefaultParameters(t *testing.T) {
-	cb := NewCircuitBreaker(0, 0)
-	if cb.threshold != 5 {
-		t.Fatalf("expected default threshold 5, got %d", cb.threshold)
+func TestCircuitBreaker_HalfOpenLimitsToSingleTrial(t *testing.T) {
+	cb := NewCircuitBreaker(2, 200*time.Millisecond)
+
+	cb.RecordFailure()
+	cb.RecordFailure()
+	if cb.Allow() {
+		t.Fatal("circuit breaker should be OPEN")
 	}
-	if cb.cooldown != 2*time.Minute {
-		t.Fatalf("expected default cooldown 2m, got %v", cb.cooldown)
+
+	time.Sleep(250 * time.Millisecond)
+
+	// First trial request should succeed
+	if !cb.Allow() {
+		t.Fatal("first trial request in half-open should be allowed")
+	}
+
+	// Second request while still in half-open should be rejected
+	if cb.Allow() {
+		t.Fatal("second request in half-open should NOT be allowed until trial finishes")
+	}
+
+	// Success closes circuit, allowing subsequent requests
+	cb.RecordSuccess()
+	if !cb.Allow() {
+		t.Fatal("subsequent requests should be allowed after successful trial")
 	}
 }

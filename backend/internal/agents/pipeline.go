@@ -20,20 +20,20 @@ import (
 	"gorm.io/gorm"
 )
 
-func (p *AgentPool) processPipeline(job Job) {
-	p.processPipelineWithURL(job, "https://openrouter.ai/api/v1/chat/completions")
+func (p *AgentPool) processPipeline(job Job) error {
+	return p.processPipelineWithURL(job, "https://openrouter.ai/api/v1/chat/completions")
 }
 
-func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
+func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) error {
 	if !job.Settings.Summarizer && !job.Settings.Enricher && !job.Settings.Linker {
 		p.logger.Info("Pipeline skipped: no stages enabled", zap.Int64("article_id", job.ArticleID))
-		return
+		return nil
 	}
 
 	apiKey, model := p.resolveCredentials(job)
 	if apiKey == "" {
 		p.logger.Warn("API key not configured. Agent cannot run pipeline.", zap.Int64("article_id", job.ArticleID))
-		return
+		return fmt.Errorf("API key not configured")
 	}
 
 	var repo repository.Repository
@@ -96,7 +96,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
 		p.logger.Error("Pipeline could not read file", zap.Error(err), zap.Int64("article_id", job.ArticleID), zap.String("path", filePath))
-		return
+		return fmt.Errorf("pipeline could not read file %s: %w", filePath, err)
 	}
 	content := string(contentBytes)
 
@@ -149,7 +149,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	bodyJSON, err := buildPipelinePayload(model, prompt, properties, required)
 	if err != nil {
 		p.logger.Error("Pipeline failed to marshal payload", zap.Error(err))
-		return
+		return err
 	}
 
 	retryCount := 0
@@ -225,7 +225,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	if err != nil {
 		p.logger.Error("Pipeline failed to create HTTP request", zap.Error(err))
 		recordMetric("failed", 0, 0, 0, err.Error())
-		return
+		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -236,7 +236,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	if err != nil {
 		p.logger.Error("Pipeline LLM request failed", zap.Error(err), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, err.Error())
-		return
+		return fmt.Errorf("pipeline LLM request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -244,13 +244,14 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	if err != nil {
 		p.logger.Error("Pipeline failed to read LLM response body", zap.Error(err), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, err.Error())
-		return
+		return fmt.Errorf("pipeline failed to read LLM response body: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		p.logger.Error("Pipeline LLM request returned non-200 status", zap.Int("status", resp.StatusCode), zap.String("body", string(respBytes)), zap.Int64("article_id", job.ArticleID))
-		recordMetric("failed", 0, 0, 0, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBytes)))
-		return
+		errMsg := fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBytes))
+		recordMetric("failed", 0, 0, 0, errMsg)
+		return fmt.Errorf("pipeline LLM request returned non-200 status: %s", errMsg)
 	}
 
 	p.logger.Info("Pipeline received LLM response",
@@ -279,19 +280,19 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	if err := json.Unmarshal(respBytes, &llmResp); err != nil {
 		p.logger.Error("Pipeline failed to parse LLM response JSON", zap.Error(err), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, "JSON parse error: "+err.Error())
-		return
+		return fmt.Errorf("pipeline failed to parse LLM response JSON: %w", err)
 	}
 
 	if llmResp.Error != nil {
 		p.logger.Error("Pipeline received API error from LLM provider", zap.String("error_message", llmResp.Error.Message), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, llmResp.Error.Message)
-		return
+		return fmt.Errorf("pipeline received API error from LLM provider: %s", llmResp.Error.Message)
 	}
 
 	if len(llmResp.Choices) == 0 {
 		p.logger.Error("Pipeline LLM response contained no choices", zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, "no choices returned from LLM provider")
-		return
+		return fmt.Errorf("no choices returned from LLM provider")
 	}
 
 	rawJSON := extractMessageContent(llmResp.Choices[0].Message.Content)
@@ -300,14 +301,14 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	if rawJSON == "" {
 		p.logger.Error("Pipeline LLM response message content was empty", zap.String("finish_reason", llmResp.Choices[0].FinishReason), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, "empty message content from LLM provider")
-		return
+		return fmt.Errorf("empty message content from LLM provider")
 	}
 
 	var pipelineResp UnifiedPipelineResponse
 	if err := json.Unmarshal([]byte(rawJSON), &pipelineResp); err != nil {
 		p.logger.Error("Pipeline failed to unmarshal JSON into UnifiedPipelineResponse", zap.Error(err), zap.String("raw", rawJSON), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, "schema parse error: "+err.Error())
-		return
+		return fmt.Errorf("pipeline failed to unmarshal JSON into UnifiedPipelineResponse: %w", err)
 	}
 
 	// Calculate token analytics (exact from API usage if present, or deterministic estimate)
@@ -367,7 +368,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		yamlHeader, metadata, err := serializeOKFMetadata(pipelineResp.Frontmatter, mergedTags, sourceURL, articleTitle)
 		if err != nil {
 			p.logger.Error("Pipeline failed to serialize YAML frontmatter", zap.Error(err))
-			return
+			return fmt.Errorf("pipeline failed to serialize YAML frontmatter: %w", err)
 		}
 		frontmatter = yamlHeader
 
@@ -417,14 +418,14 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 	if err := os.WriteFile(tmpFile, []byte(newContent), 0644); err != nil {
 		p.logger.Error("Pipeline failed to write tmp markdown file", zap.Error(err))
 		recordMetric("failed", promptTokens, completionTokens, 0, "file write error: "+err.Error())
-		return
+		return fmt.Errorf("pipeline failed to write tmp markdown file: %w", err)
 	}
 	if err := os.Rename(tmpFile, filePath); err != nil {
 		_ = os.Remove(tmpFile)
 		if err := os.WriteFile(filePath, []byte(newContent), 0644); err != nil {
 			p.logger.Error("Pipeline failed to write markdown file", zap.Error(err))
 			recordMetric("failed", promptTokens, completionTokens, 0, "file write error: "+err.Error())
-			return
+			return fmt.Errorf("pipeline failed to write markdown file: %w", err)
 		}
 	}
 
@@ -434,4 +435,5 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) {
 		zap.Int64("article_id", job.ArticleID),
 		zap.String("file", filePath),
 	)
+	return nil
 }
