@@ -411,4 +411,3 @@ Keep these user notes intact!
 		t.Errorf("expected user notes section to be kept intact, got:\n%s", reconciled)
 	}
 }
-

@@ -110,7 +110,7 @@ Instructions:
 	httpReq.Header.Set("X-Title", "Readr Librarian MOC Synthesizer")
 
 	startTime := time.Now()
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: 45 * time.Second}
 	var resp *http.Response
 	var bodyBytes []byte
 	var lastErr error
@@ -371,7 +371,7 @@ Instructions:
 	httpReq.Header.Set("X-Title", "Readr Librarian MOC Synthesizer")
 
 	startTime := time.Now()
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: 45 * time.Second}
 	var resp *http.Response
 	var bodyBytes []byte
 	var lastErr error
