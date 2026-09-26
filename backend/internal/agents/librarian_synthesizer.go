@@ -14,6 +14,9 @@ import (
 )
 
 func (r *LibrarianRunner) synthesizeCluster(ctx context.Context, cluster ClusterCandidate, apiKey, model, apiURL string) (*MOCSynthesisResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+
 	articleMap := make(map[int64]repository.ArticleRecord)
 	var articleListText strings.Builder
 	for _, a := range cluster.Articles {
@@ -216,10 +219,33 @@ Instructions:
 	}
 
 	rawContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	cleanJSON := rawContent
+	if strings.HasPrefix(cleanJSON, "```") {
+		if idx := strings.Index(cleanJSON, "\n"); idx != -1 {
+			cleanJSON = cleanJSON[idx+1:]
+		}
+		cleanJSON = strings.TrimSuffix(cleanJSON, "```")
+		cleanJSON = strings.TrimSpace(cleanJSON)
+	}
+
 	var synthesis MOCSynthesisResponse
-	if err := json.Unmarshal([]byte(rawContent), &synthesis); err != nil {
+	if err := json.Unmarshal([]byte(cleanJSON), &synthesis); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal structured synthesis JSON: %w (raw: %s)", err, rawContent)
 	}
+
+	// Filter sections: discard hallucinated article IDs
+	var validSections []MOCSection
+	for _, sec := range synthesis.Sections {
+		var validItems []MOCItem
+		for _, item := range sec.Items {
+			if _, exists := articleMap[item.ArticleID]; exists {
+				validItems = append(validItems, item)
+			}
+		}
+		sec.Items = validItems
+		validSections = append(validSections, sec)
+	}
+	synthesis.Sections = validSections
 
 	promptTokens := 0
 	completionTokens := 0
@@ -261,6 +287,10 @@ Instructions:
 }
 
 func (r *LibrarianRunner) synthesizeDeltaCluster(ctx context.Context, cluster ClusterCandidate, unlinked []repository.ArticleRecord, existingContent string, apiKey, model, apiURL string) (*MOCDeltaResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+
+	unlinkedMap := make(map[int64]repository.ArticleRecord)
 	sections := extractMOCSections(existingContent)
 	var sectionsList strings.Builder
 	for _, sec := range sections {
@@ -269,6 +299,7 @@ func (r *LibrarianRunner) synthesizeDeltaCluster(ctx context.Context, cluster Cl
 
 	var newArticlesList strings.Builder
 	for _, a := range unlinked {
+		unlinkedMap[a.ID] = a
 		newArticlesList.WriteString(fmt.Sprintf("- ID: %d, Title: %s\n", a.ID, a.Title))
 	}
 
@@ -454,10 +485,28 @@ Instructions:
 	}
 
 	rawContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	cleanJSON := rawContent
+	if strings.HasPrefix(cleanJSON, "```") {
+		if idx := strings.Index(cleanJSON, "\n"); idx != -1 {
+			cleanJSON = cleanJSON[idx+1:]
+		}
+		cleanJSON = strings.TrimSuffix(cleanJSON, "```")
+		cleanJSON = strings.TrimSpace(cleanJSON)
+	}
+
 	var deltaResp MOCDeltaResponse
-	if err := json.Unmarshal([]byte(rawContent), &deltaResp); err != nil {
+	if err := json.Unmarshal([]byte(cleanJSON), &deltaResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal structured delta JSON: %w (raw: %s)", err, rawContent)
 	}
+
+	// Filter placements: discard hallucinated article IDs
+	var validPlacements []MOCDeltaPlacement
+	for _, p := range deltaResp.Placements {
+		if _, exists := unlinkedMap[p.ArticleID]; exists {
+			validPlacements = append(validPlacements, p)
+		}
+	}
+	deltaResp.Placements = validPlacements
 
 	promptTokens := 0
 	completionTokens := 0

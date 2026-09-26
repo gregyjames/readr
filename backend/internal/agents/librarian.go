@@ -39,15 +39,16 @@ type LibrarianRunResult struct {
 }
 
 type LibrarianRunner struct {
-	logger        *zap.Logger
-	db            *gorm.DB
-	repo          repository.Repository
-	dataDir       string
-	organizer     *vault.VaultOrganizer
-	onGraphUpdate func()
-	lastResult    *LibrarianRunResult
-	mu            sync.Mutex
-	isRunning     bool
+	logger           *zap.Logger
+	db               *gorm.DB
+	repo             repository.Repository
+	dataDir          string
+	organizer        *vault.VaultOrganizer
+	onGraphUpdate    func()
+	onClusterProcess func(tag string)
+	lastResult       *LibrarianRunResult
+	mu               sync.Mutex
+	isRunning        bool
 }
 
 func NewLibrarianRunner(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataDir string, onGraphUpdate func()) *LibrarianRunner {
@@ -194,168 +195,181 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 
 	// Step 1: Reconcile / Synthesize Clusters
 	for _, cluster := range clusters {
-		clusterTag := cluster.Tag
-		mocTitle := fmt.Sprintf("MOC - %s", clusterTag)
-		if cluster.ExistingMOC != nil && cluster.ExistingMOC.Title != "" {
-			mocTitle = cluster.ExistingMOC.Title
-		}
-
-		r.logger.Info("Processing cluster candidate",
-			zap.String("topic", clusterTag),
-			zap.String("moc_title", mocTitle),
-			zap.Int("active_articles", len(cluster.Articles)),
-			zap.Bool("has_existing_moc", cluster.ExistingMOC != nil),
-		)
-
-		if cluster.ExistingMOC != nil {
-			unlinked, existingContent, err := r.getUnlinkedArticles(cluster)
-			if err != nil {
-				r.logger.Error("Failed to check unlinked articles for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
-				result.Status = "partial (some clusters failed)"
-				result.Errors = append(result.Errors, fmt.Sprintf("unlinked %s: %v", cluster.Tag, err))
-				continue
-			}
-
-			activeMemberTitles := make(map[string]bool)
-			for _, a := range cluster.Articles {
-				activeMemberTitles[a.Title] = true
-				activeMemberTitles[strings.ToLower(a.Title)] = true
-				displayTitle := strings.ReplaceAll(a.Title, "|", "—")
-				activeMemberTitles[displayTitle] = true
-				activeMemberTitles[strings.ToLower(displayTitle)] = true
-				if a.FilePath != "" {
-					base := strings.TrimSuffix(filepath.Base(a.FilePath), ".md")
-					activeMemberTitles[base] = true
-					activeMemberTitles[strings.ToLower(base)] = true
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					r.logger.Error("Panic recovered during cluster processing", zap.String("tag", cluster.Tag), zap.Any("panic", rec))
+					result.Errors = append(result.Errors, fmt.Sprintf("panic in cluster %s: %v", cluster.Tag, rec))
+					result.Status = "partial (some clusters failed)"
 				}
-				sanitized := ingest.SanitizeTitleFilename(a.Title, a.ID)
-				activeMemberTitles[sanitized] = true
-				activeMemberTitles[strings.ToLower(sanitized)] = true
-				activeMemberTitles[fmt.Sprint(a.ID)] = true
+			}()
+
+			clusterTag := cluster.Tag
+			if r.onClusterProcess != nil {
+				r.onClusterProcess(clusterTag)
 			}
-			reconciledContent, linksPruned := ReconcileMOCLinks(existingContent, activeMemberTitles)
-
-			r.logger.Info("Evaluated existing MOC for updates",
-				zap.String("moc_title", mocTitle),
-				zap.Int("unlinked_count", len(unlinked)),
-				zap.Bool("links_or_sections_pruned", linksPruned),
-			)
-
-			if len(unlinked) == 0 {
-				if linksPruned {
-					r.logger.Info("Persisting reconciled MOC (pruned stale links and empty sections)",
-						zap.String("moc_title", mocTitle),
-						zap.String("tag", cluster.Tag),
-					)
-					if err := r.saveReconciledMOC(ctx, cluster, reconciledContent); err != nil {
-						r.logger.Error("Failed to save reconciled MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
-						result.Status = "partial (some clusters failed)"
-						result.Errors = append(result.Errors, fmt.Sprintf("save reconciled %s: %v", cluster.Tag, err))
-					} else {
-						result.UpdatedMOCs++
-					}
-				} else {
-					r.logger.Info("MOC cluster is completely up-to-date (0 new notes, 0 stale links), skipping synthesis",
-						zap.String("moc_title", mocTitle),
-						zap.String("tag", cluster.Tag),
-					)
-				}
-				continue
-			}
-
-			// Synthesize delta
-			if apiKey == "" {
-				r.logger.Warn("OpenRouter API key not configured, skipping delta synthesis for cluster", zap.String("tag", cluster.Tag))
-				result.Status = "partial (some clusters failed)"
-				result.Errors = append(result.Errors, fmt.Sprintf("tag %s: api key not configured", cluster.Tag))
-				continue
-			}
-
-			r.logger.Info("Synthesizing delta placements via LLM",
-				zap.String("moc_title", mocTitle),
-				zap.Int("new_unlinked_notes", len(unlinked)),
-			)
-
-			deltaResp, err := r.synthesizeDeltaCluster(ctx, cluster, unlinked, reconciledContent, apiKey, model, apiURL)
-			if err != nil {
-				r.logger.Error("Failed to synthesize delta MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
-				result.Status = "partial (some clusters failed)"
-				result.Errors = append(result.Errors, fmt.Sprintf("tag %s: %v", cluster.Tag, err))
-				continue
-			}
-
-			r.logger.Info("Saving updated MOC with delta placements",
-				zap.String("moc_title", mocTitle),
-				zap.Int("placements_count", len(deltaResp.Placements)),
-			)
-
-			if err := r.saveDeltaMOC(ctx, cluster, deltaResp, reconciledContent); err != nil {
-				r.logger.Error("Failed to save delta MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
-				result.Status = "partial (some clusters failed)"
-				result.Errors = append(result.Errors, fmt.Sprintf("save delta %s: %v", cluster.Tag, err))
-				continue
-			}
-
+			mocTitle := fmt.Sprintf("MOC - %s", clusterTag)
 			if cluster.ExistingMOC != nil && cluster.ExistingMOC.Title != "" {
-				cleanTitle := strings.TrimPrefix(cluster.ExistingMOC.Title, "MOC - ")
-				cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
-				cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
-				cleanTitle = strings.TrimSpace(cleanTitle)
-				if cleanTitle != "" && cleanTitle != cluster.Tag {
-					for _, a := range cluster.Articles {
-						if primaryTopicMap[a.ID] == cluster.Tag {
-							primaryTopicMap[a.ID] = cleanTitle
+				mocTitle = cluster.ExistingMOC.Title
+			}
+
+			r.logger.Info("Processing cluster candidate",
+				zap.String("topic", clusterTag),
+				zap.String("moc_title", mocTitle),
+				zap.Int("active_articles", len(cluster.Articles)),
+				zap.Bool("has_existing_moc", cluster.ExistingMOC != nil),
+			)
+
+			if cluster.ExistingMOC != nil {
+				unlinked, existingContent, err := r.getUnlinkedArticles(cluster)
+				if err != nil {
+					r.logger.Error("Failed to check unlinked articles for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
+					result.Status = "partial (some clusters failed)"
+					result.Errors = append(result.Errors, fmt.Sprintf("unlinked %s: %v", cluster.Tag, err))
+					return
+				}
+
+				activeMemberTitles := make(map[string]bool)
+				for _, a := range cluster.Articles {
+					activeMemberTitles[a.Title] = true
+					activeMemberTitles[strings.ToLower(a.Title)] = true
+					displayTitle := strings.ReplaceAll(a.Title, "|", "—")
+					activeMemberTitles[displayTitle] = true
+					activeMemberTitles[strings.ToLower(displayTitle)] = true
+					if a.FilePath != "" {
+						base := strings.TrimSuffix(filepath.Base(a.FilePath), ".md")
+						activeMemberTitles[base] = true
+						activeMemberTitles[strings.ToLower(base)] = true
+					}
+					sanitized := ingest.SanitizeTitleFilename(a.Title, a.ID)
+					activeMemberTitles[sanitized] = true
+					activeMemberTitles[strings.ToLower(sanitized)] = true
+					activeMemberTitles[fmt.Sprint(a.ID)] = true
+				}
+				reconciledContent, linksPruned := ReconcileMOCLinks(existingContent, activeMemberTitles)
+
+				r.logger.Info("Evaluated existing MOC for updates",
+					zap.String("moc_title", mocTitle),
+					zap.Int("unlinked_count", len(unlinked)),
+					zap.Bool("links_or_sections_pruned", linksPruned),
+				)
+
+				if len(unlinked) == 0 {
+					if linksPruned {
+						r.logger.Info("Persisting reconciled MOC (pruned stale links and empty sections)",
+							zap.String("moc_title", mocTitle),
+							zap.String("tag", cluster.Tag),
+						)
+						if err := r.saveReconciledMOC(ctx, cluster, reconciledContent); err != nil {
+							r.logger.Error("Failed to save reconciled MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
+							result.Status = "partial (some clusters failed)"
+							result.Errors = append(result.Errors, fmt.Sprintf("save reconciled %s: %v", cluster.Tag, err))
+						} else {
+							result.UpdatedMOCs++
+						}
+					} else {
+						r.logger.Info("MOC cluster is completely up-to-date (0 new notes, 0 stale links), skipping synthesis",
+							zap.String("moc_title", mocTitle),
+							zap.String("tag", cluster.Tag),
+						)
+					}
+					return
+				}
+
+				// Synthesize delta
+				if apiKey == "" {
+					r.logger.Warn("OpenRouter API key not configured, skipping delta synthesis for cluster", zap.String("tag", cluster.Tag))
+					result.Status = "partial (some clusters failed)"
+					result.Errors = append(result.Errors, fmt.Sprintf("tag %s: api key not configured", cluster.Tag))
+					return
+				}
+
+				r.logger.Info("Synthesizing delta placements via LLM",
+					zap.String("moc_title", mocTitle),
+					zap.Int("new_unlinked_notes", len(unlinked)),
+				)
+
+				deltaResp, err := r.synthesizeDeltaCluster(ctx, cluster, unlinked, reconciledContent, apiKey, model, apiURL)
+				if err != nil {
+					r.logger.Error("Failed to synthesize delta MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
+					result.Status = "partial (some clusters failed)"
+					result.Errors = append(result.Errors, fmt.Sprintf("tag %s: %v", cluster.Tag, err))
+					return
+				}
+
+				r.logger.Info("Saving updated MOC with delta placements",
+					zap.String("moc_title", mocTitle),
+					zap.Int("placements_count", len(deltaResp.Placements)),
+				)
+
+				if err := r.saveDeltaMOC(ctx, cluster, deltaResp, reconciledContent); err != nil {
+					r.logger.Error("Failed to save delta MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
+					result.Status = "partial (some clusters failed)"
+					result.Errors = append(result.Errors, fmt.Sprintf("save delta %s: %v", cluster.Tag, err))
+					return
+				}
+
+				if cluster.ExistingMOC != nil && cluster.ExistingMOC.Title != "" {
+					cleanTitle := strings.TrimPrefix(cluster.ExistingMOC.Title, "MOC - ")
+					cleanTitle = strings.TrimPrefix(cleanTitle, "MOC: ")
+					cleanTitle = strings.TrimPrefix(cleanTitle, "MOC ")
+					cleanTitle = strings.TrimSpace(cleanTitle)
+					if cleanTitle != "" && cleanTitle != cluster.Tag {
+						for _, a := range cluster.Articles {
+							if primaryTopicMap[a.ID] == cluster.Tag {
+								primaryTopicMap[a.ID] = cleanTitle
+							}
 						}
 					}
 				}
-			}
 
-			result.UpdatedMOCs++
-		} else {
-			// Fresh MOC Synthesis
-			if apiKey == "" {
-				r.logger.Warn("OpenRouter API key not configured, skipping cluster synthesis", zap.String("tag", cluster.Tag))
-				result.Status = "partial (some clusters failed)"
-				result.Errors = append(result.Errors, fmt.Sprintf("tag %s: api key not configured", cluster.Tag))
-				continue
-			}
+				result.UpdatedMOCs++
+			} else {
+				// Fresh MOC Synthesis
+				if apiKey == "" {
+					r.logger.Warn("OpenRouter API key not configured, skipping cluster synthesis", zap.String("tag", cluster.Tag))
+					result.Status = "partial (some clusters failed)"
+					result.Errors = append(result.Errors, fmt.Sprintf("tag %s: api key not configured", cluster.Tag))
+					return
+				}
 
-			r.logger.Info("Synthesizing new MOC for cluster via LLM",
-				zap.String("tag", cluster.Tag),
-				zap.Int("article_count", len(cluster.Articles)),
-			)
+				r.logger.Info("Synthesizing new MOC for cluster via LLM",
+					zap.String("tag", cluster.Tag),
+					zap.Int("article_count", len(cluster.Articles)),
+				)
 
-			synthesis, err := r.synthesizeCluster(ctx, cluster, apiKey, model, apiURL)
-			if err != nil {
-				r.logger.Error("Failed to synthesize MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
-				result.Status = "partial (some clusters failed)"
-				result.Errors = append(result.Errors, fmt.Sprintf("tag %s: %v", cluster.Tag, err))
-				continue
-			}
+				synthesis, err := r.synthesizeCluster(ctx, cluster, apiKey, model, apiURL)
+				if err != nil {
+					r.logger.Error("Failed to synthesize MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
+					result.Status = "partial (some clusters failed)"
+					result.Errors = append(result.Errors, fmt.Sprintf("tag %s: %v", cluster.Tag, err))
+					return
+				}
 
-			r.logger.Info("Saving new MOC document to disk and database",
-				zap.String("topic_title", synthesis.TopicTitle),
-				zap.Int("sections_count", len(synthesis.Sections)),
-			)
+				r.logger.Info("Saving new MOC document to disk and database",
+					zap.String("topic_title", synthesis.TopicTitle),
+					zap.Int("sections_count", len(synthesis.Sections)),
+				)
 
-			if err := r.saveMOC(ctx, cluster, synthesis); err != nil {
-				r.logger.Error("Failed to save MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
-				result.Status = "partial (some clusters failed)"
-				result.Errors = append(result.Errors, fmt.Sprintf("save %s: %v", cluster.Tag, err))
-				continue
-			}
+				if err := r.saveMOC(ctx, cluster, synthesis); err != nil {
+					r.logger.Error("Failed to save MOC note", zap.String("tag", cluster.Tag), zap.Error(err))
+					result.Status = "partial (some clusters failed)"
+					result.Errors = append(result.Errors, fmt.Sprintf("save %s: %v", cluster.Tag, err))
+					return
+				}
 
-			topicTitle := strings.TrimSpace(synthesis.TopicTitle)
-			if topicTitle != "" && topicTitle != cluster.Tag {
-				for _, a := range cluster.Articles {
-					if primaryTopicMap[a.ID] == cluster.Tag {
-						primaryTopicMap[a.ID] = topicTitle
+				topicTitle := strings.TrimSpace(synthesis.TopicTitle)
+				if topicTitle != "" && topicTitle != cluster.Tag {
+					for _, a := range cluster.Articles {
+						if primaryTopicMap[a.ID] == cluster.Tag {
+							primaryTopicMap[a.ID] = topicTitle
+						}
 					}
 				}
-			}
 
-			result.CreatedMOCs++
-		}
+				result.CreatedMOCs++
+			}
+		}()
 	}
 
 	// Step 2: File Articles into Topic Folders
