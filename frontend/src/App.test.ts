@@ -116,13 +116,12 @@ describe('App.vue Root Component', () => {
     expect(wrapper.find('form').exists()).toBe(true)
     expect(wrapper.text()).toContain('Add New Article')
 
-    // Close modal via Cancel button
-    const cancelBtn = wrapper.findAll('button').find(b => b.text().includes('Cancel'))
-    if (cancelBtn) {
-      await cancelBtn.trigger('click')
-      await flushPromises()
-      expect(wrapper.find('form').exists()).toBe(false)
-    }
+    // Close modal via Close button
+    const closeBtn = wrapper.find('button[aria-label="Close"]')
+    expect(closeBtn.exists()).toBe(true)
+    await closeBtn.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('form').exists()).toBe(false)
 
     wrapper.unmount()
   })

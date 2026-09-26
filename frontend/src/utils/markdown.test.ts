@@ -123,10 +123,10 @@ And a real [[Real Note|Link]].`;
     expect(sanitizedScript === 'Hello <mark>World</mark>' || sanitizedScript === '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;Hello <mark>World</mark>').toBe(true);
     expect(sanitizedScript).not.toContain('<script>');
 
-    // Strips onerror handlers on img
+    // Strips unsafe tags or escapes raw <img
     const sanitizedImg = sanitizeSearchExcerpt('<img src="x" onerror="alert(1)">Result <mark>Text</mark>');
     expect(sanitizedImg === 'Result <mark>Text</mark>' || sanitizedImg === '&lt;img src=&quot;x&quot; onerror=&quot;alert(1)&quot;&gt;Result <mark>Text</mark>').toBe(true);
-    expect(sanitizedImg).not.toContain('onerror');
+    expect(sanitizedImg).not.toContain('<img');
     // Strips attributes on mark tags
     expect(sanitizeSearchExcerpt('<mark onclick="alert(1)" class="evil">Highlighted</mark>')).toBe('<mark>Highlighted</mark>');
     // Handles empty or falsy inputs

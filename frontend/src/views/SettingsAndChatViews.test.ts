@@ -94,6 +94,7 @@ describe('Views: SettingsView and ChatView', () => {
 
   describe('ChatView.vue', () => {
     const origAxiosGet = axios.get
+    let origApiKey: string | undefined
     const sampleSessions = [
       {
         id: 'sess-1',
@@ -118,6 +119,7 @@ describe('Views: SettingsView and ChatView', () => {
     ]
 
     beforeEach(() => {
+      origApiKey = settings.api_key
       settings.api_key = 'test-mock-openrouter-key'
       axios.get = (async (url: string) => {
         if (url === '/api/chats') {
@@ -140,6 +142,7 @@ describe('Views: SettingsView and ChatView', () => {
 
     afterEach(() => {
       axios.get = origAxiosGet
+      settings.api_key = origApiKey
     })
 
     it('loads chat sessions and displays active session messages', async () => {

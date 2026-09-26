@@ -93,12 +93,11 @@ describe('Core Views: Home and Article', () => {
 
       // Find and click tag button for k8s
       const tagButtons = wrapper.findAll('button').filter(b => b.text().includes('k8s'))
-      if (tagButtons.length > 0) {
-        await tagButtons[0].trigger('click')
-        await flushPromises()
+      expect(tagButtons.length).toBeGreaterThan(0)
+      await tagButtons[0].trigger('click')
+      await flushPromises()
 
-        expect(wrapper.text()).toContain('Kubernetes Networking Deep Dive')
-      }
+      expect(wrapper.text()).toContain('Kubernetes Networking Deep Dive')
     })
   })
 
