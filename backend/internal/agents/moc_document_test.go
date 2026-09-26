@@ -182,3 +182,141 @@ func TestMOCDocument_ApplyDeltaPlacements_AppendsAndDeduplicates(t *testing.T) {
 		t.Errorf("expected user synthesis preserved in:\n%s", out)
 	}
 }
+
+func TestMOCDocument_PreservesCustomFrontmatterAndUserNotes(t *testing.T) {
+	raw := `---
+type: moc
+title: MOC - Distributed Systems
+tags:
+  - moc
+  - distributed-systems
+custom_prop: custom_val
+aliases:
+  - DistSys
+  - DS Hub
+created: 2026-01-01
+---
+
+# MOC - Distributed Systems
+
+## Executive Overview
+High level overview.
+
+## Curated Index
+
+### Section 1
+- [[Node 1]] - Note 1
+
+## Personal Notes & Thoughts
+### Deep Dive
+Here is my deep dive analysis.
+- Important thought 1
+- Important thought 2
+`
+
+	doc, err := ParseMOCDocument(raw)
+	if err != nil {
+		t.Fatalf("unexpected error parsing MOC: %v", err)
+	}
+
+	// Verify frontmatter keys preserved
+	if doc.Frontmatter["custom_prop"] != "custom_val" {
+		t.Errorf("expected custom_prop 'custom_val', got %v", doc.Frontmatter["custom_prop"])
+	}
+	aliases, ok := doc.Frontmatter["aliases"].([]interface{})
+	if !ok || len(aliases) != 2 || aliases[0] != "DistSys" || aliases[1] != "DS Hub" {
+		t.Errorf("expected aliases slice ['DistSys', 'DS Hub'], got %v", doc.Frontmatter["aliases"])
+	}
+	if doc.Frontmatter["created"] == nil {
+		t.Errorf("expected created key to be present")
+	}
+
+	// Verify user notes preserved
+	if !doc.HasCustomUserNotes() {
+		t.Errorf("expected HasCustomUserNotes to be true")
+	}
+	if !strings.Contains(doc.UserNotesBody, "Here is my deep dive analysis.") {
+		t.Errorf("expected user notes to contain analysis, got: %q", doc.UserNotesBody)
+	}
+	if !strings.Contains(doc.UserNotesBody, "## Personal Notes & Thoughts") {
+		t.Errorf("expected user notes to preserve custom header '## Personal Notes & Thoughts', got: %q", doc.UserNotesBody)
+	}
+
+	serialized := doc.Serialize()
+	if !strings.Contains(serialized, "custom_prop: custom_val") {
+		t.Errorf("expected serialized to contain custom_prop: custom_val, got:\n%s", serialized)
+	}
+	if !strings.Contains(serialized, "DistSys") || !strings.Contains(serialized, "DS Hub") {
+		t.Errorf("expected serialized to contain aliases, got:\n%s", serialized)
+	}
+	if !strings.Contains(serialized, "## Personal Notes & Thoughts") {
+		t.Errorf("expected serialized to contain user heading '## Personal Notes & Thoughts', got:\n%s", serialized)
+	}
+	if !strings.Contains(serialized, "Here is my deep dive analysis.") {
+		t.Errorf("expected serialized to contain custom notes body, got:\n%s", serialized)
+	}
+	// Make sure duplicate '## Notes & Synthesis' wasn't incorrectly injected if user had custom header
+	if strings.Contains(serialized, "## Notes & Synthesis") {
+		t.Errorf("expected serialized not to force '## Notes & Synthesis' when custom user notes header was used, got:\n%s", serialized)
+	}
+}
+
+func TestAssembleMOCMarkdown_PreservesExistingCustomFrontmatterAndNotes(t *testing.T) {
+	existing := `---
+type: moc
+title: MOC - Distributed Systems
+tags:
+  - moc
+  - distributed-systems
+custom_prop: custom_val
+aliases:
+  - DistSys
+---
+
+# MOC - Distributed Systems
+
+## Executive Overview
+Old overview.
+
+## Curated Index
+
+### Section 1
+- [[Node 1]] - Note 1
+
+## Personal Notes & Thoughts
+### Deep Dive
+Keep this analysis.
+`
+
+	synthesis := &MOCSynthesisResponse{
+		TopicTitle:       "Distributed Systems",
+		ExecutiveSummary: "Brand new automated overview.",
+		Sections: []MOCSection{
+			{
+				Title: "Section 1",
+				Items: []MOCItem{
+					{ArticleID: 10, ContextNote: "Updated note 10"},
+				},
+			},
+		},
+	}
+
+	articleMap := map[int64]MOCArticleInfo{
+		10: {ID: 10, Title: "Raft Consensus", FilePath: "/vault/Raft.md"},
+	}
+
+	assembled := assembleMOCMarkdown(synthesis, "MOC - Distributed Systems", "distributed-systems", existing, articleMap)
+
+	if !strings.Contains(assembled, "custom_prop: custom_val") {
+		t.Errorf("expected custom_prop to be preserved, got:\n%s", assembled)
+	}
+	if !strings.Contains(assembled, "DistSys") {
+		t.Errorf("expected aliases to be preserved, got:\n%s", assembled)
+	}
+	if !strings.Contains(assembled, "## Personal Notes & Thoughts") || !strings.Contains(assembled, "Keep this analysis.") {
+		t.Errorf("expected personal notes to be preserved, got:\n%s", assembled)
+	}
+	if strings.Contains(assembled, "## Notes & Synthesis") {
+		t.Errorf("expected not to inject duplicate ## Notes & Synthesis when custom header present, got:\n%s", assembled)
+	}
+}

@@ -112,10 +112,49 @@ func ParseMOCDocument(raw string) (*MOCDocument, error) {
 	}
 
 	// Split into Curated area and User Notes area
-	notesSplit := strings.SplitN(body, "## Notes & Synthesis", 2)
-	curatedArea := notesSplit[0]
-	if len(notesSplit) > 1 {
-		doc.UserNotesBody = strings.TrimLeft(notesSplit[1], "\r\n")
+	// Look for standard ## Notes & Synthesis first (case-insensitive)
+	reNotes := regexp.MustCompile(`(?i)(?m)^##\s+notes\s*(?:&|and)\s*synthesis\s*$`)
+	loc := reNotes.FindStringIndex(body)
+	curatedArea := body
+	if len(loc) == 2 {
+		curatedArea = body[:loc[0]]
+		doc.UserNotesBody = strings.TrimLeft(body[loc[1]:], "\r\n")
+	} else {
+		// If there is no standard "## Notes & Synthesis" heading, scan the body for a custom user heading
+		// or trailing content after Curated Index.
+		// Specifically, in standard MOCs, sections after "## Curated Index" start with "### <Section>" and list items "- ".
+		// If there is another "## <Custom Heading>" that is not "Curated Index" or "Executive Overview",
+		// or if we have entered Curated Index and hit a non-curated section/content, that belongs to User Notes.
+		lines := strings.Split(body, "\n")
+		foundCuratedIndex := false
+		foundOverview := false
+		splitIdx := -1
+		curOffset := 0
+
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "## ") {
+				headingTitle := strings.TrimSpace(strings.TrimPrefix(trimmed, "## "))
+				if strings.EqualFold(headingTitle, "Curated Index") {
+					foundCuratedIndex = true
+				} else if strings.EqualFold(headingTitle, "Executive Overview") {
+					foundOverview = true
+				} else {
+					// A ## heading that is not Curated Index or Executive Overview.
+					// If we already saw Curated Index or Executive Overview, this is a custom user heading!
+					if foundCuratedIndex || foundOverview {
+						splitIdx = curOffset
+						break
+					}
+				}
+			}
+			curOffset += len(line) + 1
+		}
+
+		if splitIdx != -1 && splitIdx < len(body) {
+			curatedArea = body[:splitIdx]
+			doc.UserNotesBody = strings.TrimLeft(body[splitIdx:], "\r\n")
+		}
 	}
 
 	lines := strings.Split(curatedArea, "\n")
@@ -282,12 +321,18 @@ func (doc *MOCDocument) Serialize() string {
 		}
 	}
 
-	sb.WriteString("## Notes & Synthesis\n")
 	userNotes := strings.TrimSpace(doc.UserNotesBody)
 	if userNotes == "" {
-		userNotes = "<!-- Content below this line is preserved across automated Librarian updates -->\n"
+		sb.WriteString("## Notes & Synthesis\n")
+		sb.WriteString("<!-- Content below this line is preserved across automated Librarian updates -->\n")
+	} else {
+		if strings.HasPrefix(userNotes, "#") {
+			sb.WriteString(userNotes + "\n")
+		} else {
+			sb.WriteString("## Notes & Synthesis\n")
+			sb.WriteString(userNotes + "\n")
+		}
 	}
-	sb.WriteString(userNotes + "\n")
 
 	return sb.String()
 }
@@ -502,9 +547,13 @@ func extractMOCSections(mocContent string) []string {
 
 func assembleMOCMarkdown(synthesis *MOCSynthesisResponse, mocTitle, tag, existingBody string, articleInfoMap map[int64]MOCArticleInfo) string {
 	userNotesContent := ""
+	var existingDoc *MOCDocument
 	if existingBody != "" {
-		if existingDoc, err := ParseMOCDocument(existingBody); err == nil && existingDoc.UserNotesBody != "" {
-			userNotesContent = existingDoc.UserNotesBody
+		if parsed, err := ParseMOCDocument(existingBody); err == nil {
+			existingDoc = parsed
+			if existingDoc.UserNotesBody != "" {
+				userNotesContent = existingDoc.UserNotesBody
+			}
 		}
 	}
 
@@ -512,15 +561,22 @@ func assembleMOCMarkdown(synthesis *MOCSynthesisResponse, mocTitle, tag, existin
 		userNotesContent = "<!-- Content below this line is preserved across automated Librarian updates -->\n"
 	}
 
-	frontmatterData := map[string]interface{}{
-		"type":  "moc",
-		"title": mocTitle,
-		"tags":  []string{"moc", tag},
-		"date":  time.Now().Format("2006-01-02"),
-		"generated": map[string]interface{}{
-			"by":         "agent/librarian-moc",
-			"updated_at": time.Now().UTC().Format(time.RFC3339),
-		},
+	frontmatterData := map[string]interface{}{}
+	if existingDoc != nil && len(existingDoc.Frontmatter) > 0 {
+		for k, v := range existingDoc.Frontmatter {
+			frontmatterData[k] = v
+		}
+	}
+
+	frontmatterData["type"] = "moc"
+	frontmatterData["title"] = mocTitle
+	frontmatterData["tags"] = []string{"moc", tag}
+	if _, exists := frontmatterData["date"]; !exists {
+		frontmatterData["date"] = time.Now().Format("2006-01-02")
+	}
+	frontmatterData["generated"] = map[string]interface{}{
+		"by":         "agent/librarian-moc",
+		"updated_at": time.Now().UTC().Format(time.RFC3339),
 	}
 
 	var parsedSections []MOCParsedSection
