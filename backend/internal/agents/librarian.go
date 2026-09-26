@@ -588,6 +588,21 @@ func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate,
 	}
 
 	if contentChanged {
+		// When content changed, assign a fresh timestamp
+		if parsedDoc, err := ParseMOCDocument(newMarkdown); err == nil {
+			if gen, ok := parsedDoc.Frontmatter["generated"].(map[string]interface{}); ok {
+				gen["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+			} else if gen, ok := parsedDoc.Frontmatter["generated"].(map[interface{}]interface{}); ok {
+				gen["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+			} else {
+				parsedDoc.Frontmatter["generated"] = map[string]interface{}{
+					"by":         "agent/librarian-moc",
+					"updated_at": time.Now().UTC().Format(time.RFC3339),
+				}
+			}
+			newMarkdown = parsedDoc.Serialize()
+		}
+
 		dir := filepath.Dir(destinationPath)
 		_ = os.MkdirAll(dir, 0755)
 		tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(destinationPath)))

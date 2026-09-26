@@ -14,7 +14,8 @@ import (
 )
 
 func (r *LibrarianRunner) synthesizeCluster(ctx context.Context, cluster ClusterCandidate, apiKey, model, apiURL string) (*MOCSynthesisResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	parentCtx := ctx
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
 	articleMap := make(map[int64]repository.ArticleRecord)
@@ -110,7 +111,7 @@ Instructions:
 	httpReq.Header.Set("X-Title", "Readr Librarian MOC Synthesizer")
 
 	startTime := time.Now()
-	client := &http.Client{Timeout: 45 * time.Second}
+	client := &http.Client{Timeout: 25 * time.Second}
 	var resp *http.Response
 	var bodyBytes []byte
 	var lastErr error
@@ -157,7 +158,7 @@ Instructions:
 		if resp.StatusCode != 200 {
 			errMsg := fmt.Sprintf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
 			if r.repo != nil {
-				_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
+				_ = r.repo.RecordPipelineMetric(context.WithoutCancel(parentCtx), &repository.PipelineMetric{
 					ArticleID:        0,
 					ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
 					Model:            model,
@@ -181,7 +182,7 @@ Instructions:
 
 	if lastErr != nil {
 		if r.repo != nil {
-			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
+			_ = r.repo.RecordPipelineMetric(context.WithoutCancel(parentCtx), &repository.PipelineMetric{
 				ArticleID:        0,
 				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
 				Model:            model,
@@ -269,7 +270,7 @@ Instructions:
 	}
 
 	if r.repo != nil {
-		_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
+		_ = r.repo.RecordPipelineMetric(context.WithoutCancel(parentCtx), &repository.PipelineMetric{
 			ArticleID:        mocID,
 			ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
 			Model:            model,
@@ -287,7 +288,8 @@ Instructions:
 }
 
 func (r *LibrarianRunner) synthesizeDeltaCluster(ctx context.Context, cluster ClusterCandidate, unlinked []repository.ArticleRecord, existingContent string, apiKey, model, apiURL string) (*MOCDeltaResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	parentCtx := ctx
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
 	unlinkedMap := make(map[int64]repository.ArticleRecord)
@@ -371,7 +373,7 @@ Instructions:
 	httpReq.Header.Set("X-Title", "Readr Librarian MOC Synthesizer")
 
 	startTime := time.Now()
-	client := &http.Client{Timeout: 45 * time.Second}
+	client := &http.Client{Timeout: 25 * time.Second}
 	var resp *http.Response
 	var bodyBytes []byte
 	var lastErr error
@@ -423,7 +425,7 @@ Instructions:
 		if resp.StatusCode != 200 {
 			errMsg := fmt.Sprintf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
 			if r.repo != nil {
-				_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
+				_ = r.repo.RecordPipelineMetric(context.WithoutCancel(parentCtx), &repository.PipelineMetric{
 					ArticleID:        mocID,
 					ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
 					Model:            model,
@@ -447,7 +449,7 @@ Instructions:
 
 	if lastErr != nil {
 		if r.repo != nil {
-			_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
+			_ = r.repo.RecordPipelineMetric(context.WithoutCancel(parentCtx), &repository.PipelineMetric{
 				ArticleID:        mocID,
 				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
 				Model:            model,
@@ -530,7 +532,7 @@ Instructions:
 	}
 
 	if r.repo != nil {
-		_ = r.repo.RecordPipelineMetric(ctx, &repository.PipelineMetric{
+		_ = r.repo.RecordPipelineMetric(context.WithoutCancel(parentCtx), &repository.PipelineMetric{
 			ArticleID:        mocID,
 			ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
 			Model:            model,

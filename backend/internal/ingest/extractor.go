@@ -106,13 +106,13 @@ func (e *ContentExtractor) Extract(htmlBytes []byte, sourceURL *url.URL) (*Extra
 }
 
 var (
-	reMultipleNewlines       = regexp.MustCompile(`\n{3,}`)
-	reEmptyLinks             = regexp.MustCompile(`\[\s*\]\([^\)]*\)`)
-	reEmptyImages            = regexp.MustCompile(`!\[\s*\]\(\s*\)`)
-	reOrphanedBullets        = regexp.MustCompile(`(?m)^[-*+]\s*$`)
-	reBoilerplateHeadings    = regexp.MustCompile(`(?i)^#{1,6}\s*(share\s+this(\s+article|\s+story|\s+post)?|share\s+on\s+\w+|newsletter(\s+signup)?|subscribe(\s+to\s+our\s+newsletter)?|leave\s+a\s+(reply|comment)|comments?|related\s+(articles?|posts?|stories)|advertisement|trending\s+now|table\s+of\s+contents)\s*$`)
-	reBoilerplateProseLines  = regexp.MustCompile(`(?i)^\s*(\[?\s*add\s+as\s+a\s+preferred\s+source\s+on\s+google\s*\]?(\([^\)]*\))?|\[?\s*read\s+full\s+bio\s*\]?(\([^\)]*\))?|we\s+may\s+earn\s+a\s+commission(\s+from\s+links\s+on\s+this\s+page)?\.?|what\s+do\s+you\s+think\s+so\s+far\??|was\s+this\s+helpful\??)\s*$`)
-	reCodeFence              = regexp.MustCompile("(?s)(```.*?```|~~~.*?~~~)")
+	reMultipleNewlines      = regexp.MustCompile(`\n{3,}`)
+	reEmptyLinks            = regexp.MustCompile(`\[\s*\]\([^\)]*\)`)
+	reEmptyImages           = regexp.MustCompile(`!\[\s*\]\(\s*\)`)
+	reOrphanedBullets       = regexp.MustCompile(`(?m)^[-*+]\s*$`)
+	reBoilerplateHeadings   = regexp.MustCompile(`(?i)^#{1,6}\s*(share\s+this(\s+article|\s+story|\s+post)?|share\s+on\s+\w+|newsletter(\s+signup)?|subscribe(\s+to\s+our\s+newsletter)?|leave\s+a\s+(reply|comment)|comments?|related\s+(articles?|posts?|stories)|advertisement|trending\s+now|table\s+of\s+contents)\s*$`)
+	reBoilerplateProseLines = regexp.MustCompile(`(?i)^\s*(\[?\s*add\s+as\s+a\s+preferred\s+source\s+on\s+google\s*\]?(\([^\)]*\))?|\[?\s*read\s+full\s+bio\s*\]?(\([^\)]*\))?|we\s+may\s+earn\s+a\s+commission(\s+from\s+links\s+on\s+this\s+page)?\.?|what\s+do\s+you\s+think\s+so\s+far\??|was\s+this\s+helpful\??)\s*$`)
+	reCodeFence             = regexp.MustCompile("(?s)(```.*?```|~~~.*?~~~)")
 )
 
 // cleanMarkdownSegment cleans non-code markdown prose
@@ -311,7 +311,96 @@ func resolveURL(base *url.URL, ref string) string {
 	return base.ResolveReference(refURL).String()
 }
 
-var reJunkAttributes = regexp.MustCompile(`(?i)(cookie|consent|banner|newsletter|subscribe|social-share|share-bar|share-buttons|advertisement|ad-container|ad-slot|taboola|outbrain|author-bio|author-info|author-card|author-details|author-profile|preferred-source|google-news|comments?|openweb|disqus|coral-comment|paywall|metered-paywall|survey|feedback|poll|reaction-buttons|recirc|related-posts|recommended-articles|affiliate-disclaimer|disclosure)`)
+var junkTokenRoots = []string{
+	"cookie",
+	"consent",
+	"banner",
+	"newsletter",
+	"subscribe",
+	"social-share",
+	"share-bar",
+	"share-buttons",
+	"advertisement",
+	"ad-container",
+	"ad-slot",
+	"taboola",
+	"outbrain",
+	"author-bio",
+	"author-info",
+	"author-card",
+	"author-details",
+	"author-profile",
+	"preferred-source",
+	"google-news",
+	"comment",
+	"comments",
+	"openweb",
+	"disqus",
+	"coral-comment",
+	"paywall",
+	"metered-paywall",
+	"survey",
+	"feedback",
+	"poll",
+	"reaction-buttons",
+	"recirc",
+	"related-posts",
+	"recommended-articles",
+	"affiliate-disclaimer",
+	"disclosure",
+}
+
+func matchesJunkTokens(val string) bool {
+	if strings.TrimSpace(val) == "" {
+		return false
+	}
+	tokens := strings.Fields(val)
+	for _, tok := range tokens {
+		tokLower := strings.ToLower(tok)
+		for _, root := range junkTokenRoots {
+			// Exact match (e.g. "paywall", "comments", "banner")
+			if tokLower == root {
+				return true
+			}
+			// Compound match with modifier (e.g. "cookie-banner", "newsletter-signup", "ad-slot")
+			// but NOT trailing wrapper/container identifiers that wrap whole body (like "paywall-content-wrapper")
+			if strings.HasPrefix(tokLower, root+"-") || strings.HasPrefix(tokLower, root+"_") {
+				// Don't treat "-content" or "-body" or "-container" or "-wrapper" as junk if prefixed with paywall/comments
+				if !strings.Contains(tokLower, "content") && !strings.Contains(tokLower, "body") {
+					return true
+				}
+			}
+			if strings.HasSuffix(tokLower, "-"+root) || strings.HasSuffix(tokLower, "_"+root) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func countParagraphTextLength(n *html.Node) int {
+	if n == nil {
+		return 0
+	}
+	total := 0
+	var walk func(curr *html.Node)
+	walk = func(curr *html.Node) {
+		if curr.Type == html.ElementNode && strings.EqualFold(curr.Data, "p") {
+			var textBuf strings.Builder
+			for c := curr.FirstChild; c != nil; c = c.NextSibling {
+				if c.Type == html.TextNode {
+					textBuf.WriteString(c.Data)
+				}
+			}
+			total += len(strings.TrimSpace(textBuf.String()))
+		}
+		for c := curr.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return total
+}
 
 func isProtectedNode(n *html.Node) bool {
 	if n == nil {
@@ -350,13 +439,18 @@ func shouldPruneNode(n *html.Node) bool {
 		return true
 	}
 
+	// Never prune nodes that contain substantial paragraph text (e.g. 200+ characters)
+	if countParagraphTextLength(n) >= 200 {
+		return false
+	}
+
 	classVal := getAttr(n, "class")
 	idVal := getAttr(n, "id")
 	ariaVal := getAttr(n, "aria-label")
 	gaModule := getAttr(n, "data-ga-module")
 	xShow := getAttr(n, "x-show")
 
-	if reJunkAttributes.MatchString(classVal) || reJunkAttributes.MatchString(idVal) || reJunkAttributes.MatchString(ariaVal) {
+	if matchesJunkTokens(classVal) || matchesJunkTokens(idVal) || matchesJunkTokens(ariaVal) {
 		return true
 	}
 

@@ -335,3 +335,48 @@ func TestExtract_FallbackWhenPruningEmpties(t *testing.T) {
 		t.Errorf("Fallback extraction failed to retrieve unpruned content: %s", result2.MarkdownContent)
 	}
 }
+
+func TestPruneHTMLTree_WholeTokenMatchingAndParagraphGuards(t *testing.T) {
+	rawHTML := `<!DOCTYPE html>
+<html>
+<body>
+    <div class="paywall-content-wrapper">
+        <p>This is legitimate content wrapped in a paywall-content-wrapper class that should NOT be pruned as a substring match.</p>
+    </div>
+    <div id="comments-and-body-container">
+        <p>This is legitimate content inside comments-and-body-container that should also be preserved.</p>
+    </div>
+    <div class="paywall">
+        <p>Actual paywall overlay text.</p>
+    </div>
+    <div id="comments">
+        <p>Actual user comments section.</p>
+    </div>
+</body>
+</html>`
+
+	doc, err := html.Parse(strings.NewReader(rawHTML))
+	if err != nil {
+		t.Fatalf("failed to parse test HTML: %v", err)
+	}
+
+	prunedDoc := pruneHTMLTree(doc)
+	var buf bytes.Buffer
+	if err := html.Render(&buf, prunedDoc); err != nil {
+		t.Fatalf("failed to render pruned HTML: %v", err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, "paywall-content-wrapper") {
+		t.Errorf("wrapper with paywall substring was incorrectly pruned: %s", out)
+	}
+	if !strings.Contains(out, "comments-and-body-container") {
+		t.Errorf("wrapper with comments substring was incorrectly pruned: %s", out)
+	}
+	if strings.Contains(out, "Actual paywall overlay text.") {
+		t.Errorf("actual paywall was not pruned: %s", out)
+	}
+	if strings.Contains(out, "Actual user comments section.") {
+		t.Errorf("actual comments was not pruned: %s", out)
+	}
+}

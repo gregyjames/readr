@@ -326,7 +326,7 @@ func (doc *MOCDocument) Serialize() string {
 		sb.WriteString("## Notes & Synthesis\n")
 		sb.WriteString("<!-- Content below this line is preserved across automated Librarian updates -->\n")
 	} else {
-		if strings.HasPrefix(userNotes, "#") {
+		if strings.HasPrefix(userNotes, "## ") {
 			sb.WriteString(userNotes + "\n")
 		} else {
 			sb.WriteString("## Notes & Synthesis\n")
@@ -574,9 +574,25 @@ func assembleMOCMarkdown(synthesis *MOCSynthesisResponse, mocTitle, tag, existin
 	if _, exists := frontmatterData["date"]; !exists {
 		frontmatterData["date"] = time.Now().Format("2006-01-02")
 	}
+	existingUpdatedAt := ""
+	if gen, ok := frontmatterData["generated"].(map[string]interface{}); ok {
+		if u, exists := gen["updated_at"].(string); exists && u != "" {
+			existingUpdatedAt = u
+		}
+	} else if gen, ok := frontmatterData["generated"].(map[interface{}]interface{}); ok {
+		if u, exists := gen["updated_at"].(string); exists && u != "" {
+			existingUpdatedAt = u
+		}
+	}
+
+	updatedAt := existingUpdatedAt
+	if updatedAt == "" {
+		updatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+
 	frontmatterData["generated"] = map[string]interface{}{
 		"by":         "agent/librarian-moc",
-		"updated_at": time.Now().UTC().Format(time.RFC3339),
+		"updated_at": updatedAt,
 	}
 
 	var parsedSections []MOCParsedSection
