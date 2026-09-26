@@ -248,6 +248,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	articleFetcher := &handlers.ArticleFileFetcher{DataDir: dataDirectory, DB: db}
 	chatService := chat.NewService(chatRepo, articleFetcher)
 	vaultInstance := vault.NewVault(dataDirectory, db, logger, graphEngine)
+	maintenanceService := vault.NewMaintenanceService(dataDirectory, db, logger)
 
 	hCtx := &handlers.HandlerContext{
 		DB:               db,
@@ -263,6 +264,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		TemplateRenderer: templateRenderer,
 		EventHub:         eventHub,
 		ArticleFetcher:   articleFetcher,
+		Maintenance:      maintenanceService,
 	}
 
 	api := app.Group("/api")
@@ -300,6 +302,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	handlers.RegisterEvents(api, hCtx)
 	handlers.RegisterDiagnostics(api, hCtx)
 	handlers.RegisterLibrarian(api, hCtx, librarianRunner, librarianCron)
+	handlers.RegisterMaintenance(api, hCtx)
 
 	distDir := os.Getenv("DIST_DIR")
 	if distDir == "" {

@@ -89,6 +89,7 @@ type HandlerContext struct {
 	EventHub         *EventHub
 	ArticleFetcher   *ArticleFileFetcher
 	LibrarianCron    *agents.LibrarianCronManager
+	Maintenance      *vault.MaintenanceService
 	DistDir          string
 	PublicDir        string
 }
