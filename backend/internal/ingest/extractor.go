@@ -23,9 +23,28 @@ func NewContentExtractor() *ContentExtractor {
 }
 
 func (e *ContentExtractor) Extract(htmlBytes []byte, sourceURL *url.URL) (*ExtractedContent, error) {
-	article, err := readability.FromReader(bytes.NewReader(htmlBytes), sourceURL)
-	if err != nil {
-		return nil, fmt.Errorf("readability extraction failed: %w", err)
+	var article readability.Article
+	var extractErr error
+	extracted := false
+
+	// Attempt pruning DOM tree before feeding to readability
+	if doc, err := html.Parse(bytes.NewReader(htmlBytes)); err == nil {
+		prunedDoc := pruneHTMLTree(doc)
+		var buf bytes.Buffer
+		if err := html.Render(&buf, prunedDoc); err == nil {
+			if art, rErr := readability.FromReader(&buf, sourceURL); rErr == nil && strings.TrimSpace(art.Content) != "" {
+				article = art
+				extracted = true
+			}
+		}
+	}
+
+	// Fallback to running readability on original htmlBytes if pruning failed or yielded empty content
+	if !extracted {
+		article, extractErr = readability.FromReader(bytes.NewReader(htmlBytes), sourceURL)
+		if extractErr != nil {
+			return nil, fmt.Errorf("readability extraction failed: %w", extractErr)
+		}
 	}
 
 	// Extract images scoped strictly to article.Content (the readable body)
@@ -87,12 +106,13 @@ func (e *ContentExtractor) Extract(htmlBytes []byte, sourceURL *url.URL) (*Extra
 }
 
 var (
-	reMultipleNewlines    = regexp.MustCompile(`\n{3,}`)
-	reEmptyLinks          = regexp.MustCompile(`\[\s*\]\([^\)]*\)`)
-	reEmptyImages         = regexp.MustCompile(`!\[\s*\]\(\s*\)`)
-	reOrphanedBullets     = regexp.MustCompile(`(?m)^[-*+]\s*$`)
-	reBoilerplateHeadings = regexp.MustCompile(`(?i)^#{1,6}\s*(share\s+this(\s+article|\s+story|\s+post)?|share\s+on\s+\w+|newsletter(\s+signup)?|subscribe(\s+to\s+our\s+newsletter)?|leave\s+a\s+(reply|comment)|comments?|related\s+(articles?|posts?|stories)|advertisement|trending\s+now)\s*$`)
-	reCodeFence           = regexp.MustCompile("(?s)(```.*?```|~~~.*?~~~)")
+	reMultipleNewlines      = regexp.MustCompile(`\n{3,}`)
+	reEmptyLinks            = regexp.MustCompile(`\[\s*\]\([^\)]*\)`)
+	reEmptyImages           = regexp.MustCompile(`!\[\s*\]\(\s*\)`)
+	reOrphanedBullets       = regexp.MustCompile(`(?m)^[-*+]\s*$`)
+	reBoilerplateHeadings   = regexp.MustCompile(`(?i)^#{1,6}\s*(share\s+this(\s+article|\s+story|\s+post)?|share\s+on\s+\w+|newsletter(\s+signup)?|subscribe(\s+to\s+our\s+newsletter)?|leave\s+a\s+(reply|comment)|comments?|related\s+(articles?|posts?|stories)|advertisement|trending\s+now|table\s+of\s+contents)\s*$`)
+	reBoilerplateProseLines = regexp.MustCompile(`(?i)^\s*(\[?\s*add\s+as\s+a\s+preferred\s+source\s+on\s+google\s*\]?(\([^\)]*\))?|\[?\s*read\s+full\s+bio\s*\]?(\([^\)]*\))?|we\s+may\s+earn\s+a\s+commission(\s+from\s+links\s+on\s+this\s+page)?\.?|what\s+do\s+you\s+think\s+so\s+far\??|was\s+this\s+helpful\??)\s*$`)
+	reCodeFence             = regexp.MustCompile("(?s)(```.*?```|~~~.*?~~~)")
 )
 
 // cleanMarkdownSegment cleans non-code markdown prose
@@ -114,6 +134,11 @@ func cleanMarkdownSegment(raw string) string {
 
 		// Check boilerplate headings
 		if reBoilerplateHeadings.MatchString(trimmed) {
+			continue
+		}
+
+		// Check boilerplate prose lines (e.g. google preferred source, read full bio)
+		if reBoilerplateProseLines.MatchString(trimmed) {
 			continue
 		}
 
@@ -284,4 +309,178 @@ func resolveURL(base *url.URL, ref string) string {
 		return refURL.String()
 	}
 	return base.ResolveReference(refURL).String()
+}
+
+var junkTokenRoots = []string{
+	"cookie",
+	"consent",
+	"banner",
+	"newsletter",
+	"subscribe",
+	"social-share",
+	"share-bar",
+	"share-buttons",
+	"advertisement",
+	"ad-container",
+	"ad-slot",
+	"taboola",
+	"outbrain",
+	"author-bio",
+	"author-info",
+	"author-card",
+	"author-details",
+	"author-profile",
+	"preferred-source",
+	"google-news",
+	"comment",
+	"comments",
+	"openweb",
+	"disqus",
+	"coral-comment",
+	"paywall",
+	"metered-paywall",
+	"survey",
+	"feedback",
+	"poll",
+	"reaction-buttons",
+	"recirc",
+	"related-posts",
+	"recommended-articles",
+	"affiliate-disclaimer",
+	"disclosure",
+}
+
+func matchesJunkTokens(val string) bool {
+	if strings.TrimSpace(val) == "" {
+		return false
+	}
+	tokens := strings.Fields(val)
+	for _, tok := range tokens {
+		tokLower := strings.ToLower(tok)
+		for _, root := range junkTokenRoots {
+			// Exact match (e.g. "paywall", "comments", "banner")
+			if tokLower == root {
+				return true
+			}
+			// Compound match with modifier (e.g. "cookie-banner", "newsletter-signup", "ad-slot")
+			// but NOT trailing wrapper/container identifiers that wrap whole body (like "paywall-content-wrapper")
+			if strings.HasPrefix(tokLower, root+"-") || strings.HasPrefix(tokLower, root+"_") {
+				// Don't treat "-content" or "-body" or "-container" or "-wrapper" as junk if prefixed with paywall/comments
+				if !strings.Contains(tokLower, "content") && !strings.Contains(tokLower, "body") {
+					return true
+				}
+			}
+			if strings.HasSuffix(tokLower, "-"+root) || strings.HasSuffix(tokLower, "_"+root) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func countParagraphTextLength(n *html.Node) int {
+	if n == nil {
+		return 0
+	}
+	total := 0
+	var walk func(curr *html.Node)
+	walk = func(curr *html.Node) {
+		if curr.Type == html.ElementNode && strings.EqualFold(curr.Data, "p") {
+			var textBuf strings.Builder
+			for c := curr.FirstChild; c != nil; c = c.NextSibling {
+				if c.Type == html.TextNode {
+					textBuf.WriteString(c.Data)
+				}
+			}
+			total += len(strings.TrimSpace(textBuf.String()))
+		}
+		for c := curr.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return total
+}
+
+func isProtectedNode(n *html.Node) bool {
+	if n == nil {
+		return false
+	}
+	tag := strings.ToLower(n.Data)
+	if tag == "html" || tag == "head" || tag == "body" || tag == "article" || tag == "main" {
+		return true
+	}
+	role := strings.ToLower(getAttr(n, "role"))
+	if role == "main" || role == "article" {
+		return true
+	}
+	return false
+}
+
+func shouldPruneNode(n *html.Node) bool {
+	if n == nil || n.Type != html.ElementNode {
+		return false
+	}
+	if isProtectedNode(n) {
+		return false
+	}
+
+	tag := strings.ToLower(n.Data)
+	switch tag {
+	case "nav", "footer", "aside", "form", "script", "style", "noscript", "dialog", "iframe", "svg":
+		return true
+	case "header":
+		// Only prune <header> if it is NOT directly or indirectly inside an <article>
+		for p := n.Parent; p != nil; p = p.Parent {
+			if strings.EqualFold(p.Data, "article") {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Never prune nodes that contain substantial paragraph text (e.g. 200+ characters)
+	if countParagraphTextLength(n) >= 200 {
+		return false
+	}
+
+	classVal := getAttr(n, "class")
+	idVal := getAttr(n, "id")
+	ariaVal := getAttr(n, "aria-label")
+	gaModule := getAttr(n, "data-ga-module")
+	xShow := getAttr(n, "x-show")
+
+	if matchesJunkTokens(classVal) || matchesJunkTokens(idVal) || matchesJunkTokens(ariaVal) {
+		return true
+	}
+
+	// Drop author byline popovers and hidden dropdown/dialogs
+	if gaModule == "author-byline" || xShow == "open" {
+		return true
+	}
+
+	return false
+}
+
+func pruneHTMLTree(root *html.Node) *html.Node {
+	if root == nil {
+		return nil
+	}
+
+	var walk func(n *html.Node)
+	walk = func(n *html.Node) {
+		child := n.FirstChild
+		for child != nil {
+			next := child.NextSibling
+			if shouldPruneNode(child) {
+				n.RemoveChild(child)
+			} else {
+				walk(child)
+			}
+			child = next
+		}
+	}
+
+	walk(root)
+	return root
 }

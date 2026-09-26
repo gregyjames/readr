@@ -1934,3 +1934,348 @@ func TestDetectClustersFromArticles_DeterministicSecondaryTagSorting(t *testing.
 		}
 	}
 }
+
+func TestLibrarian_ClusterFailureIsolation(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	// Create 5 articles for cluster 1 ("faulty-cluster")
+	for i := 1; i <= 5; i++ {
+		title := fmt.Sprintf("Faulty Article %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "faulty-cluster",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	// Create 5 articles for cluster 2 ("healthy-cluster")
+	for i := 6; i <= 10; i++ {
+		title := fmt.Sprintf("Healthy Article %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "healthy-cluster",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	// Mock server returns 500 or error for "faulty-cluster", succeeds with markdown code blocks and hallucinated IDs for "healthy-cluster"
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		bodyStr := string(body)
+
+		if strings.Contains(bodyStr, "faulty-cluster") {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error": "internal llm failure"}`))
+			return
+		}
+
+		// healthy cluster response wrapped in markdown block and with a hallucinated article_id 9999
+		res := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": "```json\n" + `{
+							"topic_title": "Healthy Cluster",
+							"executive_summary": "Healthy synthesis summary.",
+							"sections": [
+								{
+									"title": "Healthy Section",
+									"items": [
+										{"article_id": 6, "context_note": "Valid article 6."},
+										{"article_id": 9999, "context_note": "Hallucinated article ID that does not exist in DB."}
+									]
+								}
+							]
+						}` + "\n```",
+					},
+				},
+			},
+			"usage": map[string]int{
+				"prompt_tokens":     100,
+				"completion_tokens": 50,
+				"total_tokens":      150,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer mockServer.Close()
+
+	settingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	result, err := runner.RunLibrarianWithURL(context.Background(), "manual", mockServer.URL)
+	if err != nil {
+		t.Fatalf("unexpected runner error: %v", err)
+	}
+
+	// Cluster 1 failed, but cluster 2 succeeded
+	if result.Status != "partial (some clusters failed)" {
+		t.Errorf("expected status 'partial (some clusters failed)', got %q", result.Status)
+	}
+	if len(result.Errors) == 0 {
+		t.Errorf("expected errors recorded for faulty cluster, got empty")
+	}
+	if result.CreatedMOCs != 1 {
+		t.Errorf("expected 1 CreatedMOC from healthy cluster, got %d", result.CreatedMOCs)
+	}
+
+	// Verify hallucinated article ID 9999 was not linked in DB
+	var hallucinatedLink repository.GormArticleLink
+	if err := db.Where("target_id = ?", 9999).First(&hallucinatedLink).Error; err == nil {
+		t.Errorf("expected no links to hallucinated article ID 9999, but found one: %+v", hallucinatedLink)
+	}
+
+	// Sub-test: verify unexpected panic in a cluster is recovered and isolated
+	t.Run("PanicRecovery", func(t *testing.T) {
+		pDB, pRepo, pTempDir := setupTestLibrarianEnv(t)
+		pArticlesDir := filepath.Join(pTempDir, "articles")
+
+		for i := 1; i <= 5; i++ {
+			title := fmt.Sprintf("Faulty Note %d", i)
+			filePath := filepath.Join(pArticlesDir, fmt.Sprintf("%s.md", title))
+			_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+			pDB.Create(&repository.GormArticle{
+				ID:      int64(i),
+				Title:   title,
+				Tags:    "faulty-cluster",
+				Article: fmt.Sprintf("/articles/%s.md", title),
+			})
+		}
+		for i := 6; i <= 10; i++ {
+			title := fmt.Sprintf("Healthy Note %d", i)
+			filePath := filepath.Join(pArticlesDir, fmt.Sprintf("%s.md", title))
+			_ = os.WriteFile(filePath, []byte(fmt.Sprintf("# %s\nContent", title)), 0644)
+			pDB.Create(&repository.GormArticle{
+				ID:      int64(i),
+				Title:   title,
+				Tags:    "healthy-cluster",
+				Article: fmt.Sprintf("/articles/%s.md", title),
+			})
+		}
+
+		pSettingsJSON := `{"api_key":"test-key","model":"test-model","librarian_enabled":true,"librarian_min_cluster_size":5}`
+		_ = os.WriteFile(filepath.Join(pTempDir, "settings.json"), []byte(pSettingsJSON), 0644)
+
+		healthyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			res := map[string]interface{}{
+				"choices": []map[string]interface{}{
+					{
+						"message": map[string]string{
+							"content": `{"topic_title": "Healthy Cluster", "executive_summary": "Summary", "sections": []}`,
+						},
+					},
+				},
+				"usage": map[string]int{"total_tokens": 100},
+			}
+			_ = json.NewEncoder(w).Encode(res)
+		}))
+		defer healthyServer.Close()
+
+		pRunner := NewLibrarianRunner(zap.NewNop(), pDB, pRepo, pTempDir, nil)
+		pRunner.onClusterProcess = func(tag string) {
+			if tag == "faulty-cluster" {
+				panic("simulated catastrophic panic inside cluster execution")
+			}
+		}
+
+		pResult, pErr := pRunner.RunLibrarianWithURL(context.Background(), "manual", healthyServer.URL)
+		if pErr != nil {
+			t.Fatalf("unexpected runner error: %v", pErr)
+		}
+		if pResult.Status != "partial (some clusters failed)" {
+			t.Errorf("expected status 'partial (some clusters failed)', got %q", pResult.Status)
+		}
+
+		// Ensure the panic was recorded in result.Errors
+		hasPanicError := false
+		for _, e := range pResult.Errors {
+			if strings.Contains(e, "panic in cluster faulty-cluster") {
+				hasPanicError = true
+				break
+			}
+		}
+		if !hasPanicError {
+			t.Errorf("expected panic error recorded in result.Errors, got: %v", pResult.Errors)
+		}
+
+		// Ensure the non-panicking cluster succeeded
+		if pResult.CreatedMOCs != 1 {
+			t.Errorf("expected healthy cluster to create MOC despite peer panic, got CreatedMOCs=%d", pResult.CreatedMOCs)
+		}
+	})
+}
+
+func TestLibrarian_SaveReconciledMOC_Idempotent(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+	topicFolder := filepath.Join(articlesDir, "Golang")
+	_ = os.MkdirAll(topicFolder, 0755)
+
+	mocPath := filepath.Join(topicFolder, "MOC - Golang.md")
+	initialContent := `# MOC - Golang
+
+## Core Concepts
+- [[Goroutines and Concurrency]] - Concurrency model.
+- [[Channels and Pipelines]] - Communication.
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+Manual notes.
+`
+	if err := os.WriteFile(mocPath, []byte(initialContent), 0644); err != nil {
+		t.Fatalf("failed to write initial MOC: %v", err)
+	}
+
+	// Explicitly set ModTime back in time so any file touch/rewrite will change it
+	pastTime := time.Now().Add(-1 * time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(mocPath, pastTime, pastTime); err != nil {
+		t.Fatalf("failed to set chtimes: %v", err)
+	}
+
+	statBefore, err := os.Stat(mocPath)
+	if err != nil {
+		t.Fatalf("failed to stat moc: %v", err)
+	}
+	modTimeBefore := statBefore.ModTime()
+
+	var mocArticle repository.GormArticle
+	db.Create(&repository.GormArticle{
+		ID:      500,
+		Title:   "MOC - Golang",
+		Tags:    "moc, golang",
+		Article: "/articles/Golang/MOC - Golang.md",
+	})
+	db.First(&mocArticle, 500)
+
+	cluster := ClusterCandidate{
+		Tag: "golang",
+		ExistingMOC: &repository.ArticleRecord{
+			ID:       mocArticle.ID,
+			Title:    mocArticle.Title,
+			FilePath: mocArticle.Article,
+		},
+		Articles: []repository.ArticleRecord{
+			{ID: 1, Title: "Goroutines and Concurrency", FilePath: "/articles/Goroutines and Concurrency.md"},
+			{ID: 2, Title: "Channels and Pipelines", FilePath: "/articles/Channels and Pipelines.md"},
+		},
+	}
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+
+	// Subtest 1: Idempotency when content is identical
+	t.Run("Bypasses rewrite when content identical", func(t *testing.T) {
+		err := runner.saveReconciledMOC(context.Background(), cluster, initialContent)
+		if err != nil {
+			t.Fatalf("saveReconciledMOC failed: %v", err)
+		}
+
+		statAfter, err := os.Stat(mocPath)
+		if err != nil {
+			t.Fatalf("failed to stat moc after save: %v", err)
+		}
+
+		if !statAfter.ModTime().Equal(modTimeBefore) {
+			t.Errorf("expected ModTime to remain unchanged on identical content; before=%v, after=%v", modTimeBefore, statAfter.ModTime())
+		}
+
+		// Ensure no leftover .tmp files
+		tmpFiles, _ := filepath.Glob(filepath.Join(topicFolder, "*.tmp"))
+		if len(tmpFiles) > 0 {
+			t.Errorf("unexpected leftover tmp files: %v", tmpFiles)
+		}
+	})
+
+	// Subtest 2: Atomic rewrite when content changes
+	t.Run("Writes atomically when content changes", func(t *testing.T) {
+		changedContent := initialContent + "\nNew synthesis note.\n"
+		err := runner.saveReconciledMOC(context.Background(), cluster, changedContent)
+		if err != nil {
+			t.Fatalf("saveReconciledMOC failed: %v", err)
+		}
+
+		statAfter, err := os.Stat(mocPath)
+		if err != nil {
+			t.Fatalf("failed to stat moc after change: %v", err)
+		}
+
+		if statAfter.ModTime().Equal(modTimeBefore) {
+			t.Errorf("expected ModTime to change on content modification")
+		}
+
+		data, err := os.ReadFile(mocPath)
+		if err != nil {
+			t.Fatalf("failed to read moc: %v", err)
+		}
+		if string(data) != changedContent {
+			t.Errorf("expected file content to match updated content")
+		}
+
+		// Ensure no leftover .tmp files
+		tmpFiles, _ := filepath.Glob(filepath.Join(topicFolder, "*.tmp"))
+		if len(tmpFiles) > 0 {
+			t.Errorf("unexpected leftover tmp files: %v", tmpFiles)
+		}
+	})
+
+	// Subtest 3: saveMOC idempotency when content is identical
+	t.Run("saveMOC bypasses rewrite when content identical", func(t *testing.T) {
+		synthesis := &MOCSynthesisResponse{
+			TopicTitle:       "Golang",
+			ExecutiveSummary: "Go overview",
+			Sections: []MOCSection{
+				{
+					Title: "Core Concepts",
+					Items: []MOCItem{
+						{ArticleID: 1, ContextNote: "Concurrency"},
+					},
+				},
+			},
+		}
+
+		// First save
+		err := runner.saveMOC(context.Background(), cluster, synthesis)
+		if err != nil {
+			t.Fatalf("first saveMOC failed: %v", err)
+		}
+
+		pastTimeMOC := time.Now().Add(-1 * time.Hour).Truncate(time.Second)
+		if err := os.Chtimes(mocPath, pastTimeMOC, pastTimeMOC); err != nil {
+			t.Fatalf("failed to set chtimes: %v", err)
+		}
+		statBeforeSave, err := os.Stat(mocPath)
+		if err != nil {
+			t.Fatalf("failed to stat moc: %v", err)
+		}
+
+		// Second save with identical synthesis
+		err = runner.saveMOC(context.Background(), cluster, synthesis)
+		if err != nil {
+			t.Fatalf("second saveMOC failed: %v", err)
+		}
+
+		statAfterSave, err := os.Stat(mocPath)
+		if err != nil {
+			t.Fatalf("failed to stat moc: %v", err)
+		}
+
+		if !statAfterSave.ModTime().Equal(statBeforeSave.ModTime()) {
+			t.Errorf("expected saveMOC ModTime to remain unchanged on identical content; before=%v, after=%v", statBeforeSave.ModTime(), statAfterSave.ModTime())
+		}
+
+		// Ensure no leftover .tmp files
+		tmpFiles, _ := filepath.Glob(filepath.Join(topicFolder, "*.tmp"))
+		if len(tmpFiles) > 0 {
+			t.Errorf("unexpected leftover tmp files: %v", tmpFiles)
+		}
+	})
+}
