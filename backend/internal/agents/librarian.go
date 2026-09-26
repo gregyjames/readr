@@ -575,15 +575,29 @@ func (r *LibrarianRunner) saveMOC(ctx context.Context, cluster ClusterCandidate,
 
 	newMarkdown := assembleMOCMarkdown(synthesis, mocTitle, cluster.Tag, existingBody, articleInfoMap)
 
-	dir := filepath.Dir(destinationPath)
-	_ = os.MkdirAll(dir, 0755)
-	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(destinationPath)))
-	if err := os.WriteFile(tmpFile, []byte(newMarkdown), 0644); err != nil {
-		return fmt.Errorf("failed to write tmp file: %w", err)
+	// Check if target file already exists with identical content
+	contentChanged := true
+	if existingBytes, err := os.ReadFile(destinationPath); err == nil {
+		if string(existingBytes) == newMarkdown {
+			contentChanged = false
+			r.logger.Info("MOC content unchanged, skipping disk write",
+				zap.String("moc_title", mocTitle),
+				zap.String("destination_path", destinationPath),
+			)
+		}
 	}
-	if err := os.Rename(tmpFile, destinationPath); err != nil {
-		_ = os.Remove(tmpFile)
-		return fmt.Errorf("failed to rename tmp file: %w", err)
+
+	if contentChanged {
+		dir := filepath.Dir(destinationPath)
+		_ = os.MkdirAll(dir, 0755)
+		tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(destinationPath)))
+		if err := os.WriteFile(tmpFile, []byte(newMarkdown), 0644); err != nil {
+			return fmt.Errorf("failed to write tmp file: %w", err)
+		}
+		if err := os.Rename(tmpFile, destinationPath); err != nil {
+			_ = os.Remove(tmpFile)
+			return fmt.Errorf("failed to rename tmp file: %w", err)
+		}
 	}
 
 	if oldPath != "" && oldPath != destinationPath {
@@ -683,15 +697,29 @@ func (r *LibrarianRunner) saveDeltaMOC(ctx context.Context, cluster ClusterCandi
 
 	newMarkdown := applyDeltaPlacements(existingContent, deltaResp.Placements, articleInfoMap)
 
-	dir := filepath.Dir(destinationPath)
-	_ = os.MkdirAll(dir, 0755)
-	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(destinationPath)))
-	if err := os.WriteFile(tmpFile, []byte(newMarkdown), 0644); err != nil {
-		return fmt.Errorf("failed to write tmp file: %w", err)
+	// Check if target file already exists with identical content
+	contentChanged := true
+	if existingBytes, err := os.ReadFile(destinationPath); err == nil {
+		if string(existingBytes) == newMarkdown {
+			contentChanged = false
+			r.logger.Info("MOC content unchanged, skipping disk write",
+				zap.String("moc_title", mocTitle),
+				zap.String("destination_path", destinationPath),
+			)
+		}
 	}
-	if err := os.Rename(tmpFile, destinationPath); err != nil {
-		_ = os.Remove(tmpFile)
-		return fmt.Errorf("failed to rename tmp file: %w", err)
+
+	if contentChanged {
+		dir := filepath.Dir(destinationPath)
+		_ = os.MkdirAll(dir, 0755)
+		tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(destinationPath)))
+		if err := os.WriteFile(tmpFile, []byte(newMarkdown), 0644); err != nil {
+			return fmt.Errorf("failed to write tmp file: %w", err)
+		}
+		if err := os.Rename(tmpFile, destinationPath); err != nil {
+			_ = os.Remove(tmpFile)
+			return fmt.Errorf("failed to rename tmp file: %w", err)
+		}
 	}
 
 	if oldPath != "" && oldPath != destinationPath {
@@ -797,15 +825,29 @@ func (r *LibrarianRunner) saveReconciledMOC(ctx context.Context, cluster Cluster
 		}
 	}
 
-	dir := filepath.Dir(destinationPath)
-	_ = os.MkdirAll(dir, 0755)
-	tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(destinationPath)))
-	if err := os.WriteFile(tmpFile, []byte(reconciledContent), 0644); err != nil {
-		return fmt.Errorf("failed to write tmp file: %w", err)
+	// Check if target file already exists with identical content
+	contentChanged := true
+	if existingBytes, err := os.ReadFile(destinationPath); err == nil {
+		if string(existingBytes) == reconciledContent {
+			contentChanged = false
+			r.logger.Info("MOC content unchanged, skipping disk write",
+				zap.String("topic_title", topicTitle),
+				zap.String("destination_path", destinationPath),
+			)
+		}
 	}
-	if err := os.Rename(tmpFile, destinationPath); err != nil {
-		_ = os.Remove(tmpFile)
-		return fmt.Errorf("failed to rename tmp file: %w", err)
+
+	if contentChanged {
+		dir := filepath.Dir(destinationPath)
+		_ = os.MkdirAll(dir, 0755)
+		tmpFile := filepath.Join(dir, fmt.Sprintf("%s.tmp", filepath.Base(destinationPath)))
+		if err := os.WriteFile(tmpFile, []byte(reconciledContent), 0644); err != nil {
+			return fmt.Errorf("failed to write tmp file: %w", err)
+		}
+		if err := os.Rename(tmpFile, destinationPath); err != nil {
+			_ = os.Remove(tmpFile)
+			return fmt.Errorf("failed to rename tmp file: %w", err)
+		}
 	}
 
 	if oldPath != "" && oldPath != destinationPath {

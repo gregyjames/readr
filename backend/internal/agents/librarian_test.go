@@ -2114,3 +2114,168 @@ func TestLibrarian_ClusterFailureIsolation(t *testing.T) {
 		}
 	})
 }
+
+func TestLibrarian_SaveReconciledMOC_Idempotent(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+	topicFolder := filepath.Join(articlesDir, "Golang")
+	_ = os.MkdirAll(topicFolder, 0755)
+
+	mocPath := filepath.Join(topicFolder, "MOC - Golang.md")
+	initialContent := `# MOC - Golang
+
+## Core Concepts
+- [[Goroutines and Concurrency]] - Concurrency model.
+- [[Channels and Pipelines]] - Communication.
+
+## Notes & Synthesis
+<!-- Content below this line is preserved across automated Librarian updates -->
+Manual notes.
+`
+	if err := os.WriteFile(mocPath, []byte(initialContent), 0644); err != nil {
+		t.Fatalf("failed to write initial MOC: %v", err)
+	}
+
+	// Explicitly set ModTime back in time so any file touch/rewrite will change it
+	pastTime := time.Now().Add(-1 * time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(mocPath, pastTime, pastTime); err != nil {
+		t.Fatalf("failed to set chtimes: %v", err)
+	}
+
+	statBefore, err := os.Stat(mocPath)
+	if err != nil {
+		t.Fatalf("failed to stat moc: %v", err)
+	}
+	modTimeBefore := statBefore.ModTime()
+
+	var mocArticle repository.GormArticle
+	db.Create(&repository.GormArticle{
+		ID:      500,
+		Title:   "MOC - Golang",
+		Tags:    "moc, golang",
+		Article: "/articles/Golang/MOC - Golang.md",
+	})
+	db.First(&mocArticle, 500)
+
+	cluster := ClusterCandidate{
+		Tag: "golang",
+		ExistingMOC: &repository.ArticleRecord{
+			ID:       mocArticle.ID,
+			Title:    mocArticle.Title,
+			FilePath: mocArticle.Article,
+		},
+		Articles: []repository.ArticleRecord{
+			{ID: 1, Title: "Goroutines and Concurrency", FilePath: "/articles/Goroutines and Concurrency.md"},
+			{ID: 2, Title: "Channels and Pipelines", FilePath: "/articles/Channels and Pipelines.md"},
+		},
+	}
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+
+	// Subtest 1: Idempotency when content is identical
+	t.Run("Bypasses rewrite when content identical", func(t *testing.T) {
+		err := runner.saveReconciledMOC(context.Background(), cluster, initialContent)
+		if err != nil {
+			t.Fatalf("saveReconciledMOC failed: %v", err)
+		}
+
+		statAfter, err := os.Stat(mocPath)
+		if err != nil {
+			t.Fatalf("failed to stat moc after save: %v", err)
+		}
+
+		if !statAfter.ModTime().Equal(modTimeBefore) {
+			t.Errorf("expected ModTime to remain unchanged on identical content; before=%v, after=%v", modTimeBefore, statAfter.ModTime())
+		}
+
+		// Ensure no leftover .tmp files
+		tmpFiles, _ := filepath.Glob(filepath.Join(topicFolder, "*.tmp"))
+		if len(tmpFiles) > 0 {
+			t.Errorf("unexpected leftover tmp files: %v", tmpFiles)
+		}
+	})
+
+	// Subtest 2: Atomic rewrite when content changes
+	t.Run("Writes atomically when content changes", func(t *testing.T) {
+		changedContent := initialContent + "\nNew synthesis note.\n"
+		err := runner.saveReconciledMOC(context.Background(), cluster, changedContent)
+		if err != nil {
+			t.Fatalf("saveReconciledMOC failed: %v", err)
+		}
+
+		statAfter, err := os.Stat(mocPath)
+		if err != nil {
+			t.Fatalf("failed to stat moc after change: %v", err)
+		}
+
+		if statAfter.ModTime().Equal(modTimeBefore) {
+			t.Errorf("expected ModTime to change on content modification")
+		}
+
+		data, err := os.ReadFile(mocPath)
+		if err != nil {
+			t.Fatalf("failed to read moc: %v", err)
+		}
+		if string(data) != changedContent {
+			t.Errorf("expected file content to match updated content")
+		}
+
+		// Ensure no leftover .tmp files
+		tmpFiles, _ := filepath.Glob(filepath.Join(topicFolder, "*.tmp"))
+		if len(tmpFiles) > 0 {
+			t.Errorf("unexpected leftover tmp files: %v", tmpFiles)
+		}
+	})
+
+	// Subtest 3: saveMOC idempotency when content is identical
+	t.Run("saveMOC bypasses rewrite when content identical", func(t *testing.T) {
+		synthesis := &MOCSynthesisResponse{
+			TopicTitle:       "Golang",
+			ExecutiveSummary: "Go overview",
+			Sections: []MOCSection{
+				{
+					Title: "Core Concepts",
+					Items: []MOCItem{
+						{ArticleID: 1, ContextNote: "Concurrency"},
+					},
+				},
+			},
+		}
+
+		// First save
+		err := runner.saveMOC(context.Background(), cluster, synthesis)
+		if err != nil {
+			t.Fatalf("first saveMOC failed: %v", err)
+		}
+
+		pastTimeMOC := time.Now().Add(-1 * time.Hour).Truncate(time.Second)
+		if err := os.Chtimes(mocPath, pastTimeMOC, pastTimeMOC); err != nil {
+			t.Fatalf("failed to set chtimes: %v", err)
+		}
+		statBeforeSave, err := os.Stat(mocPath)
+		if err != nil {
+			t.Fatalf("failed to stat moc: %v", err)
+		}
+
+		// Second save with identical synthesis
+		err = runner.saveMOC(context.Background(), cluster, synthesis)
+		if err != nil {
+			t.Fatalf("second saveMOC failed: %v", err)
+		}
+
+		statAfterSave, err := os.Stat(mocPath)
+		if err != nil {
+			t.Fatalf("failed to stat moc: %v", err)
+		}
+
+		if !statAfterSave.ModTime().Equal(statBeforeSave.ModTime()) {
+			t.Errorf("expected saveMOC ModTime to remain unchanged on identical content; before=%v, after=%v", statBeforeSave.ModTime(), statAfterSave.ModTime())
+		}
+
+		// Ensure no leftover .tmp files
+		tmpFiles, _ := filepath.Glob(filepath.Join(topicFolder, "*.tmp"))
+		if len(tmpFiles) > 0 {
+			t.Errorf("unexpected leftover tmp files: %v", tmpFiles)
+		}
+	})
+}
