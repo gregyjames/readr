@@ -593,6 +593,7 @@ func TestAddArticle_Integration(t *testing.T) {
 
 	repo := repository.NewGormRepository(db)
 	fetcher := ingest.NewHTTPFetcher(10 * time.Second)
+	fetcher.AllowLocalhost = true
 	extractor := ingest.NewContentExtractor()
 	storage := ingest.NewDiskStorage(tempDir)
 	ingester := ingest.NewIngester(fetcher, extractor, storage, repo)
