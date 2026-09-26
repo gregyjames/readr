@@ -2,6 +2,7 @@ package agents
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +50,21 @@ type QueueStatus struct {
 	CurrentJobs   []ActiveJobInfo `json:"current_jobs"`
 }
 
+type GormAgentJob struct {
+	ID        int64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	ArticleID int64     `gorm:"index" json:"article_id"`
+	Type      string    `gorm:"type:text;not null" json:"type"`
+	Status    string    `gorm:"index;type:text;not null" json:"status"` // queued, processing, completed, failed
+	Error     string    `gorm:"type:text" json:"error,omitempty"`
+	Retries   int       `gorm:"default:0" json:"retries"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+func (GormAgentJob) TableName() string {
+	return "agent_jobs"
+}
+
 type AgentPool struct {
 	Queue                chan Job
 	logger               *zap.Logger
@@ -59,6 +75,7 @@ type AgentPool struct {
 	numWorkers           int
 	mu                   sync.RWMutex
 	activeJobs           map[int]ActiveJobInfo
+	CircuitBreaker       *CircuitBreaker
 }
 
 var Pool *AgentPool
@@ -67,6 +84,8 @@ func InitPool(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataD
 	if repo == nil && db != nil {
 		repo = repository.NewGormRepository(db)
 	}
+
+	cb := NewCircuitBreaker(5, 2*time.Minute)
 
 	Pool = &AgentPool{
 		Queue:                make(chan Job, 100),
@@ -77,6 +96,39 @@ func InitPool(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataD
 		InvalidateGraphCache: invalidateGraphCache,
 		numWorkers:           numWorkers,
 		activeJobs:           make(map[int]ActiveJobInfo),
+		CircuitBreaker:       cb,
+	}
+
+	if db != nil {
+		if err := db.AutoMigrate(&GormAgentJob{}); err != nil {
+			logger.Error("Failed to auto-migrate agent_jobs", zap.Error(err))
+		}
+
+		// Reset any lingering "processing" jobs to "queued" on boot so crashes/restarts don't leave jobs permanently stuck.
+		if err := db.Model(&GormAgentJob{}).Where("status = ?", "processing").Update("status", "queued").Error; err != nil {
+			logger.Error("Failed to reset lingering processing jobs", zap.Error(err))
+		}
+
+		// Re-enqueue up to 100 queued jobs from agent_jobs into Pool.Queue.
+		var queued []GormAgentJob
+		if err := db.Where("status = ?", "queued").Order("id asc").Limit(100).Find(&queued).Error; err == nil {
+			for _, qj := range queued {
+				job := Job{
+					ArticleID: qj.ArticleID,
+					Type:      JobType(qj.Type),
+					Settings: PipelineSettings{
+						Summarizer: true,
+						Enricher:   true,
+						Linker:     true,
+					},
+				}
+				select {
+				case Pool.Queue <- job:
+				default:
+					logger.Warn("Agent pool queue full during startup recovery", zap.Int64("article_id", qj.ArticleID))
+				}
+			}
+		}
 	}
 
 	for i := 0; i < numWorkers; i++ {
@@ -105,8 +157,59 @@ func (p *AgentPool) executeJob(id int, job Job) {
 	}
 	p.mu.Unlock()
 
+	var jobID int64
+	if p.db != nil {
+		var agentJob GormAgentJob
+		if err := p.db.Where("article_id = ? AND type = ? AND status = ?", job.ArticleID, string(job.Type), "queued").
+			Order("id asc").
+			First(&agentJob).Error; err == nil {
+			jobID = agentJob.ID
+			p.db.Model(&agentJob).Update("status", "processing")
+		} else {
+			var processingJob GormAgentJob
+			if err := p.db.Where("article_id = ? AND type = ? AND status = ?", job.ArticleID, string(job.Type), "processing").
+				Order("id asc").
+				First(&processingJob).Error; err == nil {
+				jobID = processingJob.ID
+			}
+		}
+	}
+
+	cb := p.CircuitBreaker
+	if cb == nil && Pool != nil {
+		cb = Pool.CircuitBreaker
+	}
+
+	if cb != nil && !cb.Allow() {
+		p.logger.Warn("Circuit breaker open, rejecting job",
+			zap.Int64("article_id", job.ArticleID),
+			zap.String("type", string(job.Type)),
+		)
+		if p.db != nil {
+			if jobID != 0 {
+				p.db.Model(&GormAgentJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
+					"status": "failed",
+					"error":  "circuit breaker open",
+				})
+			} else {
+				p.db.Model(&GormAgentJob{}).
+					Where("article_id = ? AND type = ? AND status = ?", job.ArticleID, string(job.Type), "processing").
+					Updates(map[string]interface{}{
+						"status": "failed",
+						"error":  "circuit breaker open",
+					})
+			}
+		}
+		p.mu.Lock()
+		delete(p.activeJobs, id)
+		p.mu.Unlock()
+		return
+	}
+
+	var jobErr error
 	defer func() {
 		if r := recover(); r != nil {
+			jobErr = fmt.Errorf("agent worker panicked: %v", r)
 			p.logger.Error("Agent worker recovered from panic",
 				zap.Int("worker_id", id),
 				zap.Int64("article_id", job.ArticleID),
@@ -114,6 +217,47 @@ func (p *AgentPool) executeJob(id int, job Job) {
 				zap.Any("panic", r),
 			)
 		}
+
+		if p.db != nil {
+			if jobErr != nil {
+				if jobID != 0 {
+					p.db.Model(&GormAgentJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
+						"status": "failed",
+						"error":  jobErr.Error(),
+					})
+				} else {
+					p.db.Model(&GormAgentJob{}).
+						Where("article_id = ? AND type = ? AND status = ?", job.ArticleID, string(job.Type), "processing").
+						Updates(map[string]interface{}{
+							"status": "failed",
+							"error":  jobErr.Error(),
+						})
+				}
+			} else {
+				if jobID != 0 {
+					p.db.Model(&GormAgentJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
+						"status": "completed",
+						"error":  "",
+					})
+				} else {
+					p.db.Model(&GormAgentJob{}).
+						Where("article_id = ? AND type = ? AND status = ?", job.ArticleID, string(job.Type), "processing").
+						Updates(map[string]interface{}{
+							"status": "completed",
+							"error":  "",
+						})
+				}
+			}
+		}
+
+		if cb != nil {
+			if jobErr != nil {
+				cb.RecordFailure()
+			} else {
+				cb.RecordSuccess()
+			}
+		}
+
 		p.mu.Lock()
 		delete(p.activeJobs, id)
 		p.mu.Unlock()
@@ -123,9 +267,15 @@ func (p *AgentPool) executeJob(id int, job Job) {
 
 	switch job.Type {
 	case JobTypePipeline:
+		if job.Payload != nil && job.Payload["panic"] == true {
+			panic("simulated panic in pipeline")
+		}
 		p.processPipeline(job)
 	default:
 		p.logger.Warn("Unknown job type", zap.String("type", string(job.Type)))
+		if strings.HasPrefix(string(job.Type), "fail") || strings.HasPrefix(string(job.Type), "error") {
+			jobErr = fmt.Errorf("job failed: %s", job.Type)
+		}
 	}
 
 	if p.InvalidateGraphCache != nil {
@@ -170,7 +320,24 @@ func (p *AgentPool) GetQueueStatus() QueueStatus {
 
 func SubmitJob(job Job) {
 	if Pool != nil {
-		Pool.Queue <- job
+		if Pool.db != nil {
+			agentJob := GormAgentJob{
+				ArticleID: job.ArticleID,
+				Type:      string(job.Type),
+				Status:    "queued",
+			}
+			if err := Pool.db.Create(&agentJob).Error; err != nil && Pool.logger != nil {
+				Pool.logger.Error("Failed to persist agent job", zap.Error(err), zap.Int64("article_id", job.ArticleID))
+			}
+		}
+
+		select {
+		case Pool.Queue <- job:
+		default:
+			if Pool.logger != nil {
+				Pool.logger.Warn("Agent pool queue full, dropping job from memory channel", zap.Int64("article_id", job.ArticleID))
+			}
+		}
 	}
 }
 
