@@ -208,8 +208,6 @@ onBeforeUnmount(() => {
       <div class="space-y-0.5">
         <div class="flex items-center gap-2">
           <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-          <span class="text-[11px] font-mono tracking-wider uppercase text-gray-400 dark:text-gray-500">Live Wire</span>
-          <span class="text-gray-300 dark:text-gray-700">•</span>
           <span class="text-[11px] font-mono text-gray-400 dark:text-gray-500">{{ timeline.length }} entries</span>
         </div>
         <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900 dark:text-gray-100 font-['Outfit']">
