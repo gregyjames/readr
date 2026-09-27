@@ -15,6 +15,7 @@ import (
 
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
+	"example.com/backend/internal/vault"
 	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -204,6 +205,170 @@ func TestGetArticles_Pagination(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 500, resp7.StatusCode)
 }
+
+func TestGetArticles_ServerSideFilters(t *testing.T) {
+	app, db, hCtx, cleanup := setupArticlesTestApp(t)
+	defer cleanup()
+
+	// Seed vault in hCtx so we test both Vault and DB paths if desired
+	v := vault.NewVault(hCtx.DataDir, db, hCtx.Logger, nil)
+	hCtx.Vault = v
+
+	// Seed test articles
+	// moc1: MOC title, tags: "go", not archived
+	moc1 := repository.GormArticle{
+		Title:      "MOC - Go Distributed Systems",
+		Article:    "moc-go.md",
+		Tags:       "go, systems",
+		IsArchived: false,
+		WordCount:  120,
+	}
+	// moc2: normal title, tag contains "moc", not archived
+	moc2 := repository.GormArticle{
+		Title:      "Artificial Intelligence Hub",
+		Article:    "ai-hub.md",
+		Tags:       "ai, moc",
+		IsArchived: false,
+		WordCount:  200,
+	}
+	// reg1: regular note, tag "golang", not archived
+	reg1 := repository.GormArticle{
+		Title:      "Go Concurrency In Practice",
+		Article:    "go-concurrency.md",
+		Tags:       "golang, concurrency",
+		IsArchived: false,
+		WordCount:  150,
+	}
+	// reg2: regular note, tag "rust", not archived
+	reg2 := repository.GormArticle{
+		Title:      "Async Rust Foundations",
+		Article:    "async-rust.md",
+		Tags:       "rust, async",
+		IsArchived: false,
+		WordCount:  300,
+	}
+	// arch1: archived note, tag "legacy", archived = true
+	arch1 := repository.GormArticle{
+		Title:      "Legacy Architecture",
+		Article:    "legacy.md",
+		Tags:       "architecture",
+		IsArchived: true,
+		WordCount:  80,
+	}
+
+	require.NoError(t, db.Create(&moc1).Error)
+	require.NoError(t, db.Create(&moc2).Error)
+	require.NoError(t, db.Create(&reg1).Error)
+	require.NoError(t, db.Create(&reg2).Error)
+	require.NoError(t, db.Create(&arch1).Error)
+
+	type ArticlesEnvelope struct {
+		Data       []repository.GormArticle `json:"data"`
+		Page       int                      `json:"page"`
+		Limit      int                      `json:"limit"`
+		Total      int64                    `json:"total"`
+		TotalPages int                      `json:"total_pages"`
+		TotalNotes int64                    `json:"total_notes"`
+		TotalMocs  int64                    `json:"total_mocs"`
+	}
+
+	// 1. Check default request (latest order, active only, summary counts)
+	req1 := httptest.NewRequest("GET", "/api/getarticles", nil)
+	resp1, err := app.Test(req1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp1.StatusCode)
+
+	var env1 ArticlesEnvelope
+	require.NoError(t, json.NewDecoder(resp1.Body).Decode(&env1))
+	assert.Equal(t, int64(4), env1.Total)
+	assert.Equal(t, int64(2), env1.TotalNotes) // reg1, reg2
+	assert.Equal(t, int64(2), env1.TotalMocs)  // moc1, moc2
+	assert.Equal(t, 4, len(env1.Data))
+	// Latest order (id DESC): reg2, reg1, moc2, moc1
+	assert.Equal(t, reg2.ID, env1.Data[0].ID)
+
+	// 2. Test sort=oldest
+	req2 := httptest.NewRequest("GET", "/api/getarticles?sort=oldest", nil)
+	resp2, err := app.Test(req2)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var env2 ArticlesEnvelope
+	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&env2))
+	assert.Equal(t, moc1.ID, env2.Data[0].ID)
+	assert.Equal(t, reg2.ID, env2.Data[3].ID)
+
+	// 3. Test sort=title
+	req3 := httptest.NewRequest("GET", "/api/getarticles?sort=title", nil)
+	resp3, err := app.Test(req3)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp3.StatusCode)
+
+	var env3 ArticlesEnvelope
+	require.NoError(t, json.NewDecoder(resp3.Body).Decode(&env3))
+	assert.Equal(t, "Artificial Intelligence Hub", env3.Data[0].Title)
+	assert.Equal(t, "Async Rust Foundations", env3.Data[1].Title)
+	assert.Equal(t, "Go Concurrency In Practice", env3.Data[2].Title)
+	assert.Equal(t, "MOC - Go Distributed Systems", env3.Data[3].Title)
+
+	// 4. Test tag=golang
+	req4 := httptest.NewRequest("GET", "/api/getarticles?tag=golang", nil)
+	resp4, err := app.Test(req4)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp4.StatusCode)
+
+	var env4 ArticlesEnvelope
+	require.NoError(t, json.NewDecoder(resp4.Body).Decode(&env4))
+	assert.Equal(t, int64(1), env4.Total)
+	assert.Equal(t, 1, len(env4.Data))
+	assert.Equal(t, reg1.ID, env4.Data[0].ID)
+	// Vault counts remain total active counts
+	assert.Equal(t, int64(2), env4.TotalNotes)
+	assert.Equal(t, int64(2), env4.TotalMocs)
+
+	// 5. Test moc_only=true
+	req5 := httptest.NewRequest("GET", "/api/getarticles?moc_only=true", nil)
+	resp5, err := app.Test(req5)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp5.StatusCode)
+
+	var env5 ArticlesEnvelope
+	require.NoError(t, json.NewDecoder(resp5.Body).Decode(&env5))
+	assert.Equal(t, int64(2), env5.Total)
+	assert.Equal(t, 2, len(env5.Data))
+	for _, a := range env5.Data {
+		assert.True(t, a.ID == moc1.ID || a.ID == moc2.ID)
+	}
+
+	// 6. Test moc_only=false
+	req6 := httptest.NewRequest("GET", "/api/getarticles?moc_only=false", nil)
+	resp6, err := app.Test(req6)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp6.StatusCode)
+
+	var env6 ArticlesEnvelope
+	require.NoError(t, json.NewDecoder(resp6.Body).Decode(&env6))
+	assert.Equal(t, int64(2), env6.Total)
+	assert.Equal(t, 2, len(env6.Data))
+	for _, a := range env6.Data {
+		assert.True(t, a.ID == reg1.ID || a.ID == reg2.ID)
+	}
+
+	// 7. Test fallback path when hCtx.Vault is nil
+	hCtx.Vault = nil
+	req7 := httptest.NewRequest("GET", "/api/getarticles?sort=oldest&moc_only=true", nil)
+	resp7, err := app.Test(req7)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp7.StatusCode)
+
+	var env7 ArticlesEnvelope
+	require.NoError(t, json.NewDecoder(resp7.Body).Decode(&env7))
+	assert.Equal(t, int64(2), env7.Total)
+	assert.Equal(t, moc1.ID, env7.Data[0].ID)
+	assert.Equal(t, int64(2), env7.TotalNotes)
+	assert.Equal(t, int64(2), env7.TotalMocs)
+}
+
 
 func TestGetArticleContent_NestedTopicDirectories(t *testing.T) {
 	tempDir := t.TempDir()
