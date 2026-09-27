@@ -1359,7 +1359,15 @@ func TestConfigureSQLite_Pragmas(t *testing.T) {
 }
 
 func TestRssFeedsTableMigration(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("DATA_DIR", tempDir)
 	db := initDB()
+	sqlDB, err := db.DB()
+	if err == nil {
+		t.Cleanup(func() {
+			_ = sqlDB.Close()
+		})
+	}
 	if !db.Migrator().HasTable(&RSSFeed{}) {
 		t.Fatalf("expected rss_feeds table to exist after initDB migration")
 	}

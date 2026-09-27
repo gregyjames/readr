@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -79,8 +80,22 @@ type TimelineItem struct {
 	Published   time.Time `json:"published"`
 }
 
-func ValidateAndParseFeed(ctx context.Context, url string) (*repository.GormRssFeed, error) {
+// AllowLocalhostFeeds controls whether feed parsing allows fetching from localhost (used in test suites).
+var AllowLocalhostFeeds = false
+
+func newFeedParser(timeout time.Duration) *gofeed.Parser {
+	fetcher := NewHTTPFetcher(timeout)
+	if AllowLocalhostFeeds || os.Getenv("ALLOW_LOCALHOST") == "true" {
+		fetcher.AllowLocalhost = true
+	}
 	fp := gofeed.NewParser()
+	fp.Client = fetcher.client.StandardClient()
+	fp.MaxByteSize = MaxHTMLBytes // 10MB response-size limit
+	return fp
+}
+
+func ValidateAndParseFeed(ctx context.Context, url string) (*repository.GormRssFeed, error) {
+	fp := newFeedParser(5 * time.Second)
 	parsedCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -112,7 +127,7 @@ func FetchFeedsTimelineWithOptions(ctx context.Context, feeds []repository.GormR
 	var mu sync.Mutex
 	items := make([]TimelineItem, 0)
 
-	fp := gofeed.NewParser()
+	fp := newFeedParser(timeout)
 
 	for _, f := range feeds {
 		cacheKey := fmt.Sprintf("feed:%d:%s", f.ID, f.URL)

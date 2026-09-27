@@ -56,6 +56,7 @@ func setupFeedTestApp(t *testing.T) (*fiber.App, *HandlerContext, *gorm.DB) {
 		Repo:    repo,
 	}
 
+	ingest.AllowLocalhostFeeds = true
 	app := fiber.New()
 	api := app.Group("/api")
 

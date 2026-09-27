@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 )
 
 func TestFetchTimeline(t *testing.T) {
+	AllowLocalhostFeeds = true
 	ts1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Blog A</title><item><title>Item 1</title><link>http://a/1</link><pubDate>Mon, 02 Jan 2006 15:04:05 MST</pubDate></item></channel></rss>`))
 	}))
@@ -37,6 +39,7 @@ func TestFetchTimeline(t *testing.T) {
 }
 
 func TestValidateAndParseFeed(t *testing.T) {
+	AllowLocalhostFeeds = true
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>My Blog</title><link>https://blog.com</link></channel></rss>`))
 	}))
@@ -49,10 +52,11 @@ func TestValidateAndParseFeed(t *testing.T) {
 }
 
 func TestFetchTimelineCaching(t *testing.T) {
+	AllowLocalhostFeeds = true
 	FlushRSSCache()
-	callCount := 0
+	var callCount atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
+		callCount.Add(1)
 		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Cached Blog</title><item><title>Item</title><link>http://c/1</link><pubDate>Mon, 02 Jan 2006 15:04:05 MST</pubDate></item></channel></rss>`))
 	}))
 	defer ts.Close()
@@ -64,17 +68,17 @@ func TestFetchTimelineCaching(t *testing.T) {
 	// First fetch should hit network
 	items1 := FetchFeedsTimeline(context.Background(), feeds, 2*time.Second)
 	assert.Len(t, items1, 1)
-	assert.Equal(t, 1, callCount)
+	assert.Equal(t, int32(1), callCount.Load())
 
 	// Second fetch without forceRefresh should hit cache (callCount remains 1)
 	items2 := FetchFeedsTimeline(context.Background(), feeds, 2*time.Second)
 	assert.Len(t, items2, 1)
-	assert.Equal(t, 1, callCount)
+	assert.Equal(t, int32(1), callCount.Load())
 
 	// Third fetch with forceRefresh=true should bypass cache (callCount becomes 2)
 	items3 := FetchFeedsTimelineWithOptions(context.Background(), feeds, 2*time.Second, true)
 	assert.Len(t, items3, 1)
-	assert.Equal(t, 2, callCount)
+	assert.Equal(t, int32(2), callCount.Load())
 }
 
 func TestCleanExcerpt(t *testing.T) {

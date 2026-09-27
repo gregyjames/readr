@@ -61,7 +61,7 @@ func AddFeed(hCtx *HandlerContext) fiber.Handler {
 			if hCtx.Logger != nil {
 				hCtx.Logger.Warn("Failed to validate feed URL", zap.String("url", feedURL), zap.Error(err))
 			}
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Failed to parse feed: " + err.Error()})
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Failed to parse feed"})
 		}
 
 		var count int64
@@ -81,6 +81,9 @@ func AddFeed(hCtx *HandlerContext) fiber.Handler {
 
 		feed.CreatedAt = time.Now()
 		if err := hCtx.DB.WithContext(c.Context()).Create(feed).Error; err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) || strings.Contains(strings.ToLower(err.Error()), "unique constraint") {
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "feed already exists"})
+			}
 			if hCtx.Logger != nil {
 				hCtx.Logger.Error("Failed to save feed", zap.String("url", feedURL), zap.Error(err))
 			}

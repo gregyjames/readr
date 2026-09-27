@@ -33,7 +33,7 @@ describe('FeedsView.vue', () => {
       feedTitle: 'Hacker News',
       title: 'Show HN: Readr - Self-hosted reader',
       url: 'https://example.com/readr-launch',
-      description: 'An open-source self-hosted reader and research vault. <a href="https://example.com/more">Learn more</a>',
+      description: 'An open-source self-hosted reader where a < b & c > d.',
       published: '2026-09-27T04:00:00Z',
     },
     {
@@ -97,7 +97,7 @@ describe('FeedsView.vue', () => {
     expect(cards.length).toBe(2)
     expect(wrapper.text()).toContain('Show HN: Readr - Self-hosted reader')
     expect(wrapper.text()).toContain('SQLite in Production: WAL and Concurrency')
-    expect(wrapper.text()).toContain('An open-source self-hosted reader and research vault.')
+    expect(wrapper.text()).toContain('An open-source self-hosted reader where a < b & c > d.')
     expect(wrapper.text()).toContain('Save to Vault')
 
     wrapper.unmount()
@@ -172,15 +172,15 @@ describe('FeedsView.vue', () => {
     wrapper.unmount()
   })
 
-  it('sanitizes descriptions and adds target="_blank" and rel="noopener noreferrer" to links', async () => {
+  it('renders item description as plain text literally without parsing HTML', async () => {
     const wrapper = mount(FeedsView)
     await flushPromises()
 
     const firstCard = wrapper.find('[data-testid="timeline-card"]')
-    const linkInDescription = firstCard.find('a[href="https://example.com/more"]')
-    expect(linkInDescription.exists()).toBe(true)
-    expect(linkInDescription.attributes('target')).toBe('_blank')
-    expect(linkInDescription.attributes('rel')).toBe('noopener noreferrer')
+    const desc = firstCard.find('p')
+    expect(desc.exists()).toBe(true)
+    expect(desc.text()).toBe('An open-source self-hosted reader where a < b & c > d.')
+    expect(desc.find('a').exists()).toBe(false)
 
     wrapper.unmount()
   })

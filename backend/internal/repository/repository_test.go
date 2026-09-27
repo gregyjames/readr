@@ -10,8 +10,14 @@ import (
 )
 
 func TestGormRssFeedMigration(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("file:memdb_rss_test?mode=memory&cache=private"), &gorm.Config{})
 	assert.NoError(t, err)
+	sqlDB, err := db.DB()
+	if err == nil {
+		t.Cleanup(func() {
+			_ = sqlDB.Close()
+		})
+	}
 	err = db.AutoMigrate(&GormRssFeed{})
 	assert.NoError(t, err)
 

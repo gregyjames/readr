@@ -61,7 +61,7 @@ describe('feedsAPI service', () => {
       } as Response
     }) as unknown as typeof fetch
 
-    expect(feedsAPI.getFeeds()).rejects.toThrow('Database unavailable')
+    await expect(feedsAPI.getFeeds()).rejects.toThrow('Database unavailable')
   })
 
   it('addFeed sends POST with feed url and returns created feed', async () => {
@@ -101,7 +101,7 @@ describe('feedsAPI service', () => {
       } as Response
     }) as unknown as typeof fetch
 
-    expect(feedsAPI.addFeed('https://news.ycombinator.com/rss')).rejects.toThrow('feed already exists')
+    await expect(feedsAPI.addFeed('https://news.ycombinator.com/rss')).rejects.toThrow('feed already exists')
   })
 
   it('removeFeed sends DELETE request to /api/feeds/:id and returns typed status', async () => {
@@ -132,7 +132,7 @@ describe('feedsAPI service', () => {
       } as Response
     }) as unknown as typeof fetch
 
-    expect(feedsAPI.removeFeed(999)).rejects.toThrow('Feed not found')
+    await expect(feedsAPI.removeFeed(999)).rejects.toThrow('Feed not found')
   })
 
   it('getTimeline fetches all timeline items when feedId is omitted', async () => {
@@ -205,7 +205,7 @@ describe('feedsAPI service', () => {
       } as Response
     }) as unknown as typeof fetch
 
-    expect(feedsAPI.getTimeline(999)).rejects.toThrow('Failed to retrieve feed')
+    await expect(feedsAPI.getTimeline(999)).rejects.toThrow('Failed to retrieve feed')
   })
 })
 
@@ -261,6 +261,6 @@ describe('ingestAPI service', () => {
       } as Response
     }) as unknown as typeof fetch
 
-    expect(ingestAPI.ingestUrl('not-a-url')).rejects.toThrow('Invalid URL format')
+    await expect(ingestAPI.ingestUrl('not-a-url')).rejects.toThrow('Invalid URL format')
   })
 })

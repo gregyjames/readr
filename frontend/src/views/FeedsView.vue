@@ -1,11 +1,15 @@
-<script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import DOMPurify from 'dompurify'
-import { feedsAPI, ingestAPI, type RssFeed, type TimelineItem } from '../services/feeds'
+<script lang="ts">
+import { ref } from 'vue'
+import type { RssFeed, TimelineItem } from '../services/feeds'
 
 // Module-scoped persistent cache across route transitions
 const sessionFeeds = ref<RssFeed[]>([])
 const sessionTimelines = ref<Record<string, TimelineItem[]>>({})
+</script>
+
+<script setup lang="ts">
+import { computed, onMounted, onBeforeUnmount } from 'vue'
+import { feedsAPI, ingestAPI } from '../services/feeds'
 
 const feeds = ref<RssFeed[]>(sessionFeeds.value)
 const timeline = ref<TimelineItem[]>(sessionTimelines.value['all'] || [])
@@ -25,16 +29,6 @@ const savedUrls = ref<Record<string, boolean>>({})
 
 const toastMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 let toastTimeout: ReturnType<typeof setTimeout> | null = null
-
-// DOMPurify hook to ensure all anchor links open safely in a new tab with noopener
-const sanitizeHook = (node: Element) => {
-  if (node.tagName === 'A') {
-    node.setAttribute('target', '_blank')
-    node.setAttribute('rel', 'noopener noreferrer')
-  }
-}
-
-DOMPurify.addHook('afterSanitizeAttributes', sanitizeHook)
 
 const showToast = (text: string, type: 'success' | 'error' = 'success') => {
   if (toastTimeout) clearTimeout(toastTimeout)
@@ -161,13 +155,6 @@ const handleSaveToVault = async (item: TimelineItem) => {
   }
 }
 
-const sanitizeDescription = (html: string) => {
-  return DOMPurify.sanitize(html, {
-    ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'a', 'p', 'br', 'span', 'code'],
-    ALLOWED_ATTR: ['href', 'target', 'rel', 'class'],
-  })
-}
-
 const formatDate = (isoString: string) => {
   try {
     const d = new Date(isoString)
@@ -199,7 +186,6 @@ onBeforeUnmount(() => {
     clearTimeout(toastTimeout)
     toastTimeout = null
   }
-  DOMPurify.removeHook('afterSanitizeAttributes')
 })
 </script>
 
@@ -441,11 +427,12 @@ onBeforeUnmount(() => {
               </a>
             </h2>
 
-            <div
+            <p
               v-if="item.description"
-              v-html="sanitizeDescription(item.description)"
               class="text-xs sm:text-sm text-gray-600 dark:text-gray-400 line-clamp-2 leading-relaxed break-words max-w-3xl"
-            ></div>
+            >
+              {{ item.description }}
+            </p>
           </div>
 
           <!-- Right Action Rail: Tactile Save to Vault -->
