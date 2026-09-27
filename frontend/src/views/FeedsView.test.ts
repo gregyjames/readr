@@ -33,7 +33,7 @@ describe('FeedsView.vue', () => {
       feedTitle: 'Hacker News',
       title: 'Show HN: Readr - Self-hosted reader',
       url: 'https://example.com/readr-launch',
-      description: 'An open-source self-hosted reader and research vault.',
+      description: 'An open-source self-hosted reader and research vault. <a href="https://example.com/more">Learn more</a>',
       published: '2026-09-27T04:00:00Z',
     },
     {
@@ -139,6 +139,52 @@ describe('FeedsView.vue', () => {
     wrapper.unmount()
   })
 
+  it('keyboard navigation triggers feed selection', async () => {
+    let requestedFeedId: number | undefined = -1
+
+    feedsAPI.getTimeline = async (feedId?: number) => {
+      requestedFeedId = feedId
+      if (feedId === 2) return []
+      return [...mockTimelineAll]
+    }
+
+    const wrapper = mount(FeedsView)
+    await flushPromises()
+
+    // Select feed 2 with Enter key
+    const feedItem2 = wrapper.find('[data-testid="feed-item-2"]')
+    expect(feedItem2.attributes('role')).toBe('button')
+    expect(feedItem2.attributes('tabindex')).toBe('0')
+
+    await feedItem2.trigger('keydown.enter')
+    await flushPromises()
+    expect(requestedFeedId).toBe(2)
+
+    // Reset to All Feeds with Space key
+    const allFeedsBtn = wrapper.find('[data-testid="all-feeds-btn"]')
+    expect(allFeedsBtn.attributes('role')).toBe('button')
+    expect(allFeedsBtn.attributes('tabindex')).toBe('0')
+
+    await allFeedsBtn.trigger('keydown.space')
+    await flushPromises()
+    expect(requestedFeedId).toBeUndefined()
+
+    wrapper.unmount()
+  })
+
+  it('sanitizes descriptions and adds target="_blank" and rel="noopener noreferrer" to links', async () => {
+    const wrapper = mount(FeedsView)
+    await flushPromises()
+
+    const firstCard = wrapper.find('[data-testid="timeline-card"]')
+    const linkInDescription = firstCard.find('a[href="https://example.com/more"]')
+    expect(linkInDescription.exists()).toBe(true)
+    expect(linkInDescription.attributes('target')).toBe('_blank')
+    expect(linkInDescription.attributes('rel')).toBe('noopener noreferrer')
+
+    wrapper.unmount()
+  })
+
   it('adding a feed calls addFeed and updates the list', async () => {
     let addedUrl = ''
     feedsAPI.addFeed = async (url: string) => {
@@ -190,7 +236,7 @@ describe('FeedsView.vue', () => {
     wrapper.unmount()
   })
 
-  it('"Save to Vault" calls ingestAPI.ingestUrl and shows saved state', async () => {
+  it('"Save to Vault" calls ingestAPI.ingestUrl, shows saved state, and renders accessible toast', async () => {
     let ingestedUrl = ''
     ingestAPI.ingestUrl = async (url: string) => {
       ingestedUrl = url
@@ -209,6 +255,11 @@ describe('FeedsView.vue', () => {
 
     expect(ingestedUrl).toBe('https://example.com/readr-launch')
     expect(wrapper.text()).toContain('Saved!')
+
+    // Check toast accessibility
+    const toast = wrapper.find('[role="status"]')
+    expect(toast.exists()).toBe(true)
+    expect(toast.attributes('aria-live')).toBe('polite')
 
     wrapper.unmount()
   })
@@ -230,6 +281,42 @@ describe('FeedsView.vue', () => {
     await flushPromises()
 
     expect(removedId).toBe(1)
+
+    wrapper.unmount()
+  })
+
+  it('race condition guard ignores stale timeline responses when feed selection changes', async () => {
+    let resolveSlowFeed: (items: TimelineItem[]) => void = () => {}
+    const slowPromise = new Promise<TimelineItem[]>((resolve) => {
+      resolveSlowFeed = resolve
+    })
+
+    feedsAPI.getTimeline = async (feedId?: number) => {
+      if (feedId === 1) {
+        return slowPromise
+      }
+      return [...mockTimelineAll]
+    }
+
+    const wrapper = mount(FeedsView)
+    await flushPromises()
+
+    // User selects feed 1 (which will be slow to respond)
+    const feedItem1 = wrapper.find('[data-testid="feed-item-1"]')
+    await feedItem1.trigger('click')
+
+    // While feed 1 is loading, user switches back to All Feeds
+    const allFeedsBtn = wrapper.find('[data-testid="all-feeds-btn"]')
+    await allFeedsBtn.trigger('click')
+    await flushPromises()
+
+    // Now slow feed 1 resolves
+    resolveSlowFeed([mockTimelineFiltered[0]])
+    await flushPromises()
+
+    // Timeline should reflect All Feeds (2 items), not the stale feed 1 result
+    const cards = wrapper.findAll('[data-testid="timeline-card"]')
+    expect(cards.length).toBe(2)
 
     wrapper.unmount()
   })

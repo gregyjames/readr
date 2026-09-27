@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import DOMPurify from 'dompurify'
 import { feedsAPI, ingestAPI, type RssFeed, type TimelineItem } from '../services/feeds'
 
@@ -21,11 +21,22 @@ const savedUrls = ref<Record<string, boolean>>({})
 const toastMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 let toastTimeout: ReturnType<typeof setTimeout> | null = null
 
+// DOMPurify hook to ensure all anchor links open safely in a new tab
+const sanitizeHook = (node: Element) => {
+  if (node.tagName === 'A') {
+    node.setAttribute('target', '_blank')
+    node.setAttribute('rel', 'noopener noreferrer')
+  }
+}
+
+DOMPurify.addHook('afterSanitizeAttributes', sanitizeHook)
+
 const showToast = (text: string, type: 'success' | 'error' = 'success') => {
   if (toastTimeout) clearTimeout(toastTimeout)
   toastMessage.value = { type, text }
   toastTimeout = setTimeout(() => {
     toastMessage.value = null
+    toastTimeout = null
   }, 4000)
 }
 
@@ -48,11 +59,21 @@ const fetchFeeds = async () => {
 const fetchTimeline = async (feedId: number | null = selectedFeedId.value) => {
   isLoadingTimeline.value = true
   try {
-    timeline.value = await feedsAPI.getTimeline(feedId ?? undefined)
+    const data = await feedsAPI.getTimeline(feedId ?? undefined)
+    // Race condition guard: ignore if user has switched to another feed in the meantime
+    if (selectedFeedId.value !== feedId) {
+      return
+    }
+    timeline.value = data
   } catch (err: any) {
+    if (selectedFeedId.value !== feedId) {
+      return
+    }
     showToast(err.message || 'Failed to load timeline', 'error')
   } finally {
-    isLoadingTimeline.value = false
+    if (selectedFeedId.value === feedId) {
+      isLoadingTimeline.value = false
+    }
   }
 }
 
@@ -141,6 +162,14 @@ const sanitizeDescription = (desc: string): string => {
 onMounted(async () => {
   await Promise.all([fetchFeeds(), fetchTimeline()])
 })
+
+onBeforeUnmount(() => {
+  if (toastTimeout) {
+    clearTimeout(toastTimeout)
+    toastTimeout = null
+  }
+  DOMPurify.removeHook('afterSanitizeAttributes')
+})
 </script>
 
 <template>
@@ -156,6 +185,8 @@ onMounted(async () => {
     >
       <div
         v-if="toastMessage"
+        role="status"
+        aria-live="polite"
         class="fixed top-5 right-5 z-50 flex items-center gap-2 px-4 py-2.5 rounded-xl shadow-lg border text-xs font-medium"
         :class="toastMessage.type === 'error'
           ? 'bg-red-50 text-red-800 border-red-200 dark:bg-red-950/80 dark:text-red-200 dark:border-red-800'
@@ -227,7 +258,11 @@ onMounted(async () => {
           <!-- All Feeds Item -->
           <div
             data-testid="all-feeds-btn"
+            role="button"
+            tabindex="0"
             @click="selectFeed(null)"
+            @keydown.enter.prevent="selectFeed(null)"
+            @keydown.space.prevent="selectFeed(null)"
             class="group flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-colors cursor-pointer"
             :class="selectedFeedId === null
               ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-medium border border-emerald-500/20'
@@ -260,7 +295,11 @@ onMounted(async () => {
             v-for="feed in feeds"
             :key="feed.id"
             :data-testid="`feed-item-${feed.id}`"
+            role="button"
+            tabindex="0"
             @click="selectFeed(feed.id)"
+            @keydown.enter.prevent="selectFeed(feed.id)"
+            @keydown.space.prevent="selectFeed(feed.id)"
             class="group flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-colors cursor-pointer"
             :class="selectedFeedId === feed.id
               ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-medium border border-emerald-500/20'
