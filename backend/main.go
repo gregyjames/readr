@@ -252,7 +252,14 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return err
 	})
 
-	app.Get("/images/*", static.New(filepath.Join(dataDirectory, "images")))
+	staticConfig := static.Config{
+		Compress:      true,
+		ByteRange:     true,
+		MaxAge:        86400, // 24 hours
+		CacheDuration: 24 * time.Hour,
+	}
+
+	app.Get("/images/*", static.New(filepath.Join(dataDirectory, "images"), staticConfig))
 
 	repo := repository.NewGormRepository(db)
 	graphEngine := graph.NewEngine(repo)
@@ -356,7 +363,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	if distDir != "" {
 		if info, err := os.Stat(distDir); err == nil && info.IsDir() {
 			logger.Info("Serving static frontend files from", zap.String("distDir", distDir))
-			app.Get("/*", static.New(distDir))
+			app.Get("/*", static.New(distDir, staticConfig))
 
 			// SPA Fallback for client-side routing
 			app.Get("*", func(c fiber.Ctx) error {

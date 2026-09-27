@@ -1426,4 +1426,41 @@ func TestMiddlewareStack(t *testing.T) {
 	if respPanic.StatusCode != http.StatusInternalServerError {
 		t.Errorf("expected status 500 from recovered panic, got %d", respPanic.StatusCode)
 	}
+
+	// 4. Test Static Asset Headers (Cache-Control & ByteRange)
+	// Create a dummy image in data/images
+	dataDir := getDataDir()
+	imagesDir := filepath.Join(dataDir, "images")
+	_ = os.MkdirAll(imagesDir, 0755)
+	dummyImagePath := filepath.Join(imagesDir, "test.png")
+	_ = os.WriteFile(dummyImagePath, []byte("fake image binary content for testing range"), 0644)
+	defer os.Remove(dummyImagePath)
+
+	reqImg := httptest.NewRequest("GET", "/images/test.png", nil)
+	respImg, err := app.Test(reqImg)
+	if err != nil {
+		t.Fatalf("unexpected error fetching static image: %v", err)
+	}
+	if respImg.StatusCode != http.StatusOK {
+		t.Errorf("expected status 200 for static image, got %d", respImg.StatusCode)
+	}
+	cacheControl := respImg.Header.Get("Cache-Control")
+	if !strings.Contains(cacheControl, "max-age=86400") {
+		t.Errorf("expected Cache-Control to contain max-age=86400, got: %s", cacheControl)
+	}
+	acceptRanges := respImg.Header.Get("Accept-Ranges")
+	if acceptRanges != "bytes" {
+		t.Errorf("expected Accept-Ranges: bytes, got: %s", acceptRanges)
+	}
+
+	// Test Byte Range Request
+	reqRange := httptest.NewRequest("GET", "/images/test.png", nil)
+	reqRange.Header.Set("Range", "bytes=0-3")
+	respRange, err := app.Test(reqRange)
+	if err != nil {
+		t.Fatalf("unexpected error fetching range: %v", err)
+	}
+	if respRange.StatusCode != http.StatusPartialContent {
+		t.Errorf("expected status 206 Partial Content, got %d", respRange.StatusCode)
+	}
 }
