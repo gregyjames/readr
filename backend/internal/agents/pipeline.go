@@ -292,7 +292,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) error {
 	if len(llmResp.Choices) == 0 {
 		p.logger.Error("Pipeline LLM response contained no choices", zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, "no choices returned from LLM provider")
-		return fmt.Errorf("no choices returned from LLM provider")
+		return &ProviderError{Err: fmt.Errorf("no choices returned from LLM provider")}
 	}
 
 	rawJSON := extractMessageContent(llmResp.Choices[0].Message.Content)
@@ -301,7 +301,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) error {
 	if rawJSON == "" {
 		p.logger.Error("Pipeline LLM response message content was empty", zap.String("finish_reason", llmResp.Choices[0].FinishReason), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, "empty message content from LLM provider")
-		return fmt.Errorf("empty message content from LLM provider")
+		return &ProviderError{Err: fmt.Errorf("empty message content from LLM provider")}
 	}
 
 	var pipelineResp UnifiedPipelineResponse

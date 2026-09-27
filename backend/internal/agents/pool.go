@@ -142,16 +142,97 @@ func InitPool(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataD
 		go Pool.worker(i)
 	}
 
+	Pool.workerWg.Add(1)
+	go Pool.recoveryLoop()
+
 	logger.Info("Background agent pool started", zap.Int("workers", numWorkers))
+}
+
+func (p *AgentPool) recoveryLoop() {
+	defer p.workerWg.Done()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	p.mu.RLock()
+	shutdownChan := p.shutdown
+	q := p.Queue
+	p.mu.RUnlock()
+
+	if shutdownChan == nil || q == nil || p.db == nil {
+		return
+	}
+
+	for {
+		select {
+		case <-shutdownChan:
+			return
+		case <-ticker.C:
+			if p.CircuitBreaker == nil || !p.CircuitBreaker.Allow() {
+				continue
+			}
+
+			var queued []GormAgentJob
+			if err := p.db.Where("status = ?", "queued").Order("id asc").Find(&queued).Error; err != nil {
+				continue
+			}
+
+			// Skip jobs already present in the queue
+			queuedInChan := len(q)
+			inQueue := make(map[int64]bool)
+			
+			// Read up to queuedInChan items, save them to set, then push them back
+			temp := make([]Job, 0, queuedInChan)
+			for i := 0; i < queuedInChan; i++ {
+				select {
+				case j := <-q:
+					inQueue[j.ID] = true
+					temp = append(temp, j)
+				default:
+				}
+			}
+			
+			for _, j := range temp {
+				select {
+				case q <- j:
+				default:
+				}
+			}
+
+			for _, qj := range queued {
+				if inQueue[qj.ID] {
+					continue
+				}
+				var settings PipelineSettings
+				if qj.Settings != "" {
+					_ = json.Unmarshal([]byte(qj.Settings), &settings)
+				}
+				job := Job{
+					ID:        qj.ID,
+					ArticleID: qj.ArticleID,
+					Type:      JobType(qj.Type),
+					Settings:  settings,
+				}
+				select {
+				case q <- job:
+				default:
+				}
+			}
+		}
+	}
 }
 
 func (p *AgentPool) worker(id int) {
 	defer p.workerWg.Done()
+	p.mu.RLock()
+	q := p.Queue
+	shutdownChan := p.shutdown
+	p.mu.RUnlock()
 	for {
 		select {
-		case <-p.shutdown:
+		case <-shutdownChan:
 			return
-		case job, ok := <-p.Queue:
+		case job, ok := <-q:
 			if !ok {
 				return
 			}
@@ -352,15 +433,11 @@ func (p *AgentPool) Shutdown(timeout time.Duration) error {
 
 	p.mu.Lock()
 	if p.shutdown != nil {
-		close(p.shutdown)
-		p.shutdown = nil
-	}
-	if p.Queue != nil {
-		// Do not close Queue, so that workers that didn't receive shutdown signal yet can still finish processing jobs
-		// and won't panic on closed channel if someone submits a job. Or wait, the instructions said:
-		// "shutdown prevents workers from starting additional queued jobs, leaving unstarted jobs persisted as queued for startup recovery"
-		// The close(p.shutdown) achieves this.
-		p.Queue = nil
+		select {
+		case <-p.shutdown:
+		default:
+			close(p.shutdown)
+		}
 	}
 	p.mu.Unlock()
 
@@ -413,13 +490,16 @@ func SubmitJob(job Job) {
 
 		Pool.mu.RLock()
 		q := Pool.Queue
+		shutdownChan := Pool.shutdown
 		Pool.mu.RUnlock()
 
-		if q == nil {
+		select {
+		case <-shutdownChan:
 			if Pool.logger != nil {
 				Pool.logger.Warn("Agent pool is shut down, dropping job from memory channel", zap.Int64("article_id", job.ArticleID))
 			}
 			return
+		default:
 		}
 
 		func() {

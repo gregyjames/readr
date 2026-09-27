@@ -133,8 +133,9 @@ func TestProcessPipeline_AllEnabled(t *testing.T) {
 	}
 
 	err := pool.processPipelineWithURL(job, ts.URL)
-	t.Logf("process returned: %v", err)
-
+	if err != nil {
+		t.Fatalf("processPipelineWithURL failed: %v", err)
+	}
 	// 1. Verify captured response_format
 	if capturedResponseFormat == nil || capturedResponseFormat["type"] != "json_schema" {
 		t.Fatalf("expected response_format type 'json_schema', got: %v", capturedResponseFormat)
