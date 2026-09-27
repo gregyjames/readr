@@ -82,6 +82,9 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
     } else if (e.key === '4') {
       e.preventDefault()
       router.push('/archive')
+    } else if (e.key === '5') {
+      e.preventDefault()
+      router.push('/feeds')
     } else if (e.key === ',') {
       e.preventDefault()
       router.push('/settings')
@@ -267,6 +270,21 @@ function removeTag(tag: string) {
             <span v-if="route.path === '/archive'" class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-4 bg-emerald-500 rounded-r-full"></span>
           </router-link>
 
+          <!-- Feeds -->
+          <router-link
+            to="/feeds"
+            class="relative p-2.5 rounded-xl transition-all group cursor-pointer"
+            :class="route.path.startsWith('/feeds') ? 'bg-gray-100 dark:bg-white/[0.08] text-gray-950 dark:text-white shadow-2xs' : 'text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100/60 dark:hover:bg-white/[0.04]'"
+            title="Feeds (⌘5)"
+          >
+            <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 11a9 9 0 0 1 9 9" />
+              <path d="M4 4a16 16 0 0 1 16 16" />
+              <circle cx="5" cy="19" r="1" />
+            </svg>
+            <span v-if="route.path.startsWith('/feeds')" class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-4 bg-emerald-500 rounded-r-full"></span>
+          </router-link>
+
           <!-- Search Trigger (⌘K) -->
           <button
             @click="emitter.emit('open-search')"
@@ -373,6 +391,13 @@ function removeTag(tag: string) {
           <rect width="20" height="5" x="2" y="3" rx="1"/>
           <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/>
           <path d="M10 12h4"/>
+        </svg>
+      </router-link>
+      <router-link to="/feeds" class="p-2 text-xs flex flex-col items-center gap-0.5" :class="route.path.startsWith('/feeds') ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400'">
+        <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 11a9 9 0 0 1 9 9" />
+          <path d="M4 4a16 16 0 0 1 16 16" />
+          <circle cx="5" cy="19" r="1" />
         </svg>
       </router-link>
       <router-link to="/settings" class="p-2 text-xs flex flex-col items-center gap-0.5" :class="route.path === '/settings' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400'">
