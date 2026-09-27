@@ -1,15 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
-import { feedsAPI } from './feeds'
+import { feedsAPI, ingestAPI } from './feeds'
 
 describe('feedsAPI service', () => {
   const origFetch = globalThis.fetch
 
   beforeEach(() => {
-    // reset fetch
+    localStorage.clear()
   })
 
   afterEach(() => {
     globalThis.fetch = origFetch
+    localStorage.clear()
   })
 
   it('getFeeds returns list of rss feeds', async () => {
@@ -33,6 +34,22 @@ describe('feedsAPI service', () => {
 
     const result = await feedsAPI.getFeeds()
     expect(result).toEqual(mockFeeds)
+  })
+
+  it('attaches Authorization header when token exists', async () => {
+    localStorage.setItem('readr_token', 'my-auth-token')
+    let capturedHeaders: Record<string, string> = {}
+
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      capturedHeaders = (init?.headers as Record<string, string>) || {}
+      return {
+        ok: true,
+        json: async () => [],
+      } as Response
+    }) as unknown as typeof fetch
+
+    await feedsAPI.getFeeds()
+    expect(capturedHeaders['Authorization']).toBe('Bearer my-auth-token')
   })
 
   it('getFeeds throws error on failed response', async () => {
@@ -87,7 +104,7 @@ describe('feedsAPI service', () => {
     expect(feedsAPI.addFeed('https://news.ycombinator.com/rss')).rejects.toThrow('feed already exists')
   })
 
-  it('removeFeed sends DELETE request to /api/feeds/:id', async () => {
+  it('removeFeed sends DELETE request to /api/feeds/:id and returns typed status', async () => {
     let calledUrl = ''
     let calledMethod = ''
 
@@ -176,5 +193,61 @@ describe('feedsAPI service', () => {
     }) as unknown as typeof fetch
 
     expect(feedsAPI.getTimeline(999)).rejects.toThrow('Failed to retrieve feed')
+  })
+})
+
+describe('ingestAPI service', () => {
+  const origFetch = globalThis.fetch
+
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  afterEach(() => {
+    globalThis.fetch = origFetch
+    localStorage.clear()
+  })
+
+  it('ingestUrl sends POST to /api/add with url and bearer token', async () => {
+    localStorage.setItem('readr_token', 'ingest-token')
+    let calledUrl = ''
+    let calledMethod = ''
+    let capturedHeaders: Record<string, string> = {}
+    let capturedBody = ''
+
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calledUrl = url
+      calledMethod = init?.method || ''
+      capturedHeaders = (init?.headers as Record<string, string>) || {}
+      capturedBody = (init?.body as string) || ''
+      return {
+        ok: true,
+        json: async () => ({ status: 'success', id: 101 }),
+      } as Response
+    }) as unknown as typeof fetch
+
+    const res = await ingestAPI.ingestUrl('https://news.ycombinator.com/item?id=1234')
+    expect(calledUrl).toBe('/api/add')
+    expect(calledMethod).toBe('POST')
+    expect(capturedHeaders['Authorization']).toBe('Bearer ingest-token')
+    expect(capturedHeaders['Content-Type']).toBe('application/json')
+    expect(JSON.parse(capturedBody)).toEqual({
+      url: 'https://news.ycombinator.com/item?id=1234',
+      tags: [],
+      template: undefined,
+    })
+    expect(res).toEqual({ status: 'success', id: 101 })
+  })
+
+  it('ingestUrl throws error on failed response', async () => {
+    globalThis.fetch = (async () => {
+      return {
+        ok: false,
+        statusText: 'Bad Request',
+        json: async () => ({ error: 'Invalid URL format' }),
+      } as Response
+    }) as unknown as typeof fetch
+
+    expect(ingestAPI.ingestUrl('not-a-url')).rejects.toThrow('Invalid URL format')
   })
 })
