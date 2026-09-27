@@ -8,8 +8,9 @@ const sessionTimelines = ref<Record<string, TimelineItem[]>>({})
 </script>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount } from 'vue'
+import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { feedsAPI, ingestAPI } from '../services/feeds'
+import PaginationControls from '../components/PaginationControls.vue'
 
 const feeds = ref<RssFeed[]>(sessionFeeds.value)
 const timeline = ref<TimelineItem[]>(sessionTimelines.value['all'] || [])
@@ -29,6 +30,34 @@ const savedUrls = ref<Record<string, boolean>>({})
 
 const toastMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 let toastTimeout: ReturnType<typeof setTimeout> | null = null
+
+// ── Pagination state ────────────────────────────────────────
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
+const storedPageSize = Number(localStorage.getItem('readr_page_size')) || 25
+const currentPage = ref(1)
+const pageSize = ref(PAGE_SIZE_OPTIONS.includes(storedPageSize) ? storedPageSize : 25)
+
+const totalPages = computed(() => Math.max(1, Math.ceil(timeline.value.length / pageSize.value)))
+
+const pagedTimeline = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return timeline.value.slice(start, start + pageSize.value)
+})
+
+watch([selectedFeedId, pageSize], () => {
+  currentPage.value = 1
+})
+
+function onPageChange(page: number) {
+  currentPage.value = page
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+function onPageSizeChange(size: number) {
+  pageSize.value = size
+  try { localStorage.setItem('readr_page_size', String(size)) } catch {}
+}
+// ────────────────────────────────────────────────────────────
 
 const showToast = (text: string, type: 'success' | 'error' = 'success') => {
   if (toastTimeout) clearTimeout(toastTimeout)
@@ -75,13 +104,15 @@ const fetchTimeline = async (feedId: number | null = selectedFeedId.value, force
   }
 
   try {
-    const data = await feedsAPI.getTimeline(feedId ?? undefined, forceRefresh)
+    const envelope = await feedsAPI.getTimeline(feedId, forceRefresh)
     // Race condition guard: ignore if user switched feeds in the meantime
     if (selectedFeedId.value !== feedId) {
       return
     }
-    timeline.value = data
-    sessionTimelines.value[cacheKey] = data
+    const items = envelope.data ?? []
+    timeline.value = items
+    sessionTimelines.value[cacheKey] = items
+    currentPage.value = 1
   } catch (err: any) {
     if (selectedFeedId.value !== feedId) {
       return
@@ -399,7 +430,7 @@ onBeforeUnmount(() => {
       <!-- EDITORIAL SLAT STREAM (Hairline Dividers + Edge-to-Edge Hover Spotlight) -->
       <div v-else class="divide-y divide-gray-200/50 dark:divide-white/[0.05]">
         <article
-          v-for="item in timeline"
+          v-for="item in pagedTimeline"
           :key="item.url"
           data-testid="timeline-card"
           class="group -mx-4 px-4 py-5 sm:py-6 rounded-2xl hover:bg-gray-50/80 dark:hover:bg-white/[0.02] transition-all duration-150 flex flex-col md:flex-row md:items-start justify-between gap-5"
@@ -476,6 +507,17 @@ onBeforeUnmount(() => {
           </div>
         </article>
       </div>
+
+      <!-- Pagination -->
+      <PaginationControls
+        :current-page="currentPage"
+        :total-pages="totalPages"
+        :total-items="timeline.length"
+        :page-size="pageSize"
+        :page-size-options="[10, 25, 50, 100]"
+        @update:page="onPageChange"
+        @update:page-size="onPageSizeChange"
+      />
 
     </main>
 

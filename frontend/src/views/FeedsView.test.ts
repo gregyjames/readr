@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { mount, flushPromises } from '@vue/test-utils'
 import FeedsView from './FeedsView.vue'
-import { feedsAPI, ingestAPI, type RssFeed, type TimelineItem } from '../services/feeds'
+import { feedsAPI, ingestAPI, type RssFeed, type TimelineItem, type PaginatedResponse } from '../services/feeds'
+
+// Helper to wrap timeline items in PaginatedResponse envelope
+function envelope(items: TimelineItem[]): PaginatedResponse<TimelineItem> {
+  return { data: items, page: 1, limit: 25, total: items.length, total_pages: 1 }
+}
 
 describe('FeedsView.vue', () => {
   const origGetFeeds = feedsAPI.getFeeds
@@ -59,9 +64,9 @@ describe('FeedsView.vue', () => {
 
   beforeEach(() => {
     feedsAPI.getFeeds = async () => [...mockFeeds]
-    feedsAPI.getTimeline = async (feedId?: number) => {
-      if (feedId === 1) return [...mockTimelineFiltered]
-      return [...mockTimelineAll]
+    feedsAPI.getTimeline = async (feedId?: number | null) => {
+      if (feedId === 1) return envelope([...mockTimelineFiltered])
+      return envelope([...mockTimelineAll])
     }
     feedsAPI.addFeed = async (url: string) => ({
       id: 3,
@@ -104,12 +109,12 @@ describe('FeedsView.vue', () => {
   })
 
   it('clicking a feed filters the timeline', async () => {
-    let requestedFeedId: number | undefined = -1
+    let requestedFeedId: number | null | undefined = -1
 
-    feedsAPI.getTimeline = async (feedId?: number) => {
-      requestedFeedId = feedId
-      if (feedId === 1) return [...mockTimelineFiltered]
-      return [...mockTimelineAll]
+    feedsAPI.getTimeline = async (feedId?: number | null) => {
+      requestedFeedId = feedId ?? null
+      if (feedId === 1) return envelope([...mockTimelineFiltered])
+      return envelope([...mockTimelineAll])
     }
 
     const wrapper = mount(FeedsView)
@@ -132,7 +137,7 @@ describe('FeedsView.vue', () => {
     await allFeedsBtn.trigger('click')
     await flushPromises()
 
-    expect(requestedFeedId).toBeUndefined()
+    expect(requestedFeedId).toBeNull()
     const allCards = wrapper.findAll('[data-testid="timeline-card"]')
     expect(allCards.length).toBe(2)
 
@@ -140,12 +145,12 @@ describe('FeedsView.vue', () => {
   })
 
   it('keyboard navigation triggers feed selection', async () => {
-    let requestedFeedId: number | undefined = -1
+    let requestedFeedId: number | null | undefined = -1
 
-    feedsAPI.getTimeline = async (feedId?: number) => {
-      requestedFeedId = feedId
-      if (feedId === 2) return []
-      return [...mockTimelineAll]
+    feedsAPI.getTimeline = async (feedId?: number | null) => {
+      requestedFeedId = feedId ?? null
+      if (feedId === 2) return envelope([])
+      return envelope([...mockTimelineAll])
     }
 
     const wrapper = mount(FeedsView)
@@ -167,7 +172,7 @@ describe('FeedsView.vue', () => {
 
     await allFeedsBtn.trigger('keydown.space')
     await flushPromises()
-    expect(requestedFeedId).toBeUndefined()
+    expect(requestedFeedId).toBeNull()
 
     wrapper.unmount()
   })
@@ -286,16 +291,16 @@ describe('FeedsView.vue', () => {
   })
 
   it('race condition guard ignores stale timeline responses when feed selection changes', async () => {
-    let resolveSlowFeed: (items: TimelineItem[]) => void = () => {}
-    const slowPromise = new Promise<TimelineItem[]>((resolve) => {
+    let resolveSlowFeed: (items: PaginatedResponse<TimelineItem>) => void = () => {}
+    const slowPromise = new Promise<PaginatedResponse<TimelineItem>>((resolve) => {
       resolveSlowFeed = resolve
     })
 
-    feedsAPI.getTimeline = async (feedId?: number) => {
+    feedsAPI.getTimeline = async (feedId?: number | null) => {
       if (feedId === 1) {
         return slowPromise
       }
-      return [...mockTimelineAll]
+      return envelope([...mockTimelineAll])
     }
 
     const wrapper = mount(FeedsView)
@@ -311,7 +316,7 @@ describe('FeedsView.vue', () => {
     await flushPromises()
 
     // Now slow feed 1 resolves
-    resolveSlowFeed([mockTimelineFiltered[0]])
+    resolveSlowFeed(envelope([mockTimelineFiltered[0]]))
     await flushPromises()
 
     // Timeline should reflect All Feeds (2 items), not the stale feed 1 result
@@ -323,7 +328,7 @@ describe('FeedsView.vue', () => {
 
   it('renders empty state when no feeds are subscribed', async () => {
     feedsAPI.getFeeds = async () => []
-    feedsAPI.getTimeline = async () => []
+    feedsAPI.getTimeline = async () => envelope([])
 
     const wrapper = mount(FeedsView)
     await flushPromises()
