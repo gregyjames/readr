@@ -20,6 +20,7 @@ import (
 	"example.com/backend/internal/repository"
 	"example.com/backend/internal/vault"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -202,6 +203,10 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
+
+	app.Use(compress.New(compress.Config{
+		Level: compress.LevelDefault,
+	}))
 
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",

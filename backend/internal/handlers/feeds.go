@@ -156,10 +156,24 @@ func GetTimeline(hCtx *HandlerContext) fiber.Handler {
 			}
 		}
 
+		limit := 150
+		if limitStr := c.Query("limit"); limitStr != "" {
+			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+				if parsedLimit > 300 {
+					parsedLimit = 300
+				}
+				limit = parsedLimit
+			}
+		}
+
 		forceRefresh := c.Query("refresh") == "true" || c.Query("refresh") == "1"
 		items := ingest.FetchFeedsTimelineWithOptions(c.Context(), feeds, 10*time.Second, forceRefresh)
 		if items == nil {
 			items = make([]ingest.TimelineItem, 0)
+		}
+
+		if len(items) > limit {
+			items = items[:limit]
 		}
 
 		return c.JSON(items)

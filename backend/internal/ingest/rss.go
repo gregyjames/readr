@@ -3,6 +3,8 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"html"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -14,6 +16,54 @@ import (
 )
 
 var rssCache = cache.New(5*time.Minute, 10*time.Minute)
+
+var (
+	htmlTagRegex    = regexp.MustCompile(`(?i)<[^>]*>`)
+	scriptTagRegex  = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
+	styleTagRegex   = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+	whitespaceRegex = regexp.MustCompile(`\s+`)
+	punctSpaceRegex = regexp.MustCompile(`\s+([,.:;!?…])`)
+)
+
+// CleanExcerpt strips HTML tags, removes script/style blocks, decodes HTML entities,
+// collapses whitespace, and truncates to maxChars cleanly on a word boundary.
+func CleanExcerpt(raw string, maxChars int) string {
+	if raw == "" {
+		return ""
+	}
+
+	// 1. Remove script and style blocks first
+	cleaned := scriptTagRegex.ReplaceAllString(raw, " ")
+	cleaned = styleTagRegex.ReplaceAllString(cleaned, " ")
+
+	// 2. Strip all remaining HTML tags
+	cleaned = htmlTagRegex.ReplaceAllString(cleaned, " ")
+
+	// 3. Decode HTML entities (e.g. &amp;, &quot;, &#39;, &nbsp;)
+	cleaned = html.UnescapeString(cleaned)
+
+	// 4. Normalize whitespace (replaces tabs, newlines, multiple spaces with a single space)
+	cleaned = strings.TrimSpace(whitespaceRegex.ReplaceAllString(cleaned, " "))
+
+	// 5. Clean up spaces before punctuation (e.g. "word !" -> "word!")
+	cleaned = punctSpaceRegex.ReplaceAllString(cleaned, "$1")
+
+	if maxChars <= 0 {
+		return cleaned
+	}
+
+	runes := []rune(cleaned)
+	if len(runes) <= maxChars {
+		return cleaned
+	}
+
+	truncated := string(runes[:maxChars])
+	if lastSpace := strings.LastIndex(truncated, " "); lastSpace > maxChars/2 {
+		truncated = truncated[:lastSpace]
+	}
+
+	return strings.TrimSpace(truncated) + "…"
+}
 
 // FlushRSSCache clears all cached feed timeline entries.
 func FlushRSSCache() {
@@ -89,6 +139,28 @@ func FetchFeedsTimelineWithOptions(ctx context.Context, feeds []repository.GormR
 				return // Ignore failures gracefully
 			}
 
+			// Sort feed items newest-first before capping
+			sort.Slice(parsed.Items, func(i, j int) bool {
+				pubI := parsed.Items[i].PublishedParsed
+				if pubI == nil {
+					pubI = parsed.Items[i].UpdatedParsed
+				}
+				pubJ := parsed.Items[j].PublishedParsed
+				if pubJ == nil {
+					pubJ = parsed.Items[j].UpdatedParsed
+				}
+				if pubI != nil && pubJ != nil {
+					return pubI.After(*pubJ)
+				}
+				return false
+			})
+
+			// Cap items per feed (30 items max) to avoid massive historical payloads
+			const maxItemsPerFeed = 30
+			if len(parsed.Items) > maxItemsPerFeed {
+				parsed.Items = parsed.Items[:maxItemsPerFeed]
+			}
+
 			feedItems := make([]TimelineItem, 0, len(parsed.Items))
 			for _, item := range parsed.Items {
 				pubDate := item.PublishedParsed
@@ -100,12 +172,17 @@ func FetchFeedsTimelineWithOptions(ctx context.Context, feeds []repository.GormR
 					pubDate = &now
 				}
 
+				rawDesc := item.Description
+				if rawDesc == "" {
+					rawDesc = item.Content
+				}
+
 				feedItems = append(feedItems, TimelineItem{
 					FeedID:      feed.ID,
 					FeedTitle:   feed.Title,
-					Title:       item.Title,
+					Title:       strings.TrimSpace(item.Title),
 					URL:         item.Link,
-					Description: item.Description,
+					Description: CleanExcerpt(rawDesc, 280),
 					Published:   *pubDate,
 				})
 			}
@@ -123,6 +200,11 @@ func FetchFeedsTimelineWithOptions(ctx context.Context, feeds []repository.GormR
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].Published.After(items[j].Published)
 	})
+
+	const maxTotalTimelineItems = 200
+	if len(items) > maxTotalTimelineItems {
+		items = items[:maxTotalTimelineItems]
+	}
 
 	return items
 }

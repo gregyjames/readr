@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,4 +75,28 @@ func TestFetchTimelineCaching(t *testing.T) {
 	items3 := FetchFeedsTimelineWithOptions(context.Background(), feeds, 2*time.Second, true)
 	assert.Len(t, items3, 1)
 	assert.Equal(t, 2, callCount)
+}
+
+func TestCleanExcerpt(t *testing.T) {
+	// Empty input
+	assert.Equal(t, "", CleanExcerpt("", 280))
+
+	// Strips scripts and styles
+	htmlWithScript := `<script type="text/javascript">alert('evil')</script><style>.body { color: red; }</style><p>Hello <b>World</b>!</p>`
+	assert.Equal(t, "Hello World!", CleanExcerpt(htmlWithScript, 280))
+
+	// Strips nested HTML and unescapes entities
+	htmlWithEntities := `<p>Read &amp; learn about Go &gt; Rust &lt; C&#43;&#43; &quot;quote&quot; &amp; &#39;apostrophe&#39;.</p>`
+	assert.Equal(t, `Read & learn about Go > Rust < C++ "quote" & 'apostrophe'.`, CleanExcerpt(htmlWithEntities, 280))
+
+	// Normalizes multiple newlines, tabs, and spaces
+	whitespaceInput := "  Line 1   \n\n   \t  Line 2  \r\n   Line 3   "
+	assert.Equal(t, "Line 1 Line 2 Line 3", CleanExcerpt(whitespaceInput, 280))
+
+	// Truncates long text cleanly at word boundary with ellipsis
+	longText := "The quick brown fox jumps over the lazy dog repeatedly until the sentence becomes exceedingly long and exceeds our requested character budget."
+	truncated := CleanExcerpt(longText, 40)
+	assert.True(t, len([]rune(truncated)) <= 42)
+	assert.True(t, strings.HasSuffix(truncated, "…"))
+	assert.Equal(t, "The quick brown fox jumps over the lazy…", truncated)
 }
