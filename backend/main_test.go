@@ -41,7 +41,7 @@ func initTestDB() *gorm.DB {
 	if err != nil {
 		panic(err)
 	}
-	db.AutoMigrate(&Article{}, &ArticleLink{}, &ArticleStatusType{}, &ArticleStatus{})
+	db.AutoMigrate(&Article{}, &ArticleLink{}, &ArticleStatusType{}, &ArticleStatus{}, &RSSFeed{})
 	db.Exec("DELETE FROM article_links")
 	db.Exec("DELETE FROM articles")
 	db.Exec("DELETE FROM articles_fts")
@@ -1355,5 +1355,23 @@ func TestConfigureSQLite_Pragmas(t *testing.T) {
 	}
 	if synchronous != 1 {
 		t.Fatalf("expected synchronous=1 (NORMAL), got %d", synchronous)
+	}
+}
+
+func TestRssFeedsTableMigration(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("DATA_DIR", tempDir)
+	db := initDB()
+	sqlDB, err := db.DB()
+	if err == nil {
+		t.Cleanup(func() {
+			_ = sqlDB.Close()
+		})
+	}
+	if !db.Migrator().HasTable(&RSSFeed{}) {
+		t.Fatalf("expected rss_feeds table to exist after initDB migration")
+	}
+	if !db.Migrator().HasTable("rss_feeds") {
+		t.Fatalf("expected rss_feeds table name to exist in sqlite schema")
 	}
 }

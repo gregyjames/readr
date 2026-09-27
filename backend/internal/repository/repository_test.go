@@ -1,6 +1,36 @@
 package repository
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+)
+
+func TestGormRssFeedMigration(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:memdb_rss_test?mode=memory&cache=private"), &gorm.Config{})
+	assert.NoError(t, err)
+	sqlDB, err := db.DB()
+	if err == nil {
+		t.Cleanup(func() {
+			_ = sqlDB.Close()
+		})
+	}
+	err = db.AutoMigrate(&GormRssFeed{})
+	assert.NoError(t, err)
+
+	feed := GormRssFeed{
+		URL:       "https://example.com/feed.xml",
+		Title:     "Example Blog",
+		SiteURL:   "https://example.com",
+		CreatedAt: time.Now(),
+	}
+	err = db.Create(&feed).Error
+	assert.NoError(t, err)
+	assert.NotZero(t, feed.ID)
+}
 
 func TestCalculateReadingTime(t *testing.T) {
 	tests := []struct {

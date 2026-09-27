@@ -106,6 +106,18 @@ func (GormArticleLink) TableName() string {
 	return "article_links"
 }
 
+type GormRssFeed struct {
+	ID        int64     `gorm:"primaryKey" json:"id"`
+	URL       string    `gorm:"uniqueIndex;not null" json:"url"`
+	Title     string    `json:"title"`
+	SiteURL   string    `json:"siteUrl"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+func (GormRssFeed) TableName() string {
+	return "rss_feeds"
+}
+
 type APIKey struct {
 	ID         int64          `gorm:"primaryKey" json:"id"`
 	CreatedAt  time.Time      `json:"created_at"`

@@ -20,6 +20,7 @@ import (
 	"example.com/backend/internal/repository"
 	"example.com/backend/internal/vault"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -33,6 +34,7 @@ type ArticleLink = repository.GormArticleLink
 type ArticleStatusType = repository.GormArticleStatusType
 type ArticleStatus = repository.GormArticleStatus
 type APIKey = repository.APIKey
+type RSSFeed = repository.GormRssFeed
 type LinkRequest = handlers.LinkRequest
 type LinkError = handlers.LinkError
 type GraphNode = graph.Node
@@ -123,7 +125,7 @@ func initDB() *gorm.DB {
 		panic(err)
 	}
 	db.AutoMigrate(&Article{}, &ArticleLink{}, &repository.PipelineMetric{},
-		&ArticleStatusType{}, &ArticleStatus{}, &APIKey{})
+		&ArticleStatusType{}, &ArticleStatus{}, &APIKey{}, &repository.GormRssFeed{})
 	handlers.EnsureFTS(db, logger)
 	if err := repository.EnsureArticleStatusTypes(db); err != nil && logger != nil {
 		logger.Error("Failed to seed reading status types", zap.Error(err))
@@ -164,7 +166,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			panic(err)
 		}
 		db.AutoMigrate(&Article{}, &ArticleLink{}, &repository.PipelineMetric{},
-			&ArticleStatusType{}, &ArticleStatus{}, &APIKey{})
+			&ArticleStatusType{}, &ArticleStatus{}, &APIKey{}, &repository.GormRssFeed{})
 
 		dataDir := getDataDir()
 		os.MkdirAll(filepath.Join(dataDir, "articles"), os.ModePerm)
@@ -201,6 +203,10 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
+
+	app.Use(compress.New(compress.Config{
+		Level: compress.LevelDefault,
+	}))
 
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
@@ -294,6 +300,10 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	handlers.RegisterKeys(api, hCtx)
 	handlers.RegisterArticles(api, hCtx)
 	handlers.RegisterArticleStatus(api, hCtx)
+	api.Get("/feeds", handlers.GetFeeds(hCtx))
+	api.Post("/feeds", handlers.AddFeed(hCtx))
+	api.Delete("/feeds/:id", handlers.RemoveFeed(hCtx))
+	api.Get("/feeds/timeline", handlers.GetTimeline(hCtx))
 	handlers.RegisterGraph(api, hCtx)
 	handlers.RegisterChat(api, hCtx)
 	handlers.RegisterSettings(api, hCtx)

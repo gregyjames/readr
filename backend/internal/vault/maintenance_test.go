@@ -25,7 +25,7 @@ func TestVault_OnlineBackupAndIntegrityAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&repository.GormArticle{}); err != nil {
+	if err := db.AutoMigrate(&repository.GormArticle{}, &repository.GormRssFeed{}); err != nil {
 		t.Fatalf("migration failed: %v", err)
 	}
 
@@ -75,7 +75,7 @@ func TestVault_MaintenanceEdgeCases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&repository.GormArticle{}); err != nil {
+	if err := db.AutoMigrate(&repository.GormArticle{}, &repository.GormRssFeed{}); err != nil {
 		t.Fatalf("migration failed: %v", err)
 	}
 
@@ -143,7 +143,7 @@ func TestVault_BackupPathWithSingleQuote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&repository.GormArticle{}); err != nil {
+	if err := db.AutoMigrate(&repository.GormArticle{}, &repository.GormRssFeed{}); err != nil {
 		t.Fatalf("migration failed: %v", err)
 	}
 
