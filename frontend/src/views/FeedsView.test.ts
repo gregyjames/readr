@@ -1,7 +1,24 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createRouter, createMemoryHistory } from 'vue-router'
 import FeedsView from './FeedsView.vue'
 import { feedsAPI, ingestAPI, type RssFeed, type TimelineItem, type PaginatedResponse } from '../services/feeds'
+
+const testRouter = createRouter({
+  history: createMemoryHistory(),
+  routes: [{ path: '/feeds', component: { template: '<div />' } }],
+})
+await testRouter.push('/feeds')
+await testRouter.isReady()
+
+function mountFeedsView(options: any = {}) {
+  return mount(FeedsView, {
+    global: {
+      plugins: [testRouter],
+    },
+    ...options,
+  })
+}
 
 // Helper to wrap timeline items in PaginatedResponse envelope
 function envelope(items: TimelineItem[]): PaginatedResponse<TimelineItem> {
@@ -88,7 +105,7 @@ describe('FeedsView.vue', () => {
   })
 
   it('renders feeds list and timeline items on initial load', async () => {
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     // Verify sidebar feeds
@@ -117,7 +134,7 @@ describe('FeedsView.vue', () => {
       return envelope([...mockTimelineAll])
     }
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     // Click on feed item 1 (Hacker News)
@@ -153,7 +170,7 @@ describe('FeedsView.vue', () => {
       return envelope([...mockTimelineAll])
     }
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     // Select feed 2 with Enter key
@@ -178,7 +195,7 @@ describe('FeedsView.vue', () => {
   })
 
   it('renders item description as plain text literally without parsing HTML', async () => {
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     const firstCard = wrapper.find('[data-testid="timeline-card"]')
@@ -203,7 +220,7 @@ describe('FeedsView.vue', () => {
       }
     }
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     const input = wrapper.find('input[type="url"]')
@@ -226,7 +243,7 @@ describe('FeedsView.vue', () => {
       throw new Error('Invalid feed: not a valid RSS/Atom feed')
     }
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     const input = wrapper.find('input[type="url"]')
@@ -248,7 +265,7 @@ describe('FeedsView.vue', () => {
       return { status: 'success', id: 42 }
     }
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     const saveButtons = wrapper.findAll('[data-testid="save-to-vault-btn"]')
@@ -276,7 +293,7 @@ describe('FeedsView.vue', () => {
       return { status: 'success', success: true }
     }
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     const removeBtn = wrapper.find('[data-testid="remove-feed-1"]')
@@ -303,7 +320,7 @@ describe('FeedsView.vue', () => {
       return envelope([...mockTimelineAll])
     }
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     // User selects feed 1 (which will be slow to respond)
@@ -342,7 +359,7 @@ describe('FeedsView.vue', () => {
       }
     }
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     // Header count should reflect total from envelope
@@ -369,7 +386,7 @@ describe('FeedsView.vue', () => {
     feedsAPI.getFeeds = async () => []
     feedsAPI.getTimeline = async () => envelope([])
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     expect(wrapper.text()).toContain('No subscribed feeds')

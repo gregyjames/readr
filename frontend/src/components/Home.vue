@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import emitter from '../event-bus.ts'
 import BookmarkIcon from '../assets/book.svg'
@@ -75,8 +76,13 @@ const fetchArticles = async () => {
       ...article,
       parsedTags: article.tags ? article.tags.split(',').map((tag: string) => tag.trim()) : []
     }))
-    // Reset to page 1 when articles reload
-    currentPage.value = 1
+    // Only reset to page 1 on initial load if route query does not specify a page
+    const qPage = Number(route?.query?.page)
+    if (qPage > 0) {
+      currentPage.value = qPage
+    } else {
+      currentPage.value = 1
+    }
     await nextTick()
     initReveal()
   } catch (err: any) {
@@ -512,18 +518,45 @@ const filteredArticles = computed(() => {
 
 
 // ── Pagination ──────────────────────────────────────────────
+const route = useRoute()
+const router = useRouter()
+
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const storedPageSize = Number(localStorage.getItem('readr_page_size')) || 25
-const currentPage = ref(1)
+const initialPage = Number(route?.query?.page) > 0 ? Number(route?.query?.page) : 1
+const currentPage = ref(initialPage)
 const pageSize = ref(PAGE_SIZE_OPTIONS.includes(storedPageSize) ? storedPageSize : 25)
 
 const totalPages = computed(() => Math.max(1, Math.ceil(filteredArticles.value.length / pageSize.value)))
 
+function updateQuery(page: number) {
+  if (!router || !route || !route.path) return
+  const query = { ...(route.query || {}) }
+  if (page > 1) {
+    query.page = String(page)
+  } else {
+    delete query.page
+  }
+  router.replace({ path: route.path, query }).catch(() => {})
+}
+
 // Reset to page 1 when filters or page size change
 watch([selectedTag, filterMocOnly, sortOrder, pageSize], () => {
   currentPage.value = 1
+  updateQuery(1)
   nextTick(initReveal)
 })
+
+// Watch URL changes (e.g. browser back/forward buttons)
+if (route) {
+  watch(() => route.query?.page, (newPage) => {
+    const p = Number(newPage) > 0 ? Number(newPage) : 1
+    if (p !== currentPage.value) {
+      currentPage.value = p
+      nextTick(initReveal)
+    }
+  })
+}
 
 const pagedArticles = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
@@ -535,12 +568,15 @@ const pagedSecondaryArticles = computed(() => pagedArticles.value.slice(1))
 
 function onPageChange(page: number) {
   currentPage.value = page
+  updateQuery(page)
   nextTick(initReveal)
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 function onPageSizeChange(size: number) {
   pageSize.value = size
+  currentPage.value = 1
+  updateQuery(1)
   try { localStorage.setItem('readr_page_size', String(size)) } catch {}
 }
 </script>

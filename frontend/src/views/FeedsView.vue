@@ -8,9 +8,13 @@ const sessionTimelines = ref<Record<string, TimelineItem[]>>({})
 </script>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount } from 'vue'
+import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { feedsAPI, ingestAPI } from '../services/feeds'
 import PaginationControls from '../components/PaginationControls.vue'
+
+const route = useRoute()
+const router = useRouter()
 
 const feeds = ref<RssFeed[]>(sessionFeeds.value)
 const timeline = ref<TimelineItem[]>(sessionTimelines.value['all'] || [])
@@ -34,13 +38,26 @@ let toastTimeout: ReturnType<typeof setTimeout> | null = null
 // ── Pagination state ────────────────────────────────────────
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const storedPageSize = Number(localStorage.getItem('readr_page_size')) || 25
-const currentPage = ref(1)
+const initialPage = Number(route?.query?.page) > 0 ? Number(route?.query?.page) : 1
+const currentPage = ref(initialPage)
 const pageSize = ref(PAGE_SIZE_OPTIONS.includes(storedPageSize) ? storedPageSize : 25)
 const totalItems = ref(0)
 const totalPages = ref(1)
 
+function updateQuery(page: number) {
+  if (!router || !route || !route.path) return
+  const query = { ...(route.query || {}) }
+  if (page > 1) {
+    query.page = String(page)
+  } else {
+    delete query.page
+  }
+  router.replace({ path: route.path, query }).catch(() => {})
+}
+
 async function onPageChange(page: number) {
   currentPage.value = page
+  updateQuery(page)
   window.scrollTo({ top: 0, behavior: 'smooth' })
   await fetchTimeline(selectedFeedId.value, false, page, pageSize.value)
 }
@@ -48,8 +65,20 @@ async function onPageChange(page: number) {
 async function onPageSizeChange(size: number) {
   pageSize.value = size
   currentPage.value = 1
+  updateQuery(1)
   try { localStorage.setItem('readr_page_size', String(size)) } catch {}
   await fetchTimeline(selectedFeedId.value, false, 1, size)
+}
+
+// Watch URL changes (e.g. browser back/forward buttons)
+if (route) {
+  watch(() => route.query?.page, async (newPage) => {
+    const p = Number(newPage) > 0 ? Number(newPage) : 1
+    if (p !== currentPage.value) {
+      currentPage.value = p
+      await fetchTimeline(selectedFeedId.value, false, p, pageSize.value)
+    }
+  })
 }
 // ────────────────────────────────────────────────────────────
 
@@ -130,6 +159,7 @@ const fetchTimeline = async (
 const selectFeed = async (feedId: number | null) => {
   selectedFeedId.value = feedId
   currentPage.value = 1
+  updateQuery(1)
   await fetchTimeline(feedId, false, 1, pageSize.value)
 }
 
