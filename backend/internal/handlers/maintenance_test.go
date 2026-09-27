@@ -24,7 +24,7 @@ func TestMaintenance_BackupEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open test sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&repository.GormArticle{}); err != nil {
+	if err := db.AutoMigrate(&repository.GormArticle{}, &repository.GormRssFeed{}); err != nil {
 		t.Fatalf("migration failed: %v", err)
 	}
 
@@ -85,7 +85,7 @@ func TestMaintenance_IntegrityEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open test sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&repository.GormArticle{}); err != nil {
+	if err := db.AutoMigrate(&repository.GormArticle{}, &repository.GormRssFeed{}); err != nil {
 		t.Fatalf("migration failed: %v", err)
 	}
 
