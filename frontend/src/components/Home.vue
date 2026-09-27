@@ -472,6 +472,7 @@ onBeforeUnmount(() => {
   }
   emitter.off('article-added', fetchArticles)
   observer?.disconnect()
+  timelineObserver?.disconnect()
 })
 
 watch(() => settings.view_mode, (newMode) => {
@@ -566,8 +567,67 @@ const pagedArticles = computed(() => {
 const pagedLeadArticle = computed(() => pagedArticles.value[0] ?? null)
 const pagedSecondaryArticles = computed(() => pagedArticles.value.slice(1))
 
+// ── Infinite Scroll for Timeline Stream ─────────────────────
+const timelinePage = ref(initialPage)
+const timelineSentinel = ref<HTMLElement | null>(null)
+let timelineObserver: IntersectionObserver | null = null
+
+const timelineArticles = computed(() => {
+  const count = timelinePage.value * pageSize.value
+  return filteredArticles.value.slice(0, count)
+})
+
+const hasMoreTimelineArticles = computed(() => {
+  return timelineArticles.value.length < filteredArticles.value.length
+})
+
+function loadMoreTimeline() {
+  if (hasMoreTimelineArticles.value) {
+    timelinePage.value++
+    updateQuery(timelinePage.value)
+    nextTick(initReveal)
+  }
+}
+
+function initTimelineObserver() {
+  if (timelineObserver) {
+    timelineObserver.disconnect()
+    timelineObserver = null
+  }
+  if (!timelineSentinel.value) return
+
+  timelineObserver = new IntersectionObserver(
+    (entries) => {
+      const first = entries[0]
+      if (first && first.isIntersecting) {
+        loadMoreTimeline()
+      }
+    },
+    { rootMargin: '200px 0px', threshold: 0.1 }
+  )
+  timelineObserver.observe(timelineSentinel.value)
+}
+
+watch(timelineSentinel, (el) => {
+  if (el) {
+    initTimelineObserver()
+  } else if (timelineObserver) {
+    timelineObserver.disconnect()
+    timelineObserver = null
+  }
+})
+
+// Reset timeline scroll when filters change
+watch([selectedTag, filterMocOnly, sortOrder, pageSize], () => {
+  timelinePage.value = 1
+  nextTick(() => {
+    initTimelineObserver()
+  })
+})
+
 function onPageChange(page: number) {
   currentPage.value = page
+  timelinePage.value = page
   updateQuery(page)
   nextTick(initReveal)
   window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -576,6 +636,7 @@ function onPageChange(page: number) {
 function onPageSizeChange(size: number) {
   pageSize.value = size
   currentPage.value = 1
+  timelinePage.value = 1
   updateQuery(1)
   try { localStorage.setItem('readr_page_size', String(size)) } catch {}
 }
@@ -1018,7 +1079,7 @@ function onPageSizeChange(size: number) {
 
       <div class="space-y-6 sm:space-y-8">
         <div
-          v-for="(article, idx) in filteredArticles"
+          v-for="(article, idx) in timelineArticles"
           :key="article.ID"
           class="reveal-item relative group"
           :class="{ 'archiving': archivingId === article.ID, 'deleting': deletingId === article.ID }"
@@ -1181,6 +1242,18 @@ function onPageSizeChange(size: number) {
           </div>
         </div>
       </div>
+
+      <!-- Infinite Scroll Trigger Sentinel & Loading/End Indicator -->
+      <div ref="timelineSentinel" class="py-8 flex flex-col items-center justify-center text-center">
+        <div v-if="hasMoreTimelineArticles" class="flex items-center gap-2 text-xs font-mono text-gray-400 dark:text-gray-500">
+          <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+          <span>Loading more entries...</span>
+        </div>
+        <div v-else-if="filteredArticles.length > pageSize" class="flex items-center gap-2 text-xs font-mono text-gray-400 dark:text-gray-600">
+          <span>— End of Timeline ({{ filteredArticles.length }} items) —</span>
+        </div>
+      </div>
+
     </div>
 
     <!-- Toast Notification (Archive Feedback with Undo) -->

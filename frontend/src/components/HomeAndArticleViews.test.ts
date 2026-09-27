@@ -99,6 +99,26 @@ describe('Core Views: Home and Article', () => {
 
       expect(wrapper.text()).toContain('Kubernetes Networking Deep Dive')
     })
+
+    it('renders timeline stream in list view mode', async () => {
+      localStorage.setItem('readr_viewMode', 'list')
+      const router = await setupRouter('/')
+      const wrapper = mount(Home, {
+        global: {
+          plugins: [router],
+          stubs: {
+            ArticleProgressLabel: true,
+            MocProgressLabel: true,
+          },
+        },
+      })
+
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Kubernetes Networking Deep Dive')
+      expect(wrapper.text()).toContain('Distributed Consensus with Raft')
+      localStorage.removeItem('readr_viewMode')
+    })
   })
 
   describe('Article.vue', () => {
