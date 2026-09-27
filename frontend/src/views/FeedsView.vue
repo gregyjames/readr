@@ -7,9 +7,6 @@ const feeds = ref<RssFeed[]>([])
 const timeline = ref<TimelineItem[]>([])
 const selectedFeedId = ref<number | null>(null)
 
-type ViewMode = 'card' | 'list'
-const viewMode = ref<ViewMode>('card')
-
 const isLoadingFeeds = ref(false)
 const isLoadingTimeline = ref(false)
 
@@ -180,7 +177,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="p-4 sm:p-8 w-full max-w-7xl mx-auto min-h-[100dvh] flex flex-col space-y-6">
+  <div class="p-4 sm:p-8 w-full max-w-5xl mx-auto min-h-[100dvh] flex flex-col space-y-6">
     
     <!-- Floating Toast Notification (Restrained Glass) -->
     <transition
@@ -206,93 +203,50 @@ onBeforeUnmount(() => {
       </div>
     </transition>
 
-    <!-- Top Command Deck (Distinctive Dispatch Wire Header) -->
-    <header class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-2 border-b border-gray-200/60 dark:border-white/[0.06]">
-      <div>
-        <div class="flex items-center gap-2 mb-1.5">
-          <span class="relative flex h-2 w-2">
-            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-          </span>
-          <span class="text-[11px] font-mono uppercase tracking-widest text-emerald-600 dark:text-emerald-400 font-semibold">Live Wire</span>
-          <span class="text-gray-300 dark:text-gray-600">•</span>
-          <span class="text-[11px] font-mono text-gray-500 dark:text-gray-400 tracking-wide uppercase">{{ timeline.length }} Dispatches</span>
+    <!-- Header Section (Clean, Minimalist Headline) -->
+    <header class="flex items-center justify-between pb-3 border-b border-gray-200/60 dark:border-white/[0.06]">
+      <div class="space-y-0.5">
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          <span class="text-[11px] font-mono tracking-wider uppercase text-gray-400 dark:text-gray-500">Live Wire</span>
+          <span class="text-gray-300 dark:text-gray-700">•</span>
+          <span class="text-[11px] font-mono text-gray-400 dark:text-gray-500">{{ timeline.length }} entries</span>
         </div>
-        <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-gray-900 dark:text-gray-100 font-['Outfit']">
+        <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900 dark:text-gray-100 font-['Outfit']">
           {{ selectedFeed ? selectedFeed.title : 'Feeds' }}
         </h1>
       </div>
 
-      <!-- Controls: Stream Toggle & Refresh -->
-      <div class="flex items-center gap-2.5 self-start md:self-auto">
-        <!-- View Mode Segmented Switcher -->
-        <div class="flex items-center bg-gray-100 dark:bg-white/[0.04] p-1 rounded-xl border border-gray-200/60 dark:border-white/[0.06]">
-          <button
-            @click="viewMode = 'card'"
-            class="px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer flex items-center gap-1.5"
-            :class="viewMode === 'card'
-              ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs font-semibold'
-              : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white'"
-            title="Digest View"
-            aria-label="Digest View"
-          >
-            <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect width="18" height="18" x="3" y="3" rx="2" />
-              <path d="M3 9h18" />
-              <path d="M9 21V9" />
-            </svg>
-            <span>Digest</span>
-          </button>
-          
-          <button
-            @click="viewMode = 'list'"
-            class="px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer flex items-center gap-1.5"
-            :class="viewMode === 'list'
-              ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-2xs font-semibold'
-              : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white'"
-            title="Ticker View"
-            aria-label="Ticker View"
-          >
-            <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="3" y1="6" x2="21" y2="6" />
-              <line x1="3" y1="12" x2="21" y2="12" />
-              <line x1="3" y1="18" x2="21" y2="18" />
-            </svg>
-            <span>Ticker</span>
-          </button>
-        </div>
-
-        <!-- Refresh Button -->
-        <button
-          @click="fetchTimeline(selectedFeedId)"
-          :disabled="isLoadingTimeline"
-          title="Poll Feeds"
-          aria-label="Refresh Timeline"
-          class="p-2 rounded-xl text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white bg-gray-100 dark:bg-white/[0.04] border border-gray-200/60 dark:border-white/[0.06] hover:bg-gray-200 dark:hover:bg-white/[0.08] transition-all cursor-pointer disabled:opacity-50"
+      <!-- Controls: Refresh -->
+      <button
+        @click="fetchTimeline(selectedFeedId)"
+        :disabled="isLoadingTimeline"
+        title="Refresh Timeline"
+        aria-label="Refresh Timeline"
+        class="p-2 rounded-xl text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white bg-gray-100/70 dark:bg-white/[0.03] border border-gray-200/50 dark:border-white/[0.05] hover:bg-gray-200/70 dark:hover:bg-white/[0.08] transition-all cursor-pointer disabled:opacity-50"
+      >
+        <svg
+          class="w-4 h-4"
+          :class="{ 'animate-spin': isLoadingTimeline }"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
         >
-          <svg
-            class="w-4 h-4"
-            :class="{ 'animate-spin': isLoadingTimeline }"
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-            <path d="M3 3v5h5" />
-            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-            <path d="M16 21h5v-5" />
-          </svg>
-        </button>
-      </div>
+          <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+          <path d="M3 3v5h5" />
+          <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+          <path d="M16 21h5v-5" />
+        </svg>
+      </button>
     </header>
 
-    <!-- Source Channels & Quick Subscribe Ribbon -->
-    <section class="space-y-2.5">
-      <div class="flex flex-wrap items-center gap-2 pt-1">
+    <!-- Source Channels & Quick Subscribe Shelf -->
+    <section class="space-y-2">
+      <div class="flex flex-wrap items-center gap-1.5 pt-0.5">
         
         <!-- "All Feeds" Pill -->
         <div
@@ -302,16 +256,15 @@ onBeforeUnmount(() => {
           @click="selectFeed(null)"
           @keydown.enter.prevent="selectFeed(null)"
           @keydown.space.prevent="selectFeed(null)"
-          class="group inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all cursor-pointer border"
+          class="group inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer border"
           :class="selectedFeedId === null
-            ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 shadow-2xs'
-            : 'bg-white dark:bg-[#131720] text-gray-700 dark:text-gray-300 border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20'"
+            ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900 border-transparent shadow-xs'
+            : 'bg-gray-100/70 dark:bg-white/[0.03] text-gray-600 dark:text-gray-300 border-gray-200/60 dark:border-white/[0.06] hover:border-gray-300 dark:hover:border-white/15'"
         >
-          <span class="w-1.5 h-1.5 rounded-full" :class="selectedFeedId === null ? 'bg-emerald-500' : 'bg-gray-400 dark:bg-gray-600'"></span>
           <span>All Feeds</span>
           <span
-            class="text-[10px] font-mono px-1.5 py-0.2 rounded-full"
-            :class="selectedFeedId === null ? 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-200' : 'bg-gray-100 dark:bg-white/[0.06] text-gray-500 dark:text-gray-400'"
+            class="text-[10px] font-mono px-1.5 py-0.2 rounded"
+            :class="selectedFeedId === null ? 'bg-white/20 dark:bg-black/10' : 'bg-gray-200/60 dark:bg-white/10 text-gray-500 dark:text-gray-400'"
           >
             {{ timeline.length }}
           </span>
@@ -327,12 +280,12 @@ onBeforeUnmount(() => {
           @click="selectFeed(feed.id)"
           @keydown.enter.prevent="selectFeed(feed.id)"
           @keydown.space.prevent="selectFeed(feed.id)"
-          class="group inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all cursor-pointer border"
+          class="group inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer border"
           :class="selectedFeedId === feed.id
-            ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 shadow-2xs'
-            : 'bg-white dark:bg-[#131720] text-gray-700 dark:text-gray-300 border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20'"
+            ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900 border-transparent shadow-xs'
+            : 'bg-gray-100/70 dark:bg-white/[0.03] text-gray-600 dark:text-gray-300 border-gray-200/60 dark:border-white/[0.06] hover:border-gray-300 dark:hover:border-white/15'"
         >
-          <span class="truncate max-w-[140px]">{{ feed.title || feed.url }}</span>
+          <span class="truncate max-w-[130px]">{{ feed.title || feed.url }}</span>
           
           <!-- Delete button inside channel pill -->
           <button
@@ -354,15 +307,15 @@ onBeforeUnmount(() => {
             <input
               v-model="newFeedUrl"
               type="url"
-              placeholder="+ Subscribe URL..."
+              placeholder="+ Add URL..."
               :disabled="isAddingFeed"
               aria-label="Feed URL"
-              class="text-xs px-3.5 py-1.5 pr-8 rounded-full border border-dashed border-gray-300 dark:border-white/20 bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-emerald-500 dark:focus:border-emerald-400 w-40 sm:w-52 focus:w-64 transition-all"
+              class="text-xs px-2.5 py-1 pr-6 rounded-lg border border-dashed border-gray-300 dark:border-white/15 bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-emerald-500 dark:focus:border-emerald-400/60 w-32 sm:w-44 focus:w-56 transition-all"
             />
             <button
               type="submit"
               :disabled="isAddingFeed || !newFeedUrl.trim()"
-              class="absolute right-1.5 p-1 rounded-full text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 disabled:opacity-20 cursor-pointer transition-colors"
+              class="absolute right-1 p-0.5 rounded text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 disabled:opacity-20 cursor-pointer transition-colors"
               title="Add feed"
               aria-label="Subscribe"
             >
@@ -377,7 +330,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Add Feed Error Banner -->
-      <div v-if="addError" class="text-xs text-red-500 dark:text-red-400 flex items-center gap-1.5 px-2">
+      <div v-if="addError" class="text-xs text-red-500 dark:text-red-400 flex items-center gap-1.5 px-1">
         <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
         <span>{{ addError }}</span>
       </div>
@@ -388,8 +341,8 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <!-- Main Dispatch Wire Area -->
-    <main class="space-y-6 flex-1">
+    <!-- Main Ticker Stream -->
+    <main class="space-y-2 flex-1 pt-1">
       
       <!-- Loading State -->
       <div v-if="isLoadingTimeline" class="flex flex-col items-center justify-center py-28 text-gray-400">
@@ -397,136 +350,50 @@ onBeforeUnmount(() => {
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
         </svg>
-        <span class="text-xs font-mono">Intercepting live dispatches...</span>
+        <span class="text-xs font-mono">Loading entries...</span>
       </div>
 
       <!-- Empty State: Zero Subscriptions -->
-      <div v-else-if="feeds.length === 0" class="flex flex-col items-center justify-center py-32 text-center px-4">
-        <div class="w-12 h-12 rounded-2xl bg-gray-100 dark:bg-white/[0.04] border border-gray-200/80 dark:border-white/[0.08] text-gray-400 flex items-center justify-center mb-4">
+      <div v-else-if="feeds.length === 0" class="flex flex-col items-center justify-center py-28 text-center px-4">
+        <div class="w-11 h-11 rounded-xl bg-gray-100 dark:bg-white/[0.04] border border-gray-200/80 dark:border-white/[0.08] text-gray-400 flex items-center justify-center mb-3">
           <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M4 11a9 9 0 0 1 9 9" />
             <path d="M4 4a16 16 0 0 1 16 16" />
             <circle cx="5" cy="19" r="1" />
           </svg>
         </div>
-        <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100">No feeds subscribed yet</h3>
+        <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">No feeds subscribed yet</h3>
         <p class="text-xs text-gray-500 dark:text-gray-400 max-w-sm mt-1 leading-relaxed font-mono">
           Enter an RSS or Atom feed URL above to start aggregating articles into your reading stream.
         </p>
       </div>
 
       <!-- Empty State: Subscribed but timeline empty -->
-      <div v-else-if="timeline.length === 0" class="flex flex-col items-center justify-center py-32 text-center px-4">
-        <div class="w-12 h-12 rounded-2xl bg-gray-100 dark:bg-white/[0.04] border border-gray-200/80 dark:border-white/[0.08] text-gray-400 flex items-center justify-center mb-4">
+      <div v-else-if="timeline.length === 0" class="flex flex-col items-center justify-center py-28 text-center px-4">
+        <div class="w-11 h-11 rounded-xl bg-gray-100 dark:bg-white/[0.04] border border-gray-200/80 dark:border-white/[0.08] text-gray-400 flex items-center justify-center mb-3">
           <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10" />
             <line x1="8" y1="12" x2="16" y2="12" />
           </svg>
         </div>
-        <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100">Timeline is empty</h3>
+        <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Timeline is empty</h3>
         <p class="text-xs text-gray-500 dark:text-gray-400 max-w-sm mt-1 leading-relaxed font-mono">
           No articles were returned for this selection. Try clicking refresh or adding more feeds.
         </p>
       </div>
 
-      <!-- VIEW MODE 1: EDITORIAL DIGEST (Magazine Slat Deck) -->
-      <div v-else-if="viewMode === 'card'" class="space-y-4">
-        <article
-          v-for="item in timeline"
-          :key="item.url"
-          data-testid="timeline-card"
-          class="group relative bg-white dark:bg-[#121620] rounded-2xl border border-gray-200/80 dark:border-white/[0.07] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-200 p-5 sm:p-6 shadow-2xs hover:shadow-sm"
-        >
-          <div class="flex flex-col md:flex-row md:items-start justify-between gap-6">
-            
-            <!-- Left: Article & Content -->
-            <div class="flex-1 min-w-0 space-y-2.5">
-              
-              <!-- Meta Header Tagging -->
-              <div class="flex flex-wrap items-center gap-2.5">
-                <span class="inline-flex items-center text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 font-medium">
-                  {{ item.feedTitle || 'Feed' }}
-                </span>
-                <span v-if="extractHostname(item.url)" class="text-[11px] font-mono text-gray-400 dark:text-gray-500">
-                  {{ extractHostname(item.url) }}
-                </span>
-                <span class="text-gray-300 dark:text-gray-700">•</span>
-                <time v-if="item.published" class="text-[11px] text-gray-400 dark:text-gray-500 font-mono">
-                  {{ formatDate(item.published) }}
-                </time>
-              </div>
-
-              <!-- Article Headline -->
-              <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors leading-snug font-['Outfit']">
-                <a :href="item.url" target="_blank" rel="noopener noreferrer" class="hover:underline">
-                  {{ item.title }}
-                </a>
-              </h2>
-
-              <!-- Sanitized Excerpt -->
-              <div
-                v-if="item.description"
-                v-html="sanitizeDescription(item.description)"
-                class="text-xs sm:text-sm text-gray-600 dark:text-gray-400 line-clamp-2 sm:line-clamp-3 leading-relaxed max-w-[85ch] break-words"
-              ></div>
-            </div>
-
-            <!-- Right: Tactile Quick Actions & Save to Vault -->
-            <div class="shrink-0 flex items-center md:flex-col md:items-end justify-between md:justify-start gap-3 pt-2 md:pt-0 border-t md:border-t-0 border-gray-100 dark:border-white/[0.04]">
-              
-              <a
-                :href="item.url"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="text-xs font-mono text-gray-400 hover:text-emerald-500 transition-colors inline-flex items-center gap-1"
-              >
-                <span>Read source</span>
-                <span>↗</span>
-              </a>
-
-              <!-- Tactile Apple-Grade Pill Button -->
-              <button
-                data-testid="save-to-vault-btn"
-                @click="handleSaveToVault(item)"
-                :disabled="savingUrls[item.url] || savedUrls[item.url]"
-                class="px-4 py-2 rounded-xl text-xs font-semibold transition-all active:scale-95 cursor-pointer shadow-xs shrink-0 flex items-center gap-1.5"
-                :class="savedUrls[item.url]
-                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                  : 'bg-gray-900 text-white dark:bg-white dark:text-gray-900 hover:opacity-90 disabled:opacity-60'"
-              >
-                <template v-if="savingUrls[item.url]">
-                  <span class="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin"></span>
-                  <span>Saving...</span>
-                </template>
-                <template v-else-if="savedUrls[item.url]">
-                  <span>✓</span>
-                  <span>Saved!</span>
-                </template>
-                <template v-else>
-                  <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                  <span>Save to Vault</span>
-                </template>
-              </button>
-            </div>
-
-          </div>
-        </article>
-      </div>
-
-      <!-- VIEW MODE 2: TICKER / LEDGER VIEW (Dense Real-Time Feed) -->
+      <!-- UNIFIED TICKER STREAM (Clean, Tactile, High-Efficiency) -->
       <div v-else class="space-y-2">
         <article
           v-for="item in timeline"
           :key="item.url"
           data-testid="timeline-card"
-          class="group bg-white dark:bg-[#121620] rounded-xl border border-gray-200/80 dark:border-white/[0.06] hover:border-gray-300 dark:hover:border-white/20 p-4 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+          class="group bg-white dark:bg-[#12151C] rounded-xl border border-gray-200/70 dark:border-white/[0.06] hover:border-gray-300 dark:hover:border-white/20 p-4 transition-all duration-150 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-2xs hover:shadow-xs"
         >
-          <div class="space-y-1 flex-1 min-w-0">
+          <!-- Article Info & Excerpt -->
+          <div class="space-y-1.5 flex-1 min-w-0">
             <div class="flex items-center gap-2">
-              <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 font-medium">
+              <span class="text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 font-medium">
                 {{ item.feedTitle || 'Feed' }}
               </span>
               <time v-if="item.published" class="text-[11px] text-gray-400 dark:text-gray-500 font-mono">
@@ -537,45 +404,56 @@ onBeforeUnmount(() => {
               </span>
             </div>
 
-            <h3 class="text-sm sm:text-base font-bold text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors leading-snug font-['Outfit'] truncate">
-              <a :href="item.url" target="_blank" rel="noopener noreferrer">
+            <!-- Headline -->
+            <h2 class="text-base sm:text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors leading-snug font-['Outfit']">
+              <a :href="item.url" target="_blank" rel="noopener noreferrer" class="hover:underline">
                 {{ item.title }}
               </a>
-            </h3>
+            </h2>
 
+            <!-- Excerpt preview -->
             <div
               v-if="item.description"
               v-html="sanitizeDescription(item.description)"
-              class="text-xs text-gray-500 dark:text-gray-400 line-clamp-1 leading-relaxed break-words"
+              class="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed break-words max-w-4xl"
             ></div>
           </div>
 
-          <div class="shrink-0 flex items-center gap-3">
+          <!-- Actions -->
+          <div class="shrink-0 flex items-center gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-100 dark:border-white/[0.04]">
             <a
               :href="item.url"
               target="_blank"
               rel="noopener noreferrer"
-              class="text-xs font-mono text-gray-400 hover:text-emerald-500 transition-colors hidden lg:inline"
+              class="text-xs font-mono text-gray-400 hover:text-emerald-500 transition-colors hidden sm:inline"
+              title="Open source"
             >
               {{ extractHostname(item.url) }} ↗
             </a>
 
+            <!-- Tactile Apple-Style Save Button -->
             <button
               data-testid="save-to-vault-btn"
               @click="handleSaveToVault(item)"
               :disabled="savingUrls[item.url] || savedUrls[item.url]"
-              class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all active:scale-95 cursor-pointer shadow-xs shrink-0"
+              class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all active:scale-95 cursor-pointer shadow-xs shrink-0 flex items-center gap-1.5"
               :class="savedUrls[item.url]
                 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                : 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-60'"
+                : 'bg-gray-900 text-white dark:bg-white dark:text-gray-900 hover:opacity-90 disabled:opacity-60'"
             >
               <template v-if="savingUrls[item.url]">
+                <span class="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin"></span>
                 <span>Saving...</span>
               </template>
               <template v-else-if="savedUrls[item.url]">
+                <span>✓</span>
                 <span>Saved!</span>
               </template>
               <template v-else>
+                <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
                 <span>Save to Vault</span>
               </template>
             </button>
