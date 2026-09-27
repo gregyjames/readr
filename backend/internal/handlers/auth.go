@@ -8,7 +8,7 @@ import (
 
 	"example.com/backend/internal/auth"
 	"example.com/backend/internal/repository"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 var (
@@ -36,7 +36,7 @@ func isSessionTokenRevoked(token string) bool {
 	return exists
 }
 
-func ExtractSessionToken(c *fiber.Ctx) string {
+func ExtractSessionToken(c fiber.Ctx) string {
 	var token string
 	authHeader := strings.TrimSpace(c.Get("Authorization"))
 	if strings.HasPrefix(authHeader, "Bearer ") {
@@ -60,8 +60,8 @@ func ExtractSessionToken(c *fiber.Ctx) string {
 	return token
 }
 
-func buildSessionCookie(c *fiber.Ctx, value string, maxAge int) *fiber.Cookie {
-	isSecure := c.Protocol() == "https" || c.Get("X-Forwarded-Proto") == "https"
+func buildSessionCookie(c fiber.Ctx, value string, maxAge int) *fiber.Cookie {
+	isSecure := c.Scheme() == "https" || c.Protocol() == "https" || c.Get("X-Forwarded-Proto") == "https"
 	cookie := &fiber.Cookie{
 		Name:     "readr_session",
 		Value:    value,
@@ -79,11 +79,11 @@ func buildSessionCookie(c *fiber.Ctx, value string, maxAge int) *fiber.Cookie {
 	return cookie
 }
 
-func SetSessionCookie(c *fiber.Ctx, token string) {
+func SetSessionCookie(c fiber.Ctx, token string) {
 	c.Cookie(buildSessionCookie(c, token, int(auth.SessionMaxAge.Seconds())))
 }
 
-func ClearSessionCookie(c *fiber.Ctx) {
+func ClearSessionCookie(c fiber.Ctx) {
 	c.Cookie(buildSessionCookie(c, "", -1))
 }
 
@@ -112,7 +112,7 @@ func touchAPIKeyByHashAsync(repo *repository.GormRepository, keyHash string) {
 }
 
 func AuthMiddleware(h *HandlerContext) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		path := c.Path()
 		if path == "/api/auth/status" || path == "/api/auth/login" || path == "/api/auth/setup" || path == "/api/auth/logout" {
 			return c.Next()
@@ -167,7 +167,7 @@ func AuthMiddleware(h *HandlerContext) fiber.Handler {
 }
 
 func RegisterAuth(router fiber.Router, h *HandlerContext) {
-	router.Get("/auth/status", func(c *fiber.Ctx) error {
+	router.Get("/auth/status", func(c fiber.Ctx) error {
 		current := h.SettingsStore.Get()
 		authConfigured := current.PasswordHash != ""
 		authenticated := false
@@ -194,7 +194,7 @@ func RegisterAuth(router fiber.Router, h *HandlerContext) {
 		})
 	})
 
-	router.Post("/auth/setup", func(c *fiber.Ctx) error {
+	router.Post("/auth/setup", func(c fiber.Ctx) error {
 		current := h.SettingsStore.Get()
 		if current.PasswordHash != "" {
 			return c.Status(400).JSON(fiber.Map{"error": "Authentication is already configured"})
@@ -203,7 +203,7 @@ func RegisterAuth(router fiber.Router, h *HandlerContext) {
 		var req struct {
 			Password string `json:"password"`
 		}
-		if err := c.BodyParser(&req); err != nil || len(strings.TrimSpace(req.Password)) < 6 {
+		if err := c.Bind().Body(&req); err != nil || len(strings.TrimSpace(req.Password)) < 6 {
 			return c.Status(400).JSON(fiber.Map{"error": "Password must be at least 6 characters"})
 		}
 
@@ -230,7 +230,7 @@ func RegisterAuth(router fiber.Router, h *HandlerContext) {
 		return c.JSON(fiber.Map{"status": "success", "token": token})
 	})
 
-	router.Post("/auth/login", func(c *fiber.Ctx) error {
+	router.Post("/auth/login", func(c fiber.Ctx) error {
 		current := h.SettingsStore.Get()
 		if current.PasswordHash == "" {
 			return c.JSON(fiber.Map{"status": "success", "message": "Auth not required"})
@@ -239,7 +239,7 @@ func RegisterAuth(router fiber.Router, h *HandlerContext) {
 		var req struct {
 			Password string `json:"password"`
 		}
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid request"})
 		}
 
@@ -253,7 +253,7 @@ func RegisterAuth(router fiber.Router, h *HandlerContext) {
 		return c.JSON(fiber.Map{"status": "success", "token": token})
 	})
 
-	router.Post("/auth/logout", func(c *fiber.Ctx) error {
+	router.Post("/auth/logout", func(c fiber.Ctx) error {
 		token := ExtractSessionToken(c)
 		if token != "" {
 			revokeSessionToken(token)
@@ -262,12 +262,12 @@ func RegisterAuth(router fiber.Router, h *HandlerContext) {
 		return c.JSON(fiber.Map{"status": "success"})
 	})
 
-	router.Post("/auth/change-password", func(c *fiber.Ctx) error {
+	router.Post("/auth/change-password", func(c fiber.Ctx) error {
 		var req struct {
 			CurrentPassword string `json:"current_password"`
 			NewPassword     string `json:"new_password"`
 		}
-		if err := c.BodyParser(&req); err != nil || len(strings.TrimSpace(req.NewPassword)) < 6 {
+		if err := c.Bind().Body(&req); err != nil || len(strings.TrimSpace(req.NewPassword)) < 6 {
 			return c.Status(400).JSON(fiber.Map{"error": "New password must be at least 6 characters"})
 		}
 

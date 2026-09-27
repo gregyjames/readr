@@ -7,9 +7,10 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"example.com/backend/internal/repository"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -57,7 +58,7 @@ func postJSON(t *testing.T, app *fiber.App, path string, body string) (*http.Res
 
 	req := httptest.NewRequest("POST", path, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := app.Test(req, 5000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("POST %s failed: %v", path, err)
 	}
@@ -140,6 +141,18 @@ func TestRecordProgressHandler(t *testing.T) {
 			t.Fatalf("expected 400, got %d", resp.StatusCode)
 		}
 	})
+
+	t.Run("decodes progress independently of Content-Type header", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/articles/101/progress", bytes.NewBufferString(`{"progress": 65.0}`))
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("expected 200 without Content-Type header, got %d", resp.StatusCode)
+		}
+	})
 }
 
 func TestManualStatusHandlers(t *testing.T) {
@@ -192,6 +205,18 @@ func TestManualStatusHandlers(t *testing.T) {
 			t.Fatalf("expected 404, got %d", resp.StatusCode)
 		}
 	})
+
+	t.Run("decodes reading status independently of Content-Type header", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/articles/101/status", bytes.NewBufferString(`{"status": "finished"}`))
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("expected 200 without Content-Type header, got %d", resp.StatusCode)
+		}
+	})
 }
 
 func TestGetArticlesHydratesReadingStatus(t *testing.T) {
@@ -199,7 +224,7 @@ func TestGetArticlesHydratesReadingStatus(t *testing.T) {
 
 	t.Run("never opened article reports not_started", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/getarticles", nil)
-		resp, err := app.Test(req, 5000)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 		if err != nil {
 			t.Fatalf("GET /getarticles failed: %v", err)
 		}
@@ -221,7 +246,7 @@ func TestGetArticlesHydratesReadingStatus(t *testing.T) {
 		postJSON(t, app, "/articles/101/progress", `{"progress": 60}`)
 
 		req := httptest.NewRequest("GET", "/getarticles", nil)
-		resp, err := app.Test(req, 5000)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 		if err != nil {
 			t.Fatalf("GET /getarticles failed: %v", err)
 		}
@@ -246,7 +271,7 @@ func TestDeleteArticleRemovesStatusRow(t *testing.T) {
 	postJSON(t, app, "/articles/101/progress", `{"progress": 55}`)
 
 	req := httptest.NewRequest("DELETE", "/delete/101", nil)
-	resp, err := app.Test(req, 5000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("DELETE failed: %v", err)
 	}

@@ -11,7 +11,7 @@ import (
 	"example.com/backend/internal/auth"
 	"example.com/backend/internal/repository"
 	"example.com/backend/internal/vault"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"

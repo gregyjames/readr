@@ -2,19 +2,19 @@ package handlers
 
 import (
 	"example.com/backend/internal/agents"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 )
 
 func RegisterLibrarian(router fiber.Router, h *HandlerContext, runner *agents.LibrarianRunner, cronManager *agents.LibrarianCronManager) {
-	router.Get("/librarian/status", func(c *fiber.Ctx) error {
+	router.Get("/librarian/status", func(c fiber.Ctx) error {
 		settings := h.SettingsStore.Get()
 		var nextRun = cronManager.GetNextRun()
 		status := runner.GetStatus(settings.LibrarianEnabled, settings.LibrarianCron, settings.LibrarianMinClusterSize, nextRun)
 		return c.JSON(status)
 	})
 
-	router.Post("/librarian/run", func(c *fiber.Ctx) error {
+	router.Post("/librarian/run", func(c fiber.Ctx) error {
 		if h.Logger != nil {
 			h.Logger.Info("Manual Librarian execution requested")
 		}

@@ -9,10 +9,11 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -81,7 +82,7 @@ func TestFeedsEndpoints(t *testing.T) {
 
 	// 1. Initial GET /api/feeds should be empty array
 	req := httptest.NewRequest("GET", "/api/feeds", nil)
-	resp, err := app.Test(req, 5000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
@@ -94,7 +95,7 @@ func TestFeedsEndpoints(t *testing.T) {
 
 	// 2. Initial GET /api/feeds/timeline should return empty array [] (never null)
 	req = httptest.NewRequest("GET", "/api/feeds/timeline", nil)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
@@ -106,7 +107,7 @@ func TestFeedsEndpoints(t *testing.T) {
 	invalidBody, _ := json.Marshal(map[string]string{"url": "not-a-valid-feed-url"})
 	req = httptest.NewRequest("POST", "/api/feeds", bytes.NewReader(invalidBody))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 
@@ -114,7 +115,7 @@ func TestFeedsEndpoints(t *testing.T) {
 	emptyBody, _ := json.Marshal(map[string]string{"url": ""})
 	req = httptest.NewRequest("POST", "/api/feeds", bytes.NewReader(emptyBody))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 
@@ -122,7 +123,7 @@ func TestFeedsEndpoints(t *testing.T) {
 	addBody, _ := json.Marshal(map[string]string{"url": mockServer.URL})
 	req = httptest.NewRequest("POST", "/api/feeds", bytes.NewReader(addBody))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
@@ -138,7 +139,7 @@ func TestFeedsEndpoints(t *testing.T) {
 	// 5b. POST /api/feeds with same URL should return 409 Conflict
 	req = httptest.NewRequest("POST", "/api/feeds", bytes.NewReader(addBody))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusConflict, resp.StatusCode)
 	conflictBody, err := io.ReadAll(resp.Body)
@@ -147,7 +148,7 @@ func TestFeedsEndpoints(t *testing.T) {
 
 	// 6. GET /api/feeds lists the created feed
 	req = httptest.NewRequest("GET", "/api/feeds", nil)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
@@ -161,7 +162,7 @@ func TestFeedsEndpoints(t *testing.T) {
 
 	// 7. GET /api/feeds/timeline returns items from the feed
 	req = httptest.NewRequest("GET", "/api/feeds/timeline", nil)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
@@ -177,7 +178,7 @@ func TestFeedsEndpoints(t *testing.T) {
 
 	// 8. GET /api/feeds/timeline?feed_id=X returns items for specific feed
 	req = httptest.NewRequest("GET", fmt.Sprintf("/api/feeds/timeline?feed_id=%d", feedID), nil)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
@@ -189,31 +190,31 @@ func TestFeedsEndpoints(t *testing.T) {
 
 	// 9. GET /api/feeds/timeline?feed_id=999 returns 404 for non-existent feed
 	req = httptest.NewRequest("GET", "/api/feeds/timeline?feed_id=999", nil)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
 
 	// 10. GET /api/feeds/timeline?feed_id=invalid returns 400
 	req = httptest.NewRequest("GET", "/api/feeds/timeline?feed_id=invalid", nil)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 
 	// 11. DELETE /api/feeds/invalid returns 400
 	req = httptest.NewRequest("DELETE", "/api/feeds/invalid", nil)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 
 	// 12. DELETE /api/feeds/999 returns 404
 	req = httptest.NewRequest("DELETE", "/api/feeds/999", nil)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
 
 	// 13. DELETE /api/feeds/:id deletes the feed
 	req = httptest.NewRequest("DELETE", fmt.Sprintf("/api/feeds/%d", feedID), nil)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
@@ -224,7 +225,7 @@ func TestFeedsEndpoints(t *testing.T) {
 
 	// 14. GET /api/feeds after delete should be empty
 	req = httptest.NewRequest("GET", "/api/feeds", nil)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
@@ -254,7 +255,7 @@ func TestFeedTitleFallback(t *testing.T) {
 	addBody, _ := json.Marshal(map[string]string{"url": mockServerNoTitle.URL})
 	req := httptest.NewRequest("POST", "/api/feeds", bytes.NewReader(addBody))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := app.Test(req, 5000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 

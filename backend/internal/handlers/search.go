@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"example.com/backend/internal/repository"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -68,7 +68,7 @@ func DeleteArticleFromFTS(db *gorm.DB, id string, logger *zap.Logger) {
 }
 
 func RegisterSearch(router fiber.Router, h *HandlerContext) {
-	router.Get("/search", func(c *fiber.Ctx) error {
+	router.Get("/search", func(c fiber.Ctx) error {
 		results := make([]SearchResult, 0)
 
 		cleanQuery := strings.ReplaceAll(c.Query("q"), "\"", "")

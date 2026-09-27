@@ -2,18 +2,17 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strconv"
 
 	"example.com/backend/internal/repository"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 // parseArticleID reads and validates the :id route parameter.
-func parseArticleID(c *fiber.Ctx) (int64, bool) {
+func parseArticleID(c fiber.Ctx) (int64, bool) {
 	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
 	if err != nil || id <= 0 {
 		return 0, false
@@ -107,7 +106,7 @@ func progressOf(status *repository.GormArticleStatus) float64 {
 // These are all POST by necessity: the wildcard GET /articles/* route in
 // RegisterArticles would otherwise swallow any GET /articles/:id/<sub>.
 func RegisterArticleStatus(router fiber.Router, h *HandlerContext) {
-	router.Post("/articles/:id/progress", func(c *fiber.Ctx) error {
+	router.Post("/articles/:id/progress", func(c fiber.Ctx) error {
 		id, ok := parseArticleID(c)
 		if !ok {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid article ID"})
@@ -116,7 +115,7 @@ func RegisterArticleStatus(router fiber.Router, h *HandlerContext) {
 		var body struct {
 			Progress *float64 `json:"progress"`
 		}
-		if err := json.Unmarshal(c.Body(), &body); err != nil || body.Progress == nil {
+		if err := c.Bind().JSON(&body); err != nil || body.Progress == nil {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid progress payload"})
 		}
 		if *body.Progress < 0 || *body.Progress > 100 {
@@ -153,7 +152,7 @@ func RegisterArticleStatus(router fiber.Router, h *HandlerContext) {
 		return c.JSON(statusResponse(id, status))
 	})
 
-	router.Post("/articles/:id/status", func(c *fiber.Ctx) error {
+	router.Post("/articles/:id/status", func(c fiber.Ctx) error {
 		id, ok := parseArticleID(c)
 		if !ok {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid article ID"})
@@ -162,7 +161,7 @@ func RegisterArticleStatus(router fiber.Router, h *HandlerContext) {
 		var body struct {
 			Status string `json:"status"`
 		}
-		if err := json.Unmarshal(c.Body(), &body); err != nil {
+		if err := c.Bind().JSON(&body); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid status payload"})
 		}
 		if !repository.IsValidStatusKey(body.Status) {
@@ -202,7 +201,7 @@ func RegisterArticleStatus(router fiber.Router, h *HandlerContext) {
 		return c.JSON(statusResponse(id, status))
 	})
 
-	router.Post("/articles/:id/status/reset", func(c *fiber.Ctx) error {
+	router.Post("/articles/:id/status/reset", func(c fiber.Ctx) error {
 		id, ok := parseArticleID(c)
 		if !ok {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid article ID"})

@@ -8,7 +8,7 @@ import (
 
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -19,7 +19,7 @@ type AddFeedRequest struct {
 
 // GetFeeds lists all RSS feeds.
 func GetFeeds(hCtx *HandlerContext) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if hCtx.DB == nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database not configured"})
 		}
@@ -41,13 +41,13 @@ func GetFeeds(hCtx *HandlerContext) fiber.Handler {
 
 // AddFeed validates and parses an RSS feed URL, then persists it.
 func AddFeed(hCtx *HandlerContext) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if hCtx.DB == nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database not configured"})
 		}
 
 		var req AddFeedRequest
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 		}
 
@@ -96,7 +96,7 @@ func AddFeed(hCtx *HandlerContext) fiber.Handler {
 
 // RemoveFeed deletes an RSS feed by its ID.
 func RemoveFeed(hCtx *HandlerContext) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if hCtx.DB == nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database not configured"})
 		}
@@ -125,7 +125,7 @@ func RemoveFeed(hCtx *HandlerContext) fiber.Handler {
 
 // GetTimeline fetches and combines timeline items from all feeds or a single feed if ?feed_id=X is given.
 func GetTimeline(hCtx *HandlerContext) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if hCtx.DB == nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database not configured"})
 		}

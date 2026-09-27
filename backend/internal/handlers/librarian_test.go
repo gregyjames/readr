@@ -7,10 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"example.com/backend/internal/agents"
 	"example.com/backend/internal/repository"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -52,7 +53,7 @@ func TestLibrarianEndpoints_StatusAndRun(t *testing.T) {
 
 	// 1. GET /librarian/status
 	reqStatus := httptest.NewRequest("GET", "/librarian/status", nil)
-	respStatus, err := app.Test(reqStatus, 5000)
+	respStatus, err := app.Test(reqStatus, fiber.TestConfig{Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("GET /librarian/status failed: %v", err)
 	}
@@ -71,7 +72,7 @@ func TestLibrarianEndpoints_StatusAndRun(t *testing.T) {
 
 	// 2. POST /librarian/run (no API key in test environment returns skipped status cleanly)
 	reqRun := httptest.NewRequest("POST", "/librarian/run", nil)
-	respRun, err := app.Test(reqRun, 5000)
+	respRun, err := app.Test(reqRun, fiber.TestConfig{Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("POST /librarian/run failed: %v", err)
 	}
@@ -98,7 +99,7 @@ func TestSettingsUpdate_ReconfiguresLibrarianCron(t *testing.T) {
 	reqBody := `{"librarian_enabled":true,"librarian_cron":"0 12 * * *"}`
 	req := httptest.NewRequest("POST", "/settings", strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := app.Test(req, 5000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("POST /settings failed: %v", err)
 	}

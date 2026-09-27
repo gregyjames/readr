@@ -11,7 +11,7 @@ import (
 
 	"example.com/backend/internal/auth"
 	"example.com/backend/internal/repository"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -42,7 +42,7 @@ func setupAuthTestApp(t *testing.T) (*fiber.App, *HandlerContext) {
 
 	RegisterAuth(api, hCtx)
 
-	api.Get("/protected", func(c *fiber.Ctx) error {
+	api.Get("/protected", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 
@@ -77,20 +77,20 @@ func TestAuthLogoutDoesNotInvalidateOtherSessions(t *testing.T) {
 
 	reqB := httptest.NewRequest("GET", "/api/protected", nil)
 	reqB.Header.Set("Authorization", "Bearer "+tokenB)
-	respB, err := app.Test(reqB, 10000)
+	respB, err := app.Test(reqB, fiber.TestConfig{Timeout: 10 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, respB.StatusCode)
 
 	// 1. Calling /api/auth/logout without credentials succeeds in clearing cookie
 	unauthLogoutReq := httptest.NewRequest("POST", "/api/auth/logout", nil)
-	unauthLogoutResp, err := app.Test(unauthLogoutReq, 10000)
+	unauthLogoutResp, err := app.Test(unauthLogoutReq, fiber.TestConfig{Timeout: 10 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, unauthLogoutResp.StatusCode, "logout succeeds to clear cookie")
 
 	// 2. Device A logs out with its valid token
 	logoutReq := httptest.NewRequest("POST", "/api/auth/logout", nil)
 	logoutReq.Header.Set("Authorization", "Bearer "+tokenA)
-	logoutResp, err := app.Test(logoutReq, 10000)
+	logoutResp, err := app.Test(logoutReq, fiber.TestConfig{Timeout: 10 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, logoutResp.StatusCode)
 	// Verify cookie clearing
@@ -109,14 +109,14 @@ func TestAuthLogoutDoesNotInvalidateOtherSessions(t *testing.T) {
 	// 3. Verify Device A's tokenA is now rejected with 401
 	reqAAfter := httptest.NewRequest("GET", "/api/protected", nil)
 	reqAAfter.Header.Set("Authorization", "Bearer "+tokenA)
-	respAAfter, err := app.Test(reqAAfter, 10000)
+	respAAfter, err := app.Test(reqAAfter, fiber.TestConfig{Timeout: 10 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusUnauthorized, respAAfter.StatusCode, "revoked tokenA must receive 401")
 
 	// 3. Device B's session MUST still be valid (no global session invalidation DoS)
 	reqBAfter := httptest.NewRequest("GET", "/api/protected", nil)
 	reqBAfter.Header.Set("Authorization", "Bearer "+tokenB)
-	respBAfter, err := app.Test(reqBAfter, 10000)
+	respBAfter, err := app.Test(reqBAfter, fiber.TestConfig{Timeout: 10 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, respBAfter.StatusCode, "Device B session must remain valid after Device A logs out")
 	// Verify the global secret did not change
@@ -141,7 +141,7 @@ func TestAuthLoginWorkflow(t *testing.T) {
 	badBody, _ := json.Marshal(map[string]string{"password": "wrongpassword"})
 	badReq := httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(badBody))
 	badReq.Header.Set("Content-Type", "application/json")
-	badResp, err := app.Test(badReq, 10000)
+	badResp, err := app.Test(badReq, fiber.TestConfig{Timeout: 10 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusUnauthorized, badResp.StatusCode)
 
@@ -149,7 +149,7 @@ func TestAuthLoginWorkflow(t *testing.T) {
 	goodBody, _ := json.Marshal(map[string]string{"password": "masterpassword123"})
 	goodReq := httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(goodBody))
 	goodReq.Header.Set("Content-Type", "application/json")
-	goodResp, err := app.Test(goodReq, 10000)
+	goodResp, err := app.Test(goodReq, fiber.TestConfig{Timeout: 10 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, goodResp.StatusCode)
 
@@ -161,7 +161,7 @@ func TestAuthLoginWorkflow(t *testing.T) {
 	// Protected access with token
 	protReq := httptest.NewRequest("GET", "/api/protected", nil)
 	protReq.Header.Set("Authorization", "Bearer "+token)
-	protResp, err := app.Test(protReq, 10000)
+	protResp, err := app.Test(protReq, fiber.TestConfig{Timeout: 10 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, protResp.StatusCode)
 }

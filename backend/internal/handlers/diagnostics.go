@@ -3,11 +3,11 @@ package handlers
 import (
 	"example.com/backend/internal/agents"
 	"example.com/backend/internal/repository"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 func GetPipelineDiagnostics(repo repository.Repository) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var qStatus agents.QueueStatus
 		if agents.Pool != nil {
 			qStatus = agents.Pool.GetQueueStatus()

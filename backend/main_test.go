@@ -14,8 +14,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -1164,7 +1165,7 @@ func TestAuthEndpoints_Flow(t *testing.T) {
 
 	// 1. Initial status: unconfigured
 	req := httptest.NewRequest("GET", "/api/auth/status", nil)
-	resp, err := app.Test(req, 10000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("GET /api/auth/status failed: %v", err)
 	}
@@ -1182,7 +1183,7 @@ func TestAuthEndpoints_Flow(t *testing.T) {
 	setupPayload, _ := json.Marshal(map[string]string{"password": "testPassword123"})
 	req = httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(setupPayload))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err = app.Test(req, 10000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("POST /api/auth/setup failed: %v", err)
 	}
@@ -1194,7 +1195,7 @@ func TestAuthEndpoints_Flow(t *testing.T) {
 	loginPayload, _ := json.Marshal(map[string]string{"password": "testPassword123"})
 	req = httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(loginPayload))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err = app.Test(req, 10000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("POST /api/auth/login failed: %v", err)
 	}
@@ -1214,7 +1215,7 @@ func TestAuthEndpoints_Flow(t *testing.T) {
 	req = httptest.NewRequest("POST", "/api/auth/change-password", bytes.NewReader(changePayload))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Cookie", cookieHeader)
-	resp, err = app.Test(req, 10000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second})
 	if err != nil || resp.StatusCode != 200 {
 		t.Fatalf("POST /api/auth/change-password failed: %v, status: %d", err, resp.StatusCode)
 	}
@@ -1222,7 +1223,7 @@ func TestAuthEndpoints_Flow(t *testing.T) {
 	// 5. Old session cookie is now invalid (due to rotated SessionSecret)
 	req = httptest.NewRequest("GET", "/api/auth/status", nil)
 	req.Header.Set("Cookie", cookieHeader)
-	resp, err = app.Test(req, 10000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("GET /api/auth/status failed: %v", err)
 	}
@@ -1234,7 +1235,7 @@ func TestAuthEndpoints_Flow(t *testing.T) {
 
 	// 6. Logout rotates secret and invalidates any sessions
 	req = httptest.NewRequest("POST", "/api/auth/logout", nil)
-	resp, err = app.Test(req, 10000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second})
 	if err != nil || resp.StatusCode != 200 {
 		t.Fatalf("POST /api/auth/logout failed: %v, status: %d", err, resp.StatusCode)
 	}
@@ -1252,7 +1253,7 @@ func TestAuthMiddleware_Protection(t *testing.T) {
 	setupPayload, _ := json.Marshal(map[string]string{"password": "secretPassword"})
 	req := httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(setupPayload))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := app.Test(req, 10000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("POST /api/auth/setup failed: %v", err)
 	}
@@ -1260,7 +1261,7 @@ func TestAuthMiddleware_Protection(t *testing.T) {
 
 	// Protected endpoint without cookie -> 401
 	req = httptest.NewRequest("GET", "/api/getarticles", nil)
-	resp, err = app.Test(req, 10000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("GET /api/getarticles failed: %v", err)
 	}
@@ -1271,7 +1272,7 @@ func TestAuthMiddleware_Protection(t *testing.T) {
 	// Protected endpoint with valid cookie -> 200
 	req = httptest.NewRequest("GET", "/api/getarticles", nil)
 	req.Header.Set("Cookie", cookie)
-	resp, err = app.Test(req, 10000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("GET /api/getarticles with cookie failed: %v", err)
 	}
@@ -1285,7 +1286,7 @@ func TestAuthMiddleware_Protection(t *testing.T) {
 	tokenPart := strings.TrimPrefix(parts[0], "readr_session=")
 	req = httptest.NewRequest("GET", "/api/getarticles", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenPart)
-	resp, err = app.Test(req, 10000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("GET /api/getarticles with Bearer failed: %v", err)
 	}
@@ -1295,7 +1296,7 @@ func TestAuthMiddleware_Protection(t *testing.T) {
 
 	// Verify /api/articles/:filename route is also protected
 	req = httptest.NewRequest("GET", "/api/articles/1.md", nil)
-	resp, err = app.Test(req, 10000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("GET /api/articles/1.md failed: %v", err)
 	}
@@ -1305,7 +1306,7 @@ func TestAuthMiddleware_Protection(t *testing.T) {
 
 	req = httptest.NewRequest("GET", "/api/articles/1.md", nil)
 	req.Header.Set("Cookie", cookie)
-	resp, err = app.Test(req, 10000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("GET /api/articles/1.md with cookie failed: %v", err)
 	}

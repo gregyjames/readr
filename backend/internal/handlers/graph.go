@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"example.com/backend/internal/repository"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -99,9 +99,9 @@ func LinkArticles(db *gorm.DB, dataDir string, req LinkRequest) (*repository.Gor
 }
 
 func RegisterGraph(router fiber.Router, h *HandlerContext) {
-	router.Post("/link", func(c *fiber.Ctx) error {
+	router.Post("/link", func(c fiber.Ctx) error {
 		var req LinkRequest
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request"})
 		}
 
@@ -119,7 +119,7 @@ func RegisterGraph(router fiber.Router, h *HandlerContext) {
 		return c.JSON(fiber.Map{"status": "success", "linkId": link.ID})
 	})
 
-	router.Get("/graph", func(c *fiber.Ctx) error {
+	router.Get("/graph", func(c fiber.Ctx) error {
 		if h.GraphEngine == nil {
 			return c.JSON(fiber.Map{"nodes": []any{}, "edges": []any{}})
 		}
@@ -133,7 +133,7 @@ func RegisterGraph(router fiber.Router, h *HandlerContext) {
 		return c.JSON(graphData)
 	})
 
-	router.Get("/graph/local/:id", func(c *fiber.Ctx) error {
+	router.Get("/graph/local/:id", func(c fiber.Ctx) error {
 		idParam := c.Params("id")
 		var articleID int64
 		if _, err := fmt.Sscanf(idParam, "%d", &articleID); err != nil {

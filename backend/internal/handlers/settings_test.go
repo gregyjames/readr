@@ -1,13 +1,14 @@
 package handlers
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -92,7 +93,7 @@ func TestSettingsStoreColdStartCorruptFile_BlocksAuth(t *testing.T) {
 	api := app.Group("/api")
 	api.Use(AuthMiddleware(hCtx))
 
-	api.Get("/protected-vault-data", func(c *fiber.Ctx) error {
+	api.Get("/protected-vault-data", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"data": "secret"})
 	})
 
@@ -101,4 +102,28 @@ func TestSettingsStoreColdStartCorruptFile_BlocksAuth(t *testing.T) {
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, "must deny access when configuration is degraded")
+}
+
+func TestSettingsUpdateWithoutContentType(t *testing.T) {
+	tempDir := t.TempDir()
+	logger := zap.NewNop()
+	store := NewSettingsStore(tempDir, logger)
+
+	app := fiber.New()
+	api := app.Group("/api")
+	hCtx := &HandlerContext{
+		DataDir:       tempDir,
+		Logger:        logger,
+		SettingsStore: store,
+	}
+	RegisterSettings(api, hCtx)
+
+	req := httptest.NewRequest("POST", "/api/settings", bytes.NewBufferString(`{"theme":"dark","model":"custom/test-model"}`))
+	// Omit Content-Type header
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	current := store.Get()
+	assert.Equal(t, "custom/test-model", current.Model)
 }

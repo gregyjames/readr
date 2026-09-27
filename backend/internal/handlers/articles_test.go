@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +14,7 @@ import (
 
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
@@ -23,15 +22,7 @@ import (
 )
 
 func makeTestRequest(method, target string) *http.Request {
-	if strings.Contains(target, " ") {
-		return &http.Request{
-			Method:     method,
-			URL:        &url.URL{Path: target, RawPath: strings.ReplaceAll(target, " ", "%20")},
-			RequestURI: target,
-			Header:     make(http.Header),
-		}
-	}
-	return httptest.NewRequest(method, target, nil)
+	return httptest.NewRequest(method, strings.ReplaceAll(target, " ", "%20"), nil)
 }
 
 func TestGetArticleContent_NestedTopicDirectories(t *testing.T) {
@@ -90,7 +81,7 @@ func TestGetArticleContent_NestedTopicDirectories(t *testing.T) {
 	for _, reqPath := range validRequests {
 		t.Run(reqPath, func(t *testing.T) {
 			req := makeTestRequest("GET", reqPath)
-			resp, err := app.Test(req, 5000)
+			resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 			if err != nil {
 				t.Fatalf("request %s failed: %v", reqPath, err)
 			}
@@ -119,7 +110,7 @@ func TestGetArticleContent_NestedTopicDirectories(t *testing.T) {
 	for _, reqPath := range traversalRequests {
 		t.Run("traversal_"+reqPath, func(t *testing.T) {
 			req := makeTestRequest("GET", reqPath)
-			resp, err := app.Test(req, 5000)
+			resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 			if err != nil {
 				t.Fatalf("request %s failed: %v", reqPath, err)
 			}
@@ -174,7 +165,7 @@ func TestArticleArchiveHandlers(t *testing.T) {
 	// 1. GET /getarticles with no param or archived=false returns active articles
 	t.Run("GET /getarticles returns active articles by default", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/getarticles", nil)
-		resp, err := app.Test(req, 5000)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 		if err != nil {
 			t.Fatalf("GET /getarticles failed: %v", err)
 		}
@@ -199,7 +190,7 @@ func TestArticleArchiveHandlers(t *testing.T) {
 
 	t.Run("GET /getarticles?archived=false returns active articles", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/getarticles?archived=false", nil)
-		resp, err := app.Test(req, 5000)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 		if err != nil {
 			t.Fatalf("GET /getarticles?archived=false failed: %v", err)
 		}
@@ -219,7 +210,7 @@ func TestArticleArchiveHandlers(t *testing.T) {
 	// 2. GET /getarticles?archived=true returns archived articles
 	t.Run("GET /getarticles?archived=true returns archived articles", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/getarticles?archived=true", nil)
-		resp, err := app.Test(req, 5000)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 		if err != nil {
 			t.Fatalf("GET /getarticles?archived=true failed: %v", err)
 		}
@@ -239,7 +230,7 @@ func TestArticleArchiveHandlers(t *testing.T) {
 	// 3. POST /articles/:id/archive archives the article
 	t.Run("POST /articles/:id/archive successfully archives", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/articles/101/archive", nil)
-		resp, err := app.Test(req, 5000)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 		if err != nil {
 			t.Fatalf("POST /articles/101/archive failed: %v", err)
 		}
@@ -269,7 +260,7 @@ func TestArticleArchiveHandlers(t *testing.T) {
 	// 4. POST /articles/:id/unarchive unarchives the article
 	t.Run("POST /articles/:id/unarchive successfully unarchives", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/articles/101/unarchive", nil)
-		resp, err := app.Test(req, 5000)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 		if err != nil {
 			t.Fatalf("POST /articles/101/unarchive failed: %v", err)
 		}
@@ -299,7 +290,7 @@ func TestArticleArchiveHandlers(t *testing.T) {
 	// 5. Error handling: 404 if article does not exist
 	t.Run("POST /articles/99999/archive returns 404", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/articles/99999/archive", nil)
-		resp, err := app.Test(req, 5000)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
@@ -311,7 +302,7 @@ func TestArticleArchiveHandlers(t *testing.T) {
 
 	t.Run("POST /articles/99999/unarchive returns 404", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/articles/99999/unarchive", nil)
-		resp, err := app.Test(req, 5000)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
@@ -324,7 +315,7 @@ func TestArticleArchiveHandlers(t *testing.T) {
 	// 6. Error handling: 400 on invalid ID
 	t.Run("POST /articles/abc/archive returns 400", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/articles/abc/archive", nil)
-		resp, err := app.Test(req, 5000)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
@@ -336,7 +327,7 @@ func TestArticleArchiveHandlers(t *testing.T) {
 
 	t.Run("POST /articles/abc/unarchive returns 400", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/articles/abc/unarchive", nil)
-		resp, err := app.Test(req, 5000)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
@@ -378,7 +369,7 @@ func TestDeleteArticle_CleansArticleLinks(t *testing.T) {
 	RegisterArticles(api, hCtx)
 
 	req := httptest.NewRequest("DELETE", "/api/delete/10", nil)
-	resp, err := app.Test(req, 5000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("delete request failed: %v", err)
 	}
@@ -433,7 +424,7 @@ func TestEditArticle_UpdatesWordCount_And_RollsBack(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/edit/50", bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := app.Test(req, 5000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("edit request failed: %v", err)
 	}
@@ -467,7 +458,7 @@ func TestEditArticle_UpdatesWordCount_And_RollsBack(t *testing.T) {
 	// Pre-create article in memory with matching id for handler to find initially, or drop table to trigger DB update error
 	db.Exec("DROP TABLE articles")
 
-	failResp, err := app.Test(failReq, 5000)
+	failResp, err := app.Test(failReq, fiber.TestConfig{Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("edit request failed: %v", err)
 	}
@@ -526,7 +517,7 @@ func TestEditArticle_UpdatesFrontmatterAndSyncsLinks(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/edit/50", bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := app.Test(req, 5000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("edit request failed: %v", err)
 	}
@@ -567,7 +558,7 @@ func TestEditArticle_UpdatesFrontmatterAndSyncsLinks(t *testing.T) {
 	clearBodyBytes, _ := json.Marshal(map[string]string{"content": clearTagsContent})
 	reqClear := httptest.NewRequest("POST", "/api/edit/50", bytes.NewReader(clearBodyBytes))
 	reqClear.Header.Set("Content-Type", "application/json")
-	respClear, err := app.Test(reqClear, 5000)
+	respClear, err := app.Test(reqClear, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	defer respClear.Body.Close()
 	require.Equal(t, 200, respClear.StatusCode)
@@ -615,7 +606,7 @@ func TestAddArticle_Integration(t *testing.T) {
 	// 1. Invalid JSON returns 400
 	reqBadJSON := httptest.NewRequest("POST", "/api/add", bytes.NewReader([]byte("{invalid-json")))
 	reqBadJSON.Header.Set("Content-Type", "application/json")
-	respBadJSON, err := app.Test(reqBadJSON, 5000)
+	respBadJSON, err := app.Test(reqBadJSON, fiber.TestConfig{Timeout: 5 * time.Second})
 	if err != nil || respBadJSON.StatusCode != 400 {
 		t.Fatalf("expected 400 for invalid JSON, got %d, err: %v", respBadJSON.StatusCode, err)
 	}
@@ -624,7 +615,7 @@ func TestAddArticle_Integration(t *testing.T) {
 	bodyEmpty, _ := json.Marshal(map[string]string{"url": ""})
 	reqEmpty := httptest.NewRequest("POST", "/api/add", bytes.NewReader(bodyEmpty))
 	reqEmpty.Header.Set("Content-Type", "application/json")
-	respEmpty, err := app.Test(reqEmpty, 5000)
+	respEmpty, err := app.Test(reqEmpty, fiber.TestConfig{Timeout: 5 * time.Second})
 	if err != nil || respEmpty.StatusCode != 400 {
 		t.Fatalf("expected 400 for empty URL, got %d, err: %v", respEmpty.StatusCode, err)
 	}
@@ -653,7 +644,7 @@ func TestAddArticle_Integration(t *testing.T) {
 	})
 	reqAdd := httptest.NewRequest("POST", "/api/add", bytes.NewReader(addPayload))
 	reqAdd.Header.Set("Content-Type", "application/json")
-	respAdd, err := app.Test(reqAdd, 10000)
+	respAdd, err := app.Test(reqAdd, fiber.TestConfig{Timeout: 10 * time.Second})
 	if err != nil || respAdd.StatusCode != 200 {
 		t.Fatalf("expected 200 for valid ingest, got %d, err: %v", respAdd.StatusCode, err)
 	}
@@ -690,7 +681,7 @@ func TestAddArticle_Integration(t *testing.T) {
 	// 5. Duplicate ingestion returns exists status with matching ID
 	reqDup := httptest.NewRequest("POST", "/api/add", bytes.NewReader(addPayload))
 	reqDup.Header.Set("Content-Type", "application/json")
-	respDup, err := app.Test(reqDup, 10000)
+	respDup, err := app.Test(reqDup, fiber.TestConfig{Timeout: 10 * time.Second})
 	if err != nil || respDup.StatusCode != 200 {
 		t.Fatalf("expected 200 for duplicate ingest, got %d, err: %v", respDup.StatusCode, err)
 	}
@@ -702,5 +693,12 @@ func TestAddArticle_Integration(t *testing.T) {
 	_ = json.NewDecoder(respDup.Body).Decode(&dupResp)
 	if dupResp.Status != "exists" || dupResp.ID != addResp.ID {
 		t.Errorf("expected duplicate response with id %d, got %+v", addResp.ID, dupResp)
+	}
+
+	// 6. Ingest decoding succeeds independently of Content-Type header
+	reqNoCT := httptest.NewRequest("POST", "/api/add", bytes.NewReader(addPayload))
+	respNoCT, err := app.Test(reqNoCT, fiber.TestConfig{Timeout: 10 * time.Second})
+	if err != nil || respNoCT.StatusCode != 200 {
+		t.Fatalf("expected 200 for ingest without Content-Type header, got %d, err: %v", respNoCT.StatusCode, err)
 	}
 }

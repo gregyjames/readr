@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"example.com/backend/internal/chat"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
 func RegisterChat(router fiber.Router, h *HandlerContext) {
-	router.Get("/chats", func(c *fiber.Ctx) error {
+	router.Get("/chats", func(c fiber.Ctx) error {
 		if h.ChatRepo == nil {
 			return c.JSON([]any{})
 		}
@@ -29,14 +29,14 @@ func RegisterChat(router fiber.Router, h *HandlerContext) {
 		return c.JSON(sessions)
 	})
 
-	router.Post("/chats", func(c *fiber.Ctx) error {
+	router.Post("/chats", func(c fiber.Ctx) error {
 		if h.ChatRepo == nil {
 			return c.Status(500).JSON(fiber.Map{"error": "Chat repository unavailable"})
 		}
 		var req struct {
 			Title string `json:"title"`
 		}
-		_ = c.BodyParser(&req)
+		_ = c.Bind().Body(&req)
 
 		title := req.Title
 		if strings.TrimSpace(title) == "" {
@@ -60,7 +60,7 @@ func RegisterChat(router fiber.Router, h *HandlerContext) {
 		return c.JSON(session)
 	})
 
-	router.Get("/chats/:id", func(c *fiber.Ctx) error {
+	router.Get("/chats/:id", func(c fiber.Ctx) error {
 		if h.ChatRepo == nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Chat session not found"})
 		}
@@ -72,7 +72,7 @@ func RegisterChat(router fiber.Router, h *HandlerContext) {
 		return c.JSON(session)
 	})
 
-	router.Delete("/chats/:id", func(c *fiber.Ctx) error {
+	router.Delete("/chats/:id", func(c fiber.Ctx) error {
 		if h.ChatRepo == nil {
 			return c.Status(500).JSON(fiber.Map{"error": "Chat repository unavailable"})
 		}
@@ -86,7 +86,7 @@ func RegisterChat(router fiber.Router, h *HandlerContext) {
 		return c.JSON(fiber.Map{"status": "success"})
 	})
 
-	router.Get("/models", func(c *fiber.Ctx) error {
+	router.Get("/models", func(c fiber.Ctx) error {
 		apiKey, _ := h.SettingsStore.ExtractOpenRouterCredentials()
 
 		if h.ChatService == nil {
@@ -104,7 +104,7 @@ func RegisterChat(router fiber.Router, h *HandlerContext) {
 		return c.Send(data)
 	})
 
-	router.Post("/chats/:id/message", func(c *fiber.Ctx) error {
+	router.Post("/chats/:id/message", func(c fiber.Ctx) error {
 		apiKey, _ := h.SettingsStore.ExtractOpenRouterCredentials()
 		if apiKey == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "API key required in settings.json to use chat"})
@@ -117,7 +117,7 @@ func RegisterChat(router fiber.Router, h *HandlerContext) {
 			Model         string            `json:"model,omitempty"`
 			ExpandContext bool              `json:"expandContext,omitempty"`
 		}
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid message payload"})
 		}
 		if req.Role == "" {
@@ -136,7 +136,7 @@ func RegisterChat(router fiber.Router, h *HandlerContext) {
 		c.Set("Cache-Control", "no-cache")
 		c.Set("Connection", "keep-alive")
 
-		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		return c.SendStreamWriter(func(w *bufio.Writer) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
@@ -158,6 +158,5 @@ func RegisterChat(router fiber.Router, h *HandlerContext) {
 			fmt.Fprintf(w, "data: [DONE]\n\n")
 			w.Flush()
 		})
-		return nil
 	})
 }

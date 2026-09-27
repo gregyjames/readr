@@ -6,7 +6,7 @@ import (
 
 	"example.com/backend/internal/auth"
 	"example.com/backend/internal/repository"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 type CreateAPIKeyRequest struct {
@@ -20,7 +20,7 @@ func RegisterKeys(router fiber.Router, h *HandlerContext) {
 }
 
 func HandleListAPIKeys(h *HandlerContext) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if h.Repo == nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Repository not configured"})
 		}
@@ -36,13 +36,13 @@ func HandleListAPIKeys(h *HandlerContext) fiber.Handler {
 }
 
 func HandleCreateAPIKey(h *HandlerContext) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if h.Repo == nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Repository not configured"})
 		}
 
 		var req CreateAPIKeyRequest
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			// allow empty body
 			req.Name = ""
 		}
@@ -78,7 +78,7 @@ func HandleCreateAPIKey(h *HandlerContext) fiber.Handler {
 }
 
 func HandleDeleteAPIKey(h *HandlerContext) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if h.Repo == nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Repository not configured"})
 		}
