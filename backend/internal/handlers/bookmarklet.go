@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 )
 
@@ -15,7 +15,7 @@ func RegisterBookmarklet(app fiber.Router, h *HandlerContext) {
 
 // HandleGetBookmarklet serves the standalone bookmarklet script with appropriate CORS & Content-Type headers.
 func HandleGetBookmarklet(h *HandlerContext) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		// Set CORS and script content-type headers
 		c.Set("Access-Control-Allow-Origin", "*")
 		c.Set("Access-Control-Allow-Methods", "GET, OPTIONS")

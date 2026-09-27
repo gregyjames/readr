@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"example.com/backend/internal/auth"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 )
 
@@ -153,7 +153,7 @@ func (s *SettingsStore) ExtractOpenRouterCredentials() (string, string) {
 }
 
 func RegisterSettings(router fiber.Router, h *HandlerContext) {
-	router.Get("/settings", func(c *fiber.Ctx) error {
+	router.Get("/settings", func(c fiber.Ctx) error {
 		fresh := h.SettingsStore.Reload()
 		return c.JSON(fiber.Map{
 			"api_key":                    fresh.APIKey,
@@ -170,9 +170,9 @@ func RegisterSettings(router fiber.Router, h *HandlerContext) {
 		})
 	})
 
-	router.Post("/settings", func(c *fiber.Ctx) error {
+	router.Post("/settings", func(c fiber.Ctx) error {
 		var req ServerSettings
-		if err := json.Unmarshal(c.Body(), &req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid JSON"})
 		}
 
