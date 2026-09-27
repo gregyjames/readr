@@ -326,6 +326,45 @@ describe('FeedsView.vue', () => {
     wrapper.unmount()
   })
 
+  it('navigates pages and updates timeline using server-side pagination envelope', async () => {
+    let capturedPage = 1
+    let capturedLimit = 25
+
+    feedsAPI.getTimeline = async (feedId?: number | null, refresh?: boolean, page?: number, limit?: number) => {
+      capturedPage = page ?? 1
+      capturedLimit = limit ?? 25
+      return {
+        data: capturedPage === 1 ? [mockTimelineAll[0]] : [mockTimelineAll[1]],
+        page: capturedPage,
+        limit: capturedLimit,
+        total: 150,
+        total_pages: 6,
+      }
+    }
+
+    const wrapper = mount(FeedsView)
+    await flushPromises()
+
+    // Header count should reflect total from envelope
+    expect(wrapper.text()).toContain('150 entries')
+
+    // Pagination controls should reflect multi-page state
+    expect(wrapper.text()).toContain('Showing 1–25 of 150 items')
+
+    // Click Next page button
+    const nextBtn = wrapper.find('button[aria-label="Next page"]')
+    expect(nextBtn.exists()).toBe(true)
+    expect(nextBtn.attributes('disabled')).toBeUndefined()
+
+    await nextBtn.trigger('click')
+    await flushPromises()
+
+    expect(capturedPage).toBe(2)
+    expect(wrapper.text()).toContain('Showing 26–50 of 150 items')
+
+    wrapper.unmount()
+  })
+
   it('renders empty state when no feeds are subscribed', async () => {
     feedsAPI.getFeeds = async () => []
     feedsAPI.getTimeline = async () => envelope([])

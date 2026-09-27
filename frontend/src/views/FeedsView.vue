@@ -8,7 +8,7 @@ const sessionTimelines = ref<Record<string, TimelineItem[]>>({})
 </script>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount } from 'vue'
 import { feedsAPI, ingestAPI } from '../services/feeds'
 import PaginationControls from '../components/PaginationControls.vue'
 
@@ -36,26 +36,20 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const storedPageSize = Number(localStorage.getItem('readr_page_size')) || 25
 const currentPage = ref(1)
 const pageSize = ref(PAGE_SIZE_OPTIONS.includes(storedPageSize) ? storedPageSize : 25)
+const totalItems = ref(0)
+const totalPages = ref(1)
 
-const totalPages = computed(() => Math.max(1, Math.ceil(timeline.value.length / pageSize.value)))
-
-const pagedTimeline = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  return timeline.value.slice(start, start + pageSize.value)
-})
-
-watch([selectedFeedId, pageSize], () => {
-  currentPage.value = 1
-})
-
-function onPageChange(page: number) {
+async function onPageChange(page: number) {
   currentPage.value = page
   window.scrollTo({ top: 0, behavior: 'smooth' })
+  await fetchTimeline(selectedFeedId.value, false, page, pageSize.value)
 }
 
-function onPageSizeChange(size: number) {
+async function onPageSizeChange(size: number) {
   pageSize.value = size
+  currentPage.value = 1
   try { localStorage.setItem('readr_page_size', String(size)) } catch {}
+  await fetchTimeline(selectedFeedId.value, false, 1, size)
 }
 // ────────────────────────────────────────────────────────────
 
@@ -88,8 +82,13 @@ const fetchFeeds = async () => {
   }
 }
 
-const fetchTimeline = async (feedId: number | null = selectedFeedId.value, forceRefresh = false) => {
-  const cacheKey = feedId !== null ? String(feedId) : 'all'
+const fetchTimeline = async (
+  feedId: number | null = selectedFeedId.value,
+  forceRefresh = false,
+  page = currentPage.value,
+  limit = pageSize.value
+) => {
+  const cacheKey = `${feedId !== null ? String(feedId) : 'all'}_p${page}_l${limit}`
 
   // Instant cache preview if already in memory
   if (!forceRefresh && sessionTimelines.value[cacheKey]) {
@@ -104,7 +103,7 @@ const fetchTimeline = async (feedId: number | null = selectedFeedId.value, force
   }
 
   try {
-    const envelope = await feedsAPI.getTimeline(feedId, forceRefresh)
+    const envelope = await feedsAPI.getTimeline(feedId, forceRefresh, page, limit)
     // Race condition guard: ignore if user switched feeds in the meantime
     if (selectedFeedId.value !== feedId) {
       return
@@ -112,7 +111,9 @@ const fetchTimeline = async (feedId: number | null = selectedFeedId.value, force
     const items = envelope.data ?? []
     timeline.value = items
     sessionTimelines.value[cacheKey] = items
-    currentPage.value = 1
+    totalItems.value = envelope.total ?? items.length
+    totalPages.value = envelope.total_pages ?? Math.max(1, Math.ceil(totalItems.value / limit))
+    currentPage.value = envelope.page ?? page
   } catch (err: any) {
     if (selectedFeedId.value !== feedId) {
       return
@@ -128,7 +129,8 @@ const fetchTimeline = async (feedId: number | null = selectedFeedId.value, force
 
 const selectFeed = async (feedId: number | null) => {
   selectedFeedId.value = feedId
-  await fetchTimeline(feedId)
+  currentPage.value = 1
+  await fetchTimeline(feedId, false, 1, pageSize.value)
 }
 
 const handleAddFeed = async () => {
@@ -255,7 +257,7 @@ onBeforeUnmount(() => {
       <div class="space-y-1">
         <div class="flex items-center gap-2">
           <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-          <span class="text-[11px] font-mono text-gray-400 dark:text-gray-500 tracking-wide uppercase">{{ timeline.length }} entries</span>
+          <span class="text-[11px] font-mono text-gray-400 dark:text-gray-500 tracking-wide uppercase">{{ totalItems }} entries</span>
         </div>
         <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-gray-950 dark:text-[#F3F4F6] font-['Outfit']">
           {{ selectedFeed ? selectedFeed.title : 'Feeds' }}
@@ -311,7 +313,7 @@ onBeforeUnmount(() => {
             class="text-[10px] font-mono px-1.5 py-0.5 rounded"
             :class="selectedFeedId === null ? 'bg-white/20 dark:bg-black/10' : 'bg-gray-200/60 dark:bg-white/10 text-gray-500 dark:text-gray-400'"
           >
-            {{ timeline.length }}
+            {{ totalItems }}
           </span>
         </div>
 
@@ -430,7 +432,7 @@ onBeforeUnmount(() => {
       <!-- EDITORIAL SLAT STREAM (Hairline Dividers + Edge-to-Edge Hover Spotlight) -->
       <div v-else class="divide-y divide-gray-200/50 dark:divide-white/[0.05]">
         <article
-          v-for="item in pagedTimeline"
+          v-for="item in timeline"
           :key="item.url"
           data-testid="timeline-card"
           class="group -mx-4 px-4 py-5 sm:py-6 rounded-2xl hover:bg-gray-50/80 dark:hover:bg-white/[0.02] transition-all duration-150 flex flex-col md:flex-row md:items-start justify-between gap-5"
@@ -512,7 +514,7 @@ onBeforeUnmount(() => {
       <PaginationControls
         :current-page="currentPage"
         :total-pages="totalPages"
-        :total-items="timeline.length"
+        :total-items="totalItems"
         :page-size="pageSize"
         :page-size-options="[10, 25, 50, 100]"
         @update:page="onPageChange"
