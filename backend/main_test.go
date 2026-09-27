@@ -1376,3 +1376,54 @@ func TestRssFeedsTableMigration(t *testing.T) {
 		t.Fatalf("expected rss_feeds table name to exist in sqlite schema")
 	}
 }
+
+func TestMiddlewareStack(t *testing.T) {
+	app := setupApp()
+
+	// 1. Test Request ID generation
+	req1 := httptest.NewRequest("GET", "/api/", nil)
+	resp1, err := app.Test(req1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	reqID := resp1.Header.Get("X-Request-ID")
+	if reqID == "" {
+		t.Errorf("expected X-Request-ID header to be present")
+	}
+
+	// 2. Test ETag generation and 304 Not Modified
+	req2 := httptest.NewRequest("GET", "/api/", nil)
+	resp2, err := app.Test(req2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	etagVal := resp2.Header.Get("ETag")
+	if etagVal == "" {
+		t.Errorf("expected ETag header on GET /api/")
+	}
+
+	// Send conditional GET with If-None-Match
+	req3 := httptest.NewRequest("GET", "/api/", nil)
+	req3.Header.Set("If-None-Match", etagVal)
+	resp3, err := app.Test(req3)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp3.StatusCode != http.StatusNotModified {
+		t.Errorf("expected status 304 Not Modified, got %d", resp3.StatusCode)
+	}
+
+	// 3. Test Panic Recovery
+	// Register a panicking route on /api to verify recover middleware returns 500 without crashing
+	app.Get("/api/panic-test", func(c fiber.Ctx) error {
+		panic("simulated unhandled panic in handler")
+	})
+	reqPanic := httptest.NewRequest("GET", "/api/panic-test", nil)
+	respPanic, err := app.Test(reqPanic)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if respPanic.StatusCode != http.StatusInternalServerError {
+		t.Errorf("expected status 500 from recovered panic, got %d", respPanic.StatusCode)
+	}
+}

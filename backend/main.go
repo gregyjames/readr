@@ -24,6 +24,9 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/compress"
 	"github.com/gofiber/fiber/v3/middleware/cors"
+	"github.com/gofiber/fiber/v3/middleware/etag"
+	"github.com/gofiber/fiber/v3/middleware/recover"
+	"github.com/gofiber/fiber/v3/middleware/requestid"
 	"github.com/gofiber/fiber/v3/middleware/static"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -208,6 +211,15 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		JSONDecoder: sonic.Unmarshal,
 	})
 
+	// Panic recovery protects server goroutines from crashes
+	app.Use(recover.New())
+
+	// Request ID tags each request with a unique ID for end-to-end tracing
+	app.Use(requestid.New())
+
+	// HTTP caching via ETags saves bandwidth and serialization overhead with 304 Not Modified
+	app.Use(etag.New())
+
 	app.Use(compress.New(compress.Config{
 		Level: compress.LevelDefault,
 	}))
@@ -219,7 +231,9 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			"Authorization", "X-Openrouter-Key", "X-Openrouter-Model",
 			"X-OpenRouter-Key", "X-OpenRouter-Model", "X-Api-Key",
 			"X-Agent-Enricher", "X-Agent-Linker", "X-Agent-Summarizer",
+			"X-Request-ID",
 		},
+		ExposeHeaders: []string{"X-Request-ID"},
 	}))
 
 	app.Use(func(c fiber.Ctx) error {
@@ -228,6 +242,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		duration := time.Since(start)
 
 		logger.Info("Request handled",
+			zap.String("req_id", requestid.FromContext(c)),
 			zap.String("method", c.Method()),
 			zap.String("path", c.Path()),
 			zap.Int("status", c.Response().StatusCode()),
