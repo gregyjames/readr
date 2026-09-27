@@ -230,10 +230,13 @@ func TestGetArticlesHydratesReadingStatus(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		var list []repository.GormArticle
-		if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		var envelope struct {
+			Data []repository.GormArticle `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
 			t.Fatalf("failed to decode: %v", err)
 		}
+		list := envelope.Data
 		if len(list) != 1 {
 			t.Fatalf("expected 1 article, got %d", len(list))
 		}
@@ -252,10 +255,13 @@ func TestGetArticlesHydratesReadingStatus(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		var list []repository.GormArticle
-		if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		var envelope struct {
+			Data []repository.GormArticle `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
 			t.Fatalf("failed to decode: %v", err)
 		}
+		list := envelope.Data
 		if list[0].ReadingStatus != repository.StatusNotFinished {
 			t.Errorf("ReadingStatus = %q, want %q", list[0].ReadingStatus, repository.StatusNotFinished)
 		}
