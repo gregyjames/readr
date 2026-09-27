@@ -2,6 +2,7 @@ package agents
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,6 +59,7 @@ type GormAgentJob struct {
 	Status    string    `gorm:"index;type:text;not null" json:"status"` // queued, processing, completed, failed
 	Error     string    `gorm:"type:text" json:"error,omitempty"`
 	Retries   int       `gorm:"default:0" json:"retries"`
+	Settings  string    `gorm:"type:text" json:"settings,omitempty"`
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
@@ -77,6 +79,9 @@ type AgentPool struct {
 	mu                   sync.RWMutex
 	activeJobs           map[int]ActiveJobInfo
 	CircuitBreaker       *CircuitBreaker
+	shutdown             chan struct{}
+	workerWg             sync.WaitGroup
+	runJob               func(Job) error
 }
 
 var Pool *AgentPool
@@ -90,6 +95,7 @@ func InitPool(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataD
 
 	Pool = &AgentPool{
 		Queue:                make(chan Job, 100),
+		shutdown:             make(chan struct{}),
 		logger:               logger,
 		db:                   db,
 		repo:                 repo,
@@ -105,24 +111,22 @@ func InitPool(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataD
 			logger.Error("Failed to auto-migrate agent_jobs", zap.Error(err))
 		}
 
-		// Reset any lingering "processing" jobs to "queued" on boot so crashes/restarts don't leave jobs permanently stuck.
 		if err := db.Model(&GormAgentJob{}).Where("status = ?", "processing").Update("status", "queued").Error; err != nil {
 			logger.Error("Failed to reset lingering processing jobs", zap.Error(err))
 		}
 
-		// Re-enqueue up to 100 queued jobs from agent_jobs into Pool.Queue.
 		var queued []GormAgentJob
 		if err := db.Where("status = ?", "queued").Order("id asc").Limit(100).Find(&queued).Error; err == nil {
 			for _, qj := range queued {
+				var settings PipelineSettings
+				if qj.Settings != "" {
+					_ = json.Unmarshal([]byte(qj.Settings), &settings)
+				}
 				job := Job{
 					ID:        qj.ID,
 					ArticleID: qj.ArticleID,
 					Type:      JobType(qj.Type),
-					Settings: PipelineSettings{
-						Summarizer: true,
-						Enricher:   true,
-						Linker:     true,
-					},
+					Settings:  settings,
 				}
 				select {
 				case Pool.Queue <- job:
@@ -134,6 +138,7 @@ func InitPool(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataD
 	}
 
 	for i := 0; i < numWorkers; i++ {
+		Pool.workerWg.Add(1)
 		go Pool.worker(i)
 	}
 
@@ -141,8 +146,17 @@ func InitPool(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataD
 }
 
 func (p *AgentPool) worker(id int) {
-	for job := range p.Queue {
-		p.executeJob(id, job)
+	defer p.workerWg.Done()
+	for {
+		select {
+		case <-p.shutdown:
+			return
+		case job, ok := <-p.Queue:
+			if !ok {
+				return
+			}
+			p.executeJob(id, job)
+		}
 	}
 }
 
@@ -193,15 +207,18 @@ func (p *AgentPool) executeJob(id int, job Job) {
 		)
 		if p.db != nil {
 			if jobID > 0 {
-				p.db.Model(&GormAgentJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
-					"status": "failed",
-					"error":  "circuit breaker open",
-				})
+				p.db.Model(&GormAgentJob{}).Where("id = ?", jobID).
+					UpdateColumn("retries", gorm.Expr("retries + 1")).
+					Updates(map[string]interface{}{
+						"status": "queued",
+						"error":  "circuit breaker open",
+					})
 			} else {
 				p.db.Model(&GormAgentJob{}).
 					Where("article_id = ? AND type = ? AND status = ?", job.ArticleID, string(job.Type), "processing").
+					UpdateColumn("retries", gorm.Expr("retries + 1")).
 					Updates(map[string]interface{}{
-						"status": "failed",
+						"status": "queued",
 						"error":  "circuit breaker open",
 					})
 			}
@@ -258,7 +275,10 @@ func (p *AgentPool) executeJob(id int, job Job) {
 
 		if cb != nil {
 			if jobErr != nil {
-				cb.RecordFailure()
+				var providerErr *ProviderError
+				if errors.As(jobErr, &providerErr) {
+					cb.RecordFailure()
+				}
 			} else {
 				cb.RecordSuccess()
 			}
@@ -271,16 +291,14 @@ func (p *AgentPool) executeJob(id int, job Job) {
 
 	p.logger.Info("Agent processing job", zap.Int("worker_id", id), zap.Int64("article_id", job.ArticleID), zap.String("type", string(job.Type)))
 
-	switch job.Type {
-	case JobTypePipeline:
-		if job.Payload != nil && job.Payload["panic"] == true {
-			panic("simulated panic in pipeline")
-		}
-		jobErr = p.processPipeline(job)
-	default:
-		p.logger.Warn("Unknown job type", zap.String("type", string(job.Type)))
-		if strings.HasPrefix(string(job.Type), "fail") || strings.HasPrefix(string(job.Type), "error") {
-			jobErr = fmt.Errorf("job failed: %s", job.Type)
+	if p.runJob != nil {
+		jobErr = p.runJob(job)
+	} else {
+		switch job.Type {
+		case JobTypePipeline:
+			jobErr = p.processPipeline(job)
+		default:
+			p.logger.Warn("Unknown job type", zap.String("type", string(job.Type)))
 		}
 	}
 
@@ -333,38 +351,39 @@ func (p *AgentPool) Shutdown(timeout time.Duration) error {
 	}
 
 	p.mu.Lock()
+	if p.shutdown != nil {
+		close(p.shutdown)
+		p.shutdown = nil
+	}
 	if p.Queue != nil {
-		q := p.Queue
+		// Do not close Queue, so that workers that didn't receive shutdown signal yet can still finish processing jobs
+		// and won't panic on closed channel if someone submits a job. Or wait, the instructions said:
+		// "shutdown prevents workers from starting additional queued jobs, leaving unstarted jobs persisted as queued for startup recovery"
+		// The close(p.shutdown) achieves this.
 		p.Queue = nil
-		func() {
-			defer func() {
-				_ = recover()
-			}()
-			close(q)
-		}()
 	}
 	p.mu.Unlock()
 
-	deadline := time.Now().Add(timeout)
-	for {
+	done := make(chan struct{})
+	go func() {
+		p.workerWg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if p.logger != nil {
+			p.logger.Info("Agent pool drained cleanly")
+		}
+		return nil
+	case <-time.After(timeout):
 		p.mu.RLock()
 		activeCount := len(p.activeJobs)
 		p.mu.RUnlock()
-
-		if activeCount == 0 {
-			if p.logger != nil {
-				p.logger.Info("Agent pool drained cleanly")
-			}
-			return nil
+		if p.logger != nil {
+			p.logger.Warn("Agent pool shutdown timed out with active jobs", zap.Int("active", activeCount))
 		}
-
-		if time.Now().After(deadline) {
-			if p.logger != nil {
-				p.logger.Warn("Agent pool shutdown timed out with active jobs", zap.Int("active", activeCount))
-			}
-			return fmt.Errorf("timeout waiting for %d active jobs to finish", activeCount)
-		}
-		time.Sleep(50 * time.Millisecond)
+		return fmt.Errorf("timeout waiting for %d active jobs to finish", activeCount)
 	}
 }
 
@@ -378,10 +397,12 @@ func ShutdownPool(timeout time.Duration) error {
 func SubmitJob(job Job) {
 	if Pool != nil {
 		if Pool.db != nil {
+			settingsBytes, _ := json.Marshal(job.Settings)
 			agentJob := GormAgentJob{
 				ArticleID: job.ArticleID,
 				Type:      string(job.Type),
 				Status:    "queued",
+				Settings:  string(settingsBytes),
 			}
 			if err := Pool.db.Create(&agentJob).Error; err != nil && Pool.logger != nil {
 				Pool.logger.Error("Failed to persist agent job", zap.Error(err), zap.Int64("article_id", job.ArticleID))

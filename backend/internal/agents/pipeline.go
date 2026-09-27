@@ -236,7 +236,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) error {
 	if err != nil {
 		p.logger.Error("Pipeline LLM request failed", zap.Error(err), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, err.Error())
-		return fmt.Errorf("pipeline LLM request failed: %w", err)
+		return &ProviderError{Err: fmt.Errorf("pipeline LLM request failed: %w", err)}
 	}
 	defer resp.Body.Close()
 
@@ -244,14 +244,14 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) error {
 	if err != nil {
 		p.logger.Error("Pipeline failed to read LLM response body", zap.Error(err), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, err.Error())
-		return fmt.Errorf("pipeline failed to read LLM response body: %w", err)
+		return &ProviderError{Err: fmt.Errorf("pipeline failed to read LLM response body: %w", err)}
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		p.logger.Error("Pipeline LLM request returned non-200 status", zap.Int("status", resp.StatusCode), zap.String("body", string(respBytes)), zap.Int64("article_id", job.ArticleID))
 		errMsg := fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBytes))
 		recordMetric("failed", 0, 0, 0, errMsg)
-		return fmt.Errorf("pipeline LLM request returned non-200 status: %s", errMsg)
+		return &ProviderError{Err: fmt.Errorf("pipeline LLM request returned non-200 status: %s", errMsg)}
 	}
 
 	p.logger.Info("Pipeline received LLM response",
@@ -280,13 +280,13 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) error {
 	if err := json.Unmarshal(respBytes, &llmResp); err != nil {
 		p.logger.Error("Pipeline failed to parse LLM response JSON", zap.Error(err), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, "JSON parse error: "+err.Error())
-		return fmt.Errorf("pipeline failed to parse LLM response JSON: %w", err)
+		return &ProviderError{Err: fmt.Errorf("pipeline failed to parse LLM response JSON: %w", err)}
 	}
 
 	if llmResp.Error != nil {
 		p.logger.Error("Pipeline received API error from LLM provider", zap.String("error_message", llmResp.Error.Message), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, llmResp.Error.Message)
-		return fmt.Errorf("pipeline received API error from LLM provider: %s", llmResp.Error.Message)
+		return &ProviderError{Err: fmt.Errorf("pipeline received API error from LLM provider: %s", llmResp.Error.Message)}
 	}
 
 	if len(llmResp.Choices) == 0 {

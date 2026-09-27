@@ -132,7 +132,8 @@ func TestProcessPipeline_AllEnabled(t *testing.T) {
 		},
 	}
 
-	pool.processPipelineWithURL(job, ts.URL)
+	err := pool.processPipelineWithURL(job, ts.URL)
+	t.Logf("process returned: %v", err)
 
 	// 1. Verify captured response_format
 	if capturedResponseFormat == nil || capturedResponseFormat["type"] != "json_schema" {

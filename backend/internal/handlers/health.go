@@ -1,8 +1,8 @@
 package handlers
 
 import (
+	"context"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -23,7 +23,18 @@ func RegisterHealth(app *fiber.App, hCtx *HandlerContext) {
 		// 1. Verify Database
 		if hCtx != nil && hCtx.DB != nil {
 			sqlDB, err := hCtx.DB.DB()
-			if err != nil || sqlDB.PingContext(c.Context()) != nil {
+			if err != nil {
+				if hCtx.Logger != nil {
+					hCtx.Logger.Warn("Readiness check failed: database unreachable")
+				}
+				return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+					"status": "unready",
+					"error":  "database unreachable",
+				})
+			}
+			ctx, cancel := context.WithTimeout(c.Context(), 2*time.Second)
+			defer cancel()
+			if err := sqlDB.PingContext(ctx); err != nil {
 				if hCtx.Logger != nil {
 					hCtx.Logger.Warn("Readiness check failed: database unreachable")
 				}
@@ -36,8 +47,8 @@ func RegisterHealth(app *fiber.App, hCtx *HandlerContext) {
 
 		// 2. Verify Data Directory Writability
 		if hCtx != nil && hCtx.DataDir != "" {
-			testFile := filepath.Join(hCtx.DataDir, ".probe-write")
-			if err := os.WriteFile(testFile, []byte("ok"), 0644); err != nil {
+			f, err := os.CreateTemp(hCtx.DataDir, ".probe-write-*")
+			if err != nil {
 				if hCtx.Logger != nil {
 					hCtx.Logger.Warn("Readiness check failed: data directory unwritable", zap.Error(err))
 				}
@@ -46,7 +57,17 @@ func RegisterHealth(app *fiber.App, hCtx *HandlerContext) {
 					"error":  "data directory unwritable",
 				})
 			}
-			_ = os.Remove(testFile)
+			closeErr := f.Close()
+			removeErr := os.Remove(f.Name())
+			if closeErr != nil || removeErr != nil {
+				if hCtx.Logger != nil {
+					hCtx.Logger.Warn("Readiness check failed: data directory unwritable")
+				}
+				return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+					"status": "unready",
+					"error":  "data directory unwritable",
+				})
+			}
 		}
 
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{

@@ -23,12 +23,11 @@ func TestHTTPFetcher_LimitReader(t *testing.T) {
 	fetcher.AllowLocalhost = true
 
 	data, err := fetcher.FetchHTML(context.Background(), ts.URL)
-	if err != nil {
-		t.Fatalf("unexpected error fetching HTML: %v", err)
+	if err == nil {
+		t.Fatalf("expected error for oversized response, got nil (read %d bytes)", len(data))
 	}
-
-	if len(data) > MaxHTMLBytes {
-		t.Errorf("expected HTML payload <= %d bytes, got %d", MaxHTMLBytes, len(data))
+	if !strings.Contains(err.Error(), "exceeds maximum allowed size") {
+		t.Errorf("expected maximum size error, got: %v", err)
 	}
 }
 

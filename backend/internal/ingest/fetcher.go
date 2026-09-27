@@ -83,7 +83,7 @@ func NewHTTPFetcher(timeout time.Duration) *HTTPFetcher {
 	}
 
 	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
+		Proxy: nil,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
@@ -243,9 +243,12 @@ func (f *HTTPFetcher) fetch(ctx context.Context, rawURL string, userAgent string
 		}
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read %s response body failed: %w", errMsg, err)
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("read %s failed: response body exceeds maximum allowed size of %d bytes", errMsg, maxBytes)
 	}
 
 	return data, nil

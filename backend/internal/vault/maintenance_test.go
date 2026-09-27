@@ -25,7 +25,9 @@ func TestVault_OnlineBackupAndIntegrityAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlite: %v", err)
 	}
-	db.AutoMigrate(&repository.GormArticle{})
+	if err := db.AutoMigrate(&repository.GormArticle{}); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
 
 	// Seed 1 article in DB and file on disk
 	db.Create(&repository.GormArticle{ID: 1, Title: "Article 1", Article: "/articles/1.md"})
@@ -73,7 +75,9 @@ func TestVault_MaintenanceEdgeCases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlite: %v", err)
 	}
-	db.AutoMigrate(&repository.GormArticle{})
+	if err := db.AutoMigrate(&repository.GormArticle{}); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
 
 	// 1. Nested topic file (valid)
 	db.Create(&repository.GormArticle{ID: 10, Title: "Tech Note", Article: "/articles/Tech/Note.md"})
@@ -139,7 +143,9 @@ func TestVault_BackupPathWithSingleQuote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlite: %v", err)
 	}
-	db.AutoMigrate(&repository.GormArticle{})
+	if err := db.AutoMigrate(&repository.GormArticle{}); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
 
 	m := NewMaintenanceService(specialDir, db, zap.NewNop())
 	backupPath, err := m.CreateBackup(context.Background())

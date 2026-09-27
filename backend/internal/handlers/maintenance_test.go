@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"example.com/backend/internal/auth"
 	"example.com/backend/internal/repository"
 	"example.com/backend/internal/vault"
 	"github.com/gofiber/fiber/v2"
@@ -22,21 +24,31 @@ func TestMaintenance_BackupEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open test sqlite: %v", err)
 	}
-	db.AutoMigrate(&repository.GormArticle{})
+	if err := db.AutoMigrate(&repository.GormArticle{}); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
 
 	m := vault.NewMaintenanceService(tempDir, db, zap.NewNop())
+	store := NewSettingsStore(tempDir, zap.NewNop())
+	store.Update(func(s *ServerSettings) error {
+		s.SessionSecret = "test-secret"
+		return nil
+	})
 	hCtx := &HandlerContext{
-		DB:          db,
-		DataDir:     tempDir,
-		Maintenance: m,
-		Logger:      zap.NewNop(),
+		DB:            db,
+		DataDir:       tempDir,
+		Maintenance:   m,
+		Logger:        zap.NewNop(),
+		SettingsStore: store,
 	}
 
 	app := fiber.New()
 	api := app.Group("/api")
 	RegisterMaintenance(api, hCtx)
 
+	token := auth.SignSession("test-secret", time.Now())
 	req := httptest.NewRequest("POST", "/api/maintenance/backup", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := app.Test(req)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
@@ -54,11 +66,11 @@ func TestMaintenance_BackupEndpoint(t *testing.T) {
 	if body["status"] != "success" {
 		t.Errorf("expected status 'success', got %v", body["status"])
 	}
-	backupPath, ok := body["backup_path"].(string)
-	if !ok || backupPath == "" {
-		t.Fatalf("expected backup_path in response, got %v", body["backup_path"])
+	backupFile, ok := body["backup_file"].(string)
+	if !ok || backupFile == "" {
+		t.Fatalf("expected backup_file in response, got %v", body["backup_file"])
 	}
-	if _, err := os.Stat(backupPath); err != nil {
+	if _, err := os.Stat(filepath.Join(tempDir, "backups", backupFile)); err != nil {
 		t.Errorf("backup file does not exist on disk: %v", err)
 	}
 }
@@ -73,7 +85,9 @@ func TestMaintenance_IntegrityEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open test sqlite: %v", err)
 	}
-	db.AutoMigrate(&repository.GormArticle{})
+	if err := db.AutoMigrate(&repository.GormArticle{}); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
 
 	// 1 valid article
 	db.Create(&repository.GormArticle{ID: 1, Title: "Note 1", Article: "/articles/1.md"})
@@ -86,18 +100,26 @@ func TestMaintenance_IntegrityEndpoint(t *testing.T) {
 	db.Create(&repository.GormArticle{ID: 2, Title: "Missing Note", Article: "/articles/2.md"})
 
 	m := vault.NewMaintenanceService(tempDir, db, zap.NewNop())
+	store := NewSettingsStore(tempDir, zap.NewNop())
+	store.Update(func(s *ServerSettings) error {
+		s.SessionSecret = "test-secret"
+		return nil
+	})
 	hCtx := &HandlerContext{
-		DB:          db,
-		DataDir:     tempDir,
-		Maintenance: m,
-		Logger:      zap.NewNop(),
+		DB:            db,
+		DataDir:       tempDir,
+		Maintenance:   m,
+		Logger:        zap.NewNop(),
+		SettingsStore: store,
 	}
 
 	app := fiber.New()
 	api := app.Group("/api")
 	RegisterMaintenance(api, hCtx)
 
+	token := auth.SignSession("test-secret", time.Now())
 	req := httptest.NewRequest("GET", "/api/maintenance/integrity", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := app.Test(req)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
@@ -127,11 +149,24 @@ func TestMaintenance_IntegrityEndpoint(t *testing.T) {
 }
 
 func TestMaintenance_UninitializedService(t *testing.T) {
+	tempDir := t.TempDir()
+	store := NewSettingsStore(tempDir, zap.NewNop())
+	store.Update(func(s *ServerSettings) error {
+		s.SessionSecret = "test-secret"
+		return nil
+	})
+
 	app := fiber.New()
 	api := app.Group("/api")
-	RegisterMaintenance(api, &HandlerContext{Maintenance: nil})
+	RegisterMaintenance(api, &HandlerContext{
+		Maintenance:   nil,
+		SettingsStore: store,
+	})
+
+	token := auth.SignSession("test-secret", time.Now())
 
 	req1 := httptest.NewRequest("POST", "/api/maintenance/backup", nil)
+	req1.Header.Set("Authorization", "Bearer "+token)
 	resp1, err := app.Test(req1)
 	if err != nil {
 		t.Fatalf("backup request failed: %v", err)
@@ -141,6 +176,7 @@ func TestMaintenance_UninitializedService(t *testing.T) {
 	}
 
 	req2 := httptest.NewRequest("GET", "/api/maintenance/integrity", nil)
+	req2.Header.Set("Authorization", "Bearer "+token)
 	resp2, err := app.Test(req2)
 	if err != nil {
 		t.Fatalf("integrity request failed: %v", err)
