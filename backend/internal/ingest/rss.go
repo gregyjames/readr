@@ -39,7 +39,7 @@ func ValidateAndParseFeed(ctx context.Context, url string) (*repository.GormRssF
 func FetchFeedsTimeline(ctx context.Context, feeds []repository.GormRssFeed, timeout time.Duration) []TimelineItem {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	var items []TimelineItem
+	items := make([]TimelineItem, 0)
 
 	fp := gofeed.NewParser()
 
