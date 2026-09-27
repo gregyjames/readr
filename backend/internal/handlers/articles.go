@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -15,7 +14,7 @@ import (
 	"example.com/backend/internal/markdown"
 	"example.com/backend/internal/repository"
 	"example.com/backend/internal/vault"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -87,7 +86,7 @@ func hydrateReadingTime(articles []repository.GormArticle) {
 }
 
 func RegisterArticles(router fiber.Router, h *HandlerContext) {
-	router.Get("/getarticles", func(c *fiber.Ctx) error {
+	router.Get("/getarticles", func(c fiber.Ctx) error {
 		archivedParam := c.Query("archived")
 		isArchived := archivedParam == "true"
 
@@ -133,7 +132,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		return c.JSON(articles)
 	})
 
-	router.Get("/articles", func(c *fiber.Ctx) error {
+	router.Get("/articles", func(c fiber.Ctx) error {
 		articles, err := h.Repo.GetAllArticles(c.Context())
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{
@@ -143,7 +142,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		return c.JSON(articles)
 	})
 
-	router.Get("/articles/*", func(c *fiber.Ctx) error {
+	router.Get("/articles/*", func(c fiber.Ctx) error {
 		filename := c.Params("*")
 		if unescaped, err := url.PathUnescape(filename); err == nil && unescaped != "" {
 			filename = unescaped
@@ -206,9 +205,9 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		return c.Status(fiber.StatusNotFound).SendString("Article not found")
 	})
 
-	router.Post("/add", func(c *fiber.Ctx) error {
+	router.Post("/add", func(c fiber.Ctx) error {
 		var body RequestBody
-		if err := json.Unmarshal(c.Body(), &body); err != nil {
+		if err := c.Bind().Body(&body); err != nil {
 			if h.Logger != nil {
 				h.Logger.Error("Failed to unmarshal request body", zap.Error(err))
 			}
@@ -264,7 +263,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		})
 	})
 
-	router.Delete("/delete/:id", func(c *fiber.Ctx) error {
+	router.Delete("/delete/:id", func(c fiber.Ctx) error {
 		idStr := c.Params("id")
 		if h.Logger != nil {
 			h.Logger.Info("Attempting to delete article", zap.String("id", idStr))
@@ -352,7 +351,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		})
 	})
 
-	router.Post("/articles/:id/reparse", func(c *fiber.Ctx) error {
+	router.Post("/articles/:id/reparse", func(c fiber.Ctx) error {
 		idParam := c.Params("id")
 
 		var article repository.GormArticle
@@ -367,7 +366,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		return c.JSON(fiber.Map{"status": "ok", "message": "Agents triggered"})
 	})
 
-	router.Post("/articles/:id/archive", func(c *fiber.Ctx) error {
+	router.Post("/articles/:id/archive", func(c fiber.Ctx) error {
 		idParam := c.Params("id")
 		id, err := strconv.ParseInt(idParam, 10, 64)
 		if err != nil || id <= 0 {
@@ -421,7 +420,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		})
 	})
 
-	router.Post("/articles/:id/unarchive", func(c *fiber.Ctx) error {
+	router.Post("/articles/:id/unarchive", func(c fiber.Ctx) error {
 		idParam := c.Params("id")
 		id, err := strconv.ParseInt(idParam, 10, 64)
 		if err != nil || id <= 0 {
@@ -475,13 +474,13 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		})
 	})
 
-	router.Post("/edit/:id", func(c *fiber.Ctx) error {
+	router.Post("/edit/:id", func(c fiber.Ctx) error {
 		id := c.Params("id")
 
 		var req struct {
 			Content string `json:"content"`
 		}
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request"})
 		}
 
@@ -622,7 +621,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		return c.JSON(fiber.Map{"status": "success"})
 	})
 
-	router.Post("/vault/clean-links", func(c *fiber.Ctx) error {
+	router.Post("/vault/clean-links", func(c fiber.Ctx) error {
 		res, err := CleanBrokenLinks(h.DB, h.DataDir, h.Logger)
 		if err != nil {
 			if h.Logger != nil {

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"example.com/backend/internal/auth"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 )
 
@@ -17,7 +17,7 @@ func RegisterMaintenance(router fiber.Router, hCtx *HandlerContext) {
 }
 
 func strictAuthMiddleware(h *HandlerContext) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if h.SettingsStore != nil && h.SettingsStore.IsDegraded() {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 				"error": "Configuration corrupted; access temporarily locked for security",
@@ -54,7 +54,7 @@ func strictAuthMiddleware(h *HandlerContext) fiber.Handler {
 }
 
 func handleBackup(hCtx *HandlerContext) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if hCtx == nil || hCtx.Maintenance == nil {
 			if hCtx != nil && hCtx.Logger != nil {
 				hCtx.Logger.Error("maintenance service not configured in handler context")
@@ -82,7 +82,7 @@ func handleBackup(hCtx *HandlerContext) fiber.Handler {
 }
 
 func handleIntegrityAudit(hCtx *HandlerContext) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if hCtx == nil || hCtx.Maintenance == nil {
 			if hCtx != nil && hCtx.Logger != nil {
 				hCtx.Logger.Error("maintenance service not configured in handler context")

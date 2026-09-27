@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 )
 
@@ -41,12 +41,12 @@ func (h *EventHub) Broadcast(event string) {
 }
 
 func RegisterEvents(router fiber.Router, h *HandlerContext) {
-	router.Get("/events", func(c *fiber.Ctx) error {
+	router.Get("/events", func(c fiber.Ctx) error {
 		c.Set("Content-Type", "text/event-stream")
 		c.Set("Cache-Control", "no-cache")
 		c.Set("Connection", "keep-alive")
 
-		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		return c.SendStreamWriter(func(w *bufio.Writer) {
 			clientChan := make(chan string, 10)
 			h.EventHub.clients.Store(clientChan, true)
 			defer h.EventHub.clients.Delete(clientChan)
@@ -64,7 +64,5 @@ func RegisterEvents(router fiber.Router, h *HandlerContext) {
 				}
 			}
 		})
-
-		return nil
 	})
 }
