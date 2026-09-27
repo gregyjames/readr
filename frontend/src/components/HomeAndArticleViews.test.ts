@@ -156,6 +156,28 @@ describe('Core Views: Home and Article', () => {
 
       axios.post = origPost
     })
+
+    it('clamps out-of-range route query page to loaded totalPages and updates query', async () => {
+      const router = await setupRouter('/?page=99')
+      const wrapper = mount(Home, {
+        global: {
+          plugins: [router],
+          stubs: {
+            ArticleProgressLabel: true,
+            MocProgressLabel: true,
+          },
+        },
+      })
+
+      await flushPromises()
+
+      // With 2 sample articles and pageSize=25, totalPages is 1.
+      // Current page must clamp from 99 to 1, and query.page should be removed (page 1)
+      expect(router.currentRoute.value.query.page).toBeUndefined()
+      // Card view should not be empty, it should show the articles on page 1
+      expect(wrapper.text()).toContain('Distributed Consensus with Raft')
+      expect(wrapper.text()).toContain('Kubernetes Networking Deep Dive')
+    })
   })
 
   describe('Article.vue', () => {

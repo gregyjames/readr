@@ -83,10 +83,12 @@ const fetchArticles = async () => {
     }))
     // Only reset to page 1 on initial load if route query does not specify a page
     const qPage = Number(route?.query?.page)
-    if (qPage > 0) {
-      currentPage.value = qPage
+    const targetPage = qPage > 0 ? qPage : 1
+    if (targetPage > totalPages.value) {
+      currentPage.value = totalPages.value
+      updateQuery(totalPages.value)
     } else {
-      currentPage.value = 1
+      currentPage.value = targetPage
     }
     await nextTick()
     initReveal()
