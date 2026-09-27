@@ -20,6 +20,7 @@ import (
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
 	"example.com/backend/internal/vault"
+	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/compress"
 	"github.com/gofiber/fiber/v3/middleware/cors"
@@ -202,7 +203,10 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	settingsStore := handlers.NewSettingsStore(dataDirectory, logger)
 	eventHub := handlers.NewEventHub(logger)
 
-	app := fiber.New()
+	app := fiber.New(fiber.Config{
+		JSONEncoder: sonic.Marshal,
+		JSONDecoder: sonic.Unmarshal,
+	})
 
 	app.Use(compress.New(compress.Config{
 		Level: compress.LevelDefault,
