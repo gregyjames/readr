@@ -180,7 +180,7 @@ func (p *AgentPool) recoveryLoop() {
 			// Skip jobs already present in the queue
 			queuedInChan := len(q)
 			inQueue := make(map[int64]bool)
-			
+
 			// Read up to queuedInChan items, save them to set, then push them back
 			temp := make([]Job, 0, queuedInChan)
 			for i := 0; i < queuedInChan; i++ {
@@ -191,7 +191,7 @@ func (p *AgentPool) recoveryLoop() {
 				default:
 				}
 			}
-			
+
 			for _, j := range temp {
 				select {
 				case q <- j:
