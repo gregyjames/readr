@@ -95,9 +95,15 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		PageKey:      "page",
 		LimitKey:     "limit",
 	}), func(c fiber.Ctx) error {
+		if h.DB == nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Database not configured",
+			})
+		}
+
 		archivedParam := c.Query("archived")
 		isArchived := archivedParam == "true"
-		allParam := c.Query("all") == "true"
+		allParam := c.Query("all") == "true" || c.Query("all") == "1"
 
 		pageInfo, _ := paginate.FromContext(c)
 		page := 1
@@ -119,7 +125,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			}
 
 			var total int64
-			countQuery := h.DB.Model(&repository.GormArticle{})
+			countQuery := h.DB.WithContext(c.Context()).Model(&repository.GormArticle{}).Where("deleted_at IS NULL")
 			if isArchivedPtr != nil {
 				if *isArchivedPtr {
 					countQuery = countQuery.Where("is_archived = ?", true)
@@ -189,7 +195,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		}
 
 		var total int64
-		countQuery := h.DB.Model(&repository.GormArticle{})
+		countQuery := h.DB.WithContext(c.Context()).Model(&repository.GormArticle{}).Where("deleted_at IS NULL")
 		if isArchived {
 			countQuery = countQuery.Where("is_archived = ?", true)
 		} else {
@@ -205,9 +211,11 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		}
 
 		var articles []repository.GormArticle
-		query := h.DB.Where("is_archived = ?", isArchived)
-		if !isArchived {
-			query = h.DB.Where("is_archived = ? OR is_archived IS NULL", false)
+		query := h.DB.WithContext(c.Context()).Where("deleted_at IS NULL").Order("id DESC")
+		if isArchived {
+			query = query.Where("is_archived = ?", true)
+		} else {
+			query = query.Where("is_archived = ? OR is_archived IS NULL", false)
 		}
 
 		if !allParam {

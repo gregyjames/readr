@@ -173,6 +173,36 @@ func TestGetArticles_Pagination(t *testing.T) {
 	assert.Equal(t, 25, envelope5.Limit)
 	assert.Equal(t, int64(0), envelope5.Total)
 	assert.Equal(t, 1, envelope5.TotalPages)
+
+	// 6. all=1 parameter requested
+	req6 := httptest.NewRequest("GET", "/api/getarticles?all=1", nil)
+	resp6, err := app.Test(req6)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp6.StatusCode)
+
+	var envelope6 struct {
+		Data       []repository.GormArticle `json:"data"`
+		Page       int                      `json:"page"`
+		Limit      int                      `json:"limit"`
+		Total      int64                    `json:"total"`
+		TotalPages int                      `json:"total_pages"`
+	}
+	require.NoError(t, json.NewDecoder(resp6.Body).Decode(&envelope6))
+	assert.Equal(t, 15, len(envelope6.Data))
+	assert.Equal(t, 1, envelope6.Page)
+	assert.Equal(t, 15, envelope6.Limit)
+	assert.Equal(t, int64(15), envelope6.Total)
+	assert.Equal(t, 1, envelope6.TotalPages)
+	// Verify deterministic id DESC ordering
+	assert.True(t, envelope6.Data[0].ID > envelope6.Data[1].ID)
+
+	// 7. Nil DB returns 500 error
+	nilDBApp := fiber.New()
+	RegisterArticles(nilDBApp.Group("/api"), &HandlerContext{DB: nil})
+	req7 := httptest.NewRequest("GET", "/api/getarticles", nil)
+	resp7, err := nilDBApp.Test(req7)
+	require.NoError(t, err)
+	assert.Equal(t, 500, resp7.StatusCode)
 }
 
 func TestGetArticleContent_NestedTopicDirectories(t *testing.T) {
