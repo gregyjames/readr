@@ -344,7 +344,7 @@ func (v *DefaultVault) GetArticle(ctx context.Context, id int64) (*repository.Go
 	}
 
 	if article.WordCount <= 0 {
-		article.WordCount, article.ReadingTime = repository.CalculateReadingTime(string(bytes))
+		article.WordCount, article.ReadingTime = repository.CalculateReadingTimeBytes(bytes)
 		_ = v.db.WithContext(ctx).Model(&repository.GormArticle{}).
 			Where("id = ? AND updated_at = ?", article.ID, article.UpdatedAt).
 			Update("word_count", article.WordCount)

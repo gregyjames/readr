@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -102,12 +103,52 @@ func TestCalculateReadingTime(t *testing.T) {
 	}
 }
 
+func TestCountWordsBytes(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want int
+	}{
+		{"empty", "", 0},
+		{"spaces", "   \t\n\r  ", 0},
+		{"simple sentence", "Hello world this is a test", 6},
+		{"multiple spaces and newlines", "Hello   \n\n\t  world\r\n!", 3},
+		{"unicode spaces", "word1\u00A0word2\u2003word3\u3000word4", 4},
+		{"trailing punctuation", "One, two; three: four.", 4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CountWordsBytes([]byte(tt.text))
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func BenchmarkCalculateReadingTime(b *testing.B) {
 	content := "---\ntitle: \"Sample\"\ntags: [test]\n---\n\n" + generateWords(2000)
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, _ = CalculateReadingTime(content)
+	}
+}
+
+func BenchmarkCountWordsBytes(b *testing.B) {
+	raw := []byte(generateWords(2000))
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = CountWordsBytes(raw)
+	}
+}
+
+func BenchmarkCountWordsStringsFields(b *testing.B) {
+	text := generateWords(2000)
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = len(strings.Fields(text))
 	}
 }
 

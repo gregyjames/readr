@@ -1,12 +1,15 @@
 package repository
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"math"
 	"strings"
 	"unicode"
+	"unicode/utf8"
+	"unsafe"
 )
 
 var (
@@ -41,41 +44,79 @@ func ReadingTimeFromWords(words int) string {
 	return fmt.Sprintf("%d min read", minutes)
 }
 
-// CalculateReadingTime computes the word count and estimated reading time string (e.g. "5 min read")
-// for markdown content. It strips leading YAML frontmatter (--- ... ---) and counts whitespace-separated words.
-func CalculateReadingTime(content string) (int, string) {
-	trimmed := strings.TrimSpace(content)
-	if trimmed == "" {
-		return 0, "1 min read"
-	}
-
-	// Strip leading YAML frontmatter if present
-	if strings.HasPrefix(trimmed, "---") {
-		rest := trimmed[3:]
-		if idx := strings.Index(rest, "\n---"); idx != -1 {
-			trimmed = strings.TrimSpace(rest[idx+4:])
-		} else if idx := strings.Index(rest, "\r\n---"); idx != -1 {
-			trimmed = strings.TrimSpace(rest[idx+5:])
-		}
-	}
-
-	if trimmed == "" {
-		return 0, "1 min read"
-	}
-
-	// Single-pass word counter over runes
+// CountWordsBytes counts whitespace-delimited words in a byte slice in O(N) time
+// with 0 heap allocations. It handles ASCII whitespace as well as Unicode whitespace runes.
+func CountWordsBytes(b []byte) int {
 	words := 0
 	inWord := false
-	for _, r := range trimmed {
+	i := 0
+	n := len(b)
+
+	for i < n {
+		c := b[i]
+		// Fast-path ASCII characters (covers >99% of markdown and English prose)
+		if c < utf8.RuneSelf {
+			if c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f' {
+				inWord = false
+			} else if !inWord {
+				inWord = true
+				words++
+			}
+			i++
+			continue
+		}
+
+		// Unicode rune fallback (e.g. non-breaking space, em-space, ideographic space)
+		r, size := utf8.DecodeRune(b[i:])
 		if unicode.IsSpace(r) {
 			inWord = false
 		} else if !inWord {
 			inWord = true
 			words++
 		}
+		i += size
 	}
 
+	return words
+}
+
+// StripFrontmatterBytes slices away leading YAML frontmatter (--- ... ---) from a byte slice
+// without allocating new memory.
+func StripFrontmatterBytes(raw []byte) []byte {
+	trimmed := bytes.TrimSpace(raw)
+	if !bytes.HasPrefix(trimmed, []byte("---")) {
+		return trimmed
+	}
+
+	rest := trimmed[3:]
+	if idx := bytes.Index(rest, []byte("\n---")); idx != -1 {
+		return bytes.TrimSpace(rest[idx+4:])
+	} else if idx := bytes.Index(rest, []byte("\r\n---")); idx != -1 {
+		return bytes.TrimSpace(rest[idx+5:])
+	}
+
+	return trimmed
+}
+
+// CalculateReadingTimeBytes computes the word count and estimated reading time string
+// directly from a byte slice with 0 allocations for word counting.
+func CalculateReadingTimeBytes(content []byte) (int, string) {
+	body := StripFrontmatterBytes(content)
+	if len(body) == 0 {
+		return 0, "1 min read"
+	}
+	words := CountWordsBytes(body)
 	return words, ReadingTimeFromWords(words)
+}
+
+// CalculateReadingTime computes the word count and estimated reading time string (e.g. "5 min read")
+// for markdown content. It strips leading YAML frontmatter (--- ... ---) and counts whitespace-separated words.
+func CalculateReadingTime(content string) (int, string) {
+	if len(content) == 0 {
+		return 0, "1 min read"
+	}
+	// Zero-copy string to byte slice conversion for read-only scanning
+	return CalculateReadingTimeBytes(unsafe.Slice(unsafe.StringData(content), len(content)))
 }
 
 type ArticleRecord struct {
