@@ -183,6 +183,19 @@ describe('feedsAPI service', () => {
     expect(result).toEqual(mockTimeline)
   })
 
+  it('getTimeline appends refresh query param when specified', async () => {
+    globalThis.fetch = (async (url: string) => {
+      expect(url).toBe('/api/feeds/timeline?feed_id=5&refresh=true')
+      return {
+        ok: true,
+        json: async () => [],
+      } as Response
+    }) as unknown as typeof fetch
+
+    const result = await feedsAPI.getTimeline(5, true)
+    expect(result).toEqual([])
+  })
+
   it('getTimeline throws on server error', async () => {
     globalThis.fetch = (async () => {
       return {

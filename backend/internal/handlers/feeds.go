@@ -156,7 +156,8 @@ func GetTimeline(hCtx *HandlerContext) fiber.Handler {
 			}
 		}
 
-		items := ingest.FetchFeedsTimeline(c.Context(), feeds, 10*time.Second)
+		forceRefresh := c.Query("refresh") == "true" || c.Query("refresh") == "1"
+		items := ingest.FetchFeedsTimelineWithOptions(c.Context(), feeds, 10*time.Second, forceRefresh)
 		if items == nil {
 			items = make([]ingest.TimelineItem, 0)
 		}

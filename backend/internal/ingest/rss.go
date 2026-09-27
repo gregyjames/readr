@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -9,7 +10,15 @@ import (
 
 	"example.com/backend/internal/repository"
 	"github.com/mmcdole/gofeed"
+	"github.com/patrickmn/go-cache"
 )
+
+var rssCache = cache.New(5*time.Minute, 10*time.Minute)
+
+// FlushRSSCache clears all cached feed timeline entries.
+func FlushRSSCache() {
+	rssCache.Flush()
+}
 
 type TimelineItem struct {
 	FeedID      int64     `json:"feedId"`
@@ -42,7 +51,13 @@ func ValidateAndParseFeed(ctx context.Context, url string) (*repository.GormRssF
 	}, nil
 }
 
+// FetchFeedsTimeline fetches and combines timeline items from feeds using the in-memory cache.
 func FetchFeedsTimeline(ctx context.Context, feeds []repository.GormRssFeed, timeout time.Duration) []TimelineItem {
+	return FetchFeedsTimelineWithOptions(ctx, feeds, timeout, false)
+}
+
+// FetchFeedsTimelineWithOptions fetches timeline items, optionally bypassing and updating the in-memory cache.
+func FetchFeedsTimelineWithOptions(ctx context.Context, feeds []repository.GormRssFeed, timeout time.Duration, forceRefresh bool) []TimelineItem {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	items := make([]TimelineItem, 0)
@@ -50,8 +65,21 @@ func FetchFeedsTimeline(ctx context.Context, feeds []repository.GormRssFeed, tim
 	fp := gofeed.NewParser()
 
 	for _, f := range feeds {
+		cacheKey := fmt.Sprintf("feed:%d:%s", f.ID, f.URL)
+
+		if !forceRefresh {
+			if cached, found := rssCache.Get(cacheKey); found {
+				if cachedItems, ok := cached.([]TimelineItem); ok {
+					mu.Lock()
+					items = append(items, cachedItems...)
+					mu.Unlock()
+					continue
+				}
+			}
+		}
+
 		wg.Add(1)
-		go func(feed repository.GormRssFeed) {
+		go func(feed repository.GormRssFeed, key string) {
 			defer wg.Done()
 			fetchCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
@@ -61,7 +89,7 @@ func FetchFeedsTimeline(ctx context.Context, feeds []repository.GormRssFeed, tim
 				return // Ignore failures gracefully
 			}
 
-			mu.Lock()
+			feedItems := make([]TimelineItem, 0, len(parsed.Items))
 			for _, item := range parsed.Items {
 				pubDate := item.PublishedParsed
 				if pubDate == nil {
@@ -72,7 +100,7 @@ func FetchFeedsTimeline(ctx context.Context, feeds []repository.GormRssFeed, tim
 					pubDate = &now
 				}
 
-				items = append(items, TimelineItem{
+				feedItems = append(feedItems, TimelineItem{
 					FeedID:      feed.ID,
 					FeedTitle:   feed.Title,
 					Title:       item.Title,
@@ -81,8 +109,13 @@ func FetchFeedsTimeline(ctx context.Context, feeds []repository.GormRssFeed, tim
 					Published:   *pubDate,
 				})
 			}
+
+			rssCache.Set(key, feedItems, 5*time.Minute)
+
+			mu.Lock()
+			items = append(items, feedItems...)
 			mu.Unlock()
-		}(f)
+		}(f, cacheKey)
 	}
 
 	wg.Wait()

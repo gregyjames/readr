@@ -88,8 +88,12 @@ export const feedsAPI = {
     }
   },
 
-  async getTimeline(feedId?: number): Promise<TimelineItem[]> {
-    const endpoint = feedId ? `/api/feeds/timeline?feed_id=${feedId}` : '/api/feeds/timeline'
+  async getTimeline(feedId?: number, refresh?: boolean): Promise<TimelineItem[]> {
+    const params = new URLSearchParams()
+    if (feedId) params.append('feed_id', feedId.toString())
+    if (refresh) params.append('refresh', 'true')
+    const qs = params.toString() ? `?${params.toString()}` : ''
+    const endpoint = `/api/feeds/timeline${qs}`
     const res = await fetch(endpoint, {
       headers: getAuthHeaders(),
     })

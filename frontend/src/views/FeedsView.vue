@@ -56,10 +56,10 @@ const fetchFeeds = async () => {
   }
 }
 
-const fetchTimeline = async (feedId: number | null = selectedFeedId.value) => {
+const fetchTimeline = async (feedId: number | null = selectedFeedId.value, forceRefresh = false) => {
   isLoadingTimeline.value = true
   try {
-    const data = await feedsAPI.getTimeline(feedId ?? undefined)
+    const data = await feedsAPI.getTimeline(feedId ?? undefined, forceRefresh)
     // Race condition guard: ignore if user has switched to another feed in the meantime
     if (selectedFeedId.value !== feedId) {
       return
@@ -219,7 +219,7 @@ onBeforeUnmount(() => {
 
       <!-- Controls: Refresh -->
       <button
-        @click="fetchTimeline(selectedFeedId)"
+        @click="fetchTimeline(selectedFeedId, true)"
         :disabled="isLoadingTimeline"
         title="Refresh Timeline"
         aria-label="Refresh Timeline"

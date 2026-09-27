@@ -46,3 +46,32 @@ func TestValidateAndParseFeed(t *testing.T) {
 	assert.Equal(t, "My Blog", feed.Title)
 	assert.Equal(t, "https://blog.com", feed.SiteURL)
 }
+
+func TestFetchTimelineCaching(t *testing.T) {
+	FlushRSSCache()
+	callCount := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Cached Blog</title><item><title>Item</title><link>http://c/1</link><pubDate>Mon, 02 Jan 2006 15:04:05 MST</pubDate></item></channel></rss>`))
+	}))
+	defer ts.Close()
+
+	feeds := []repository.GormRssFeed{
+		{ID: 10, Title: "Cached Blog", URL: ts.URL},
+	}
+
+	// First fetch should hit network
+	items1 := FetchFeedsTimeline(context.Background(), feeds, 2*time.Second)
+	assert.Len(t, items1, 1)
+	assert.Equal(t, 1, callCount)
+
+	// Second fetch without forceRefresh should hit cache (callCount remains 1)
+	items2 := FetchFeedsTimeline(context.Background(), feeds, 2*time.Second)
+	assert.Len(t, items2, 1)
+	assert.Equal(t, 1, callCount)
+
+	// Third fetch with forceRefresh=true should bypass cache (callCount becomes 2)
+	items3 := FetchFeedsTimelineWithOptions(context.Background(), feeds, 2*time.Second, true)
+	assert.Len(t, items3, 1)
+	assert.Equal(t, 2, callCount)
+}
