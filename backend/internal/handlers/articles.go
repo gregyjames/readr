@@ -88,14 +88,20 @@ func hydrateReadingTime(articles []repository.GormArticle) {
 }
 
 func RegisterArticles(router fiber.Router, h *HandlerContext) {
-	router.Get("/getarticles", paginate.New(), func(c fiber.Ctx) error {
+	router.Get("/getarticles", paginate.New(paginate.Config{
+		DefaultPage:  1,
+		DefaultLimit: 25,
+		MaxLimit:     100,
+		PageKey:      "page",
+		LimitKey:     "limit",
+	}), func(c fiber.Ctx) error {
 		archivedParam := c.Query("archived")
 		isArchived := archivedParam == "true"
 		allParam := c.Query("all") == "true"
 
 		pageInfo, _ := paginate.FromContext(c)
 		page := 1
-		limit := 10
+		limit := 25
 		offset := 0
 		if pageInfo != nil {
 			page = pageInfo.Page
@@ -152,15 +158,25 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			}
 
 			if allParam {
+				limitVal := int(total)
+				if limitVal == 0 {
+					limitVal = 25
+				}
 				return c.JSON(fiber.Map{
-					"data":  articles,
-					"total": total,
+					"data":        articles,
+					"page":        1,
+					"limit":       limitVal,
+					"total":       total,
+					"total_pages": 1,
 				})
 			}
 
 			totalPages := 0
 			if limit > 0 {
 				totalPages = int(math.Ceil(float64(total) / float64(limit)))
+			}
+			if totalPages == 0 {
+				totalPages = 1
 			}
 
 			return c.JSON(fiber.Map{
@@ -215,15 +231,25 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		hydrateReadingTime(articles)
 
 		if allParam {
+			limitVal := int(total)
+			if limitVal == 0 {
+				limitVal = 25
+			}
 			return c.JSON(fiber.Map{
-				"data":  articles,
-				"total": total,
+				"data":        articles,
+				"page":        1,
+				"limit":       limitVal,
+				"total":       total,
+				"total_pages": 1,
 			})
 		}
 
 		totalPages := 0
 		if limit > 0 {
 			totalPages = int(math.Ceil(float64(total) / float64(limit)))
+		}
+		if totalPages == 0 {
+			totalPages = 1
 		}
 
 		return c.JSON(fiber.Map{

@@ -119,12 +119,60 @@ func TestGetArticles_Pagination(t *testing.T) {
 	assert.Equal(t, 200, resp3.StatusCode)
 
 	var envelope3 struct {
-		Data  []repository.GormArticle `json:"data"`
-		Total int64                    `json:"total"`
+		Data       []repository.GormArticle `json:"data"`
+		Page       int                      `json:"page"`
+		Limit      int                      `json:"limit"`
+		Total      int64                    `json:"total"`
+		TotalPages int                      `json:"total_pages"`
 	}
 	require.NoError(t, json.NewDecoder(resp3.Body).Decode(&envelope3))
 	assert.Equal(t, 15, len(envelope3.Data))
+	assert.Equal(t, 1, envelope3.Page)
+	assert.Equal(t, 15, envelope3.Limit)
 	assert.Equal(t, int64(15), envelope3.Total)
+	assert.Equal(t, 1, envelope3.TotalPages)
+
+	// 4. Default pagination without query parameters (page 1, limit 25)
+	req4 := httptest.NewRequest("GET", "/api/getarticles", nil)
+	resp4, err := app.Test(req4)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp4.StatusCode)
+
+	var envelope4 struct {
+		Data       []repository.GormArticle `json:"data"`
+		Page       int                      `json:"page"`
+		Limit      int                      `json:"limit"`
+		Total      int64                    `json:"total"`
+		TotalPages int                      `json:"total_pages"`
+	}
+	require.NoError(t, json.NewDecoder(resp4.Body).Decode(&envelope4))
+	assert.Equal(t, 15, len(envelope4.Data))
+	assert.Equal(t, 1, envelope4.Page)
+	assert.Equal(t, 25, envelope4.Limit)
+	assert.Equal(t, int64(15), envelope4.Total)
+	assert.Equal(t, 1, envelope4.TotalPages)
+
+	// 5. Empty database pagination clamping (totalPages >= 1)
+	emptyApp, _, _, emptyCleanup := setupArticlesTestApp(t)
+	defer emptyCleanup()
+	req5 := httptest.NewRequest("GET", "/api/getarticles", nil)
+	resp5, err := emptyApp.Test(req5)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp5.StatusCode)
+
+	var envelope5 struct {
+		Data       []repository.GormArticle `json:"data"`
+		Page       int                      `json:"page"`
+		Limit      int                      `json:"limit"`
+		Total      int64                    `json:"total"`
+		TotalPages int                      `json:"total_pages"`
+	}
+	require.NoError(t, json.NewDecoder(resp5.Body).Decode(&envelope5))
+	assert.Equal(t, 0, len(envelope5.Data))
+	assert.Equal(t, 1, envelope5.Page)
+	assert.Equal(t, 25, envelope5.Limit)
+	assert.Equal(t, int64(0), envelope5.Total)
+	assert.Equal(t, 1, envelope5.TotalPages)
 }
 
 func TestGetArticleContent_NestedTopicDirectories(t *testing.T) {
