@@ -136,51 +136,66 @@ describe('feedsAPI service', () => {
   })
 
   it('getTimeline fetches all timeline items when feedId is omitted', async () => {
-    const mockTimeline = [
-      {
-        feedId: 1,
-        feedTitle: 'Feed 1',
-        title: 'Article 1',
-        url: 'https://example.com/1',
-        description: 'Desc 1',
-        published: '2026-09-27T00:00:00Z',
-      },
-    ]
+    const mockEnvelope = {
+      data: [
+        {
+          feedId: 1,
+          feedTitle: 'Feed 1',
+          title: 'Article 1',
+          url: 'https://example.com/1',
+          description: 'Desc 1',
+          published: '2026-09-27T00:00:00Z',
+        },
+      ],
+      page: 1,
+      limit: 25,
+      total: 1,
+      total_pages: 1,
+    }
 
     globalThis.fetch = (async (url: string) => {
       expect(url).toBe('/api/feeds/timeline')
       return {
         ok: true,
-        json: async () => mockTimeline,
+        json: async () => mockEnvelope,
       } as Response
     }) as unknown as typeof fetch
 
     const result = await feedsAPI.getTimeline()
-    expect(result).toEqual(mockTimeline)
+    expect(result.data).toEqual(mockEnvelope.data)
+    expect(result.total).toBe(1)
+    expect(result.page).toBe(1)
+    expect(result.total_pages).toBe(1)
   })
 
   it('getTimeline appends feed_id query param when specified', async () => {
-    const mockTimeline = [
-      {
-        feedId: 5,
-        feedTitle: 'Specific Feed',
-        title: 'Article 5',
-        url: 'https://example.com/5',
-        description: 'Desc 5',
-        published: '2026-09-27T00:00:00Z',
-      },
-    ]
+    const mockEnvelope = {
+      data: [
+        {
+          feedId: 5,
+          feedTitle: 'Specific Feed',
+          title: 'Article 5',
+          url: 'https://example.com/5',
+          description: 'Desc 5',
+          published: '2026-09-27T00:00:00Z',
+        },
+      ],
+      page: 1,
+      limit: 25,
+      total: 1,
+      total_pages: 1,
+    }
 
     globalThis.fetch = (async (url: string) => {
       expect(url).toBe('/api/feeds/timeline?feed_id=5')
       return {
         ok: true,
-        json: async () => mockTimeline,
+        json: async () => mockEnvelope,
       } as Response
     }) as unknown as typeof fetch
 
     const result = await feedsAPI.getTimeline(5)
-    expect(result).toEqual(mockTimeline)
+    expect(result.data).toEqual(mockEnvelope.data)
   })
 
   it('getTimeline appends refresh query param when specified', async () => {
@@ -188,12 +203,27 @@ describe('feedsAPI service', () => {
       expect(url).toBe('/api/feeds/timeline?feed_id=5&refresh=true')
       return {
         ok: true,
-        json: async () => [],
+        json: async () => ({ data: [], page: 1, limit: 25, total: 0, total_pages: 1 }),
       } as Response
     }) as unknown as typeof fetch
 
     const result = await feedsAPI.getTimeline(5, true)
-    expect(result).toEqual([])
+    expect(result.data).toEqual([])
+  })
+
+  it('getTimeline appends page and limit query params when specified', async () => {
+    globalThis.fetch = (async (url: string) => {
+      expect(url).toBe('/api/feeds/timeline?page=2&limit=10')
+      return {
+        ok: true,
+        json: async () => ({ data: [], page: 2, limit: 10, total: 15, total_pages: 2 }),
+      } as Response
+    }) as unknown as typeof fetch
+
+    const result = await feedsAPI.getTimeline(null, false, 2, 10)
+    expect(result.page).toBe(2)
+    expect(result.limit).toBe(10)
+    expect(result.total_pages).toBe(2)
   })
 
   it('getTimeline throws on server error', async () => {

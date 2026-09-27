@@ -33,6 +33,14 @@ function getAuthHeaders(extraHeaders: Record<string, string> = {}): Record<strin
   return headers
 }
 
+export interface PaginatedResponse<T> {
+  data: T[]
+  page: number
+  limit: number
+  total: number
+  total_pages: number
+}
+
 export const feedsAPI = {
   async getFeeds(): Promise<RssFeed[]> {
     const res = await fetch('/api/feeds', {
@@ -88,10 +96,17 @@ export const feedsAPI = {
     }
   },
 
-  async getTimeline(feedId?: number, refresh?: boolean): Promise<TimelineItem[]> {
+  async getTimeline(
+    feedId?: number | null,
+    refresh?: boolean,
+    page?: number,
+    limit?: number
+  ): Promise<PaginatedResponse<TimelineItem>> {
     const params = new URLSearchParams()
     if (feedId) params.append('feed_id', feedId.toString())
     if (refresh) params.append('refresh', 'true')
+    if (page) params.append('page', page.toString())
+    if (limit) params.append('limit', limit.toString())
     const qs = params.toString() ? `?${params.toString()}` : ''
     const endpoint = `/api/feeds/timeline${qs}`
     const res = await fetch(endpoint, {

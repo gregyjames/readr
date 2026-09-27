@@ -77,7 +77,7 @@ const fetchArchivedArticles = async () => {
   isLoading.value = true
   try {
     const res = await axios.get('/api/getarticles?archived=true')
-    articles.value = (res.data || []).map((article: any) => ({
+    articles.value = ((res.data?.data ?? res.data) || []).map((article: any) => ({
       ...article,
       parsedTags: article.tags ? article.tags.split(',').map((tag: string) => tag.trim()) : []
     }))

@@ -60,8 +60,8 @@ watch(() => route.params.id, async (newId) => {
 
 const fetchArticles = async () => {
   try {
-    const res = await axios.get('/api/getarticles')
-    articles.value = res.data || []
+    const res = await axios.get('/api/getarticles?all=true')
+    articles.value = (res.data?.data ?? res.data) || []
   } catch (err) {
     console.error('Failed to fetch articles', err)
   }
