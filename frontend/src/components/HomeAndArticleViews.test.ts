@@ -49,7 +49,8 @@ describe('Core Views: Home and Article', () => {
     beforeEach(() => {
       axios.get = (async (url: string) => {
         if (url.includes('/api/getarticles')) {
-          return { data: sampleArticles }
+          // Return in latest-first order (ID desc) as the server-side sort would
+          return { data: [...sampleArticles].reverse() }
         }
         return { data: [] }
       }) as unknown as typeof axios.get
