@@ -177,9 +177,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="p-4 sm:p-8 w-full max-w-5xl mx-auto min-h-[100dvh] flex flex-col space-y-6">
+  <div class="relative min-h-[100dvh] w-full max-w-5xl mx-auto p-4 sm:p-8 flex flex-col space-y-7">
     
-    <!-- Floating Toast Notification (Restrained Glass) -->
+    <!-- Subtle Ambient Vignette (Zero harsh neon glows) -->
+    <div class="absolute -top-24 left-1/2 -translate-x-1/2 w-full max-w-3xl h-48 bg-emerald-500/[0.025] blur-3xl pointer-events-none rounded-full"></div>
+
+    <!-- Floating Toast Notification (Restrained Frosted Glass) -->
     <transition
       enter-active-class="transition duration-200 ease-out"
       enter-from-class="transform -translate-y-2 opacity-0 scale-95"
@@ -192,7 +195,7 @@ onBeforeUnmount(() => {
         v-if="toastMessage"
         role="status"
         aria-live="polite"
-        class="fixed top-6 right-6 z-50 flex items-center gap-3 px-4 py-2.5 rounded-xl shadow-xl backdrop-blur-md border text-xs font-medium"
+        class="fixed top-6 right-6 z-50 flex items-center gap-3 px-4 py-2.5 rounded-xl shadow-xl backdrop-blur-xl border text-xs font-medium"
         :class="toastMessage.type === 'error'
           ? 'bg-red-500/10 text-red-700 dark:text-red-300 border-red-500/20'
           : 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border-emerald-500/20'"
@@ -203,25 +206,25 @@ onBeforeUnmount(() => {
       </div>
     </transition>
 
-    <!-- Header Section (Clean, Minimalist Headline) -->
-    <header class="flex items-center justify-between pb-3 border-b border-gray-200/60 dark:border-white/[0.06]">
-      <div class="space-y-0.5">
+    <!-- Header Section (Tactile, High-Contrast Typography) -->
+    <header class="flex items-end justify-between pb-4 border-b border-gray-200/60 dark:border-white/[0.06]">
+      <div class="space-y-1">
         <div class="flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-          <span class="text-[11px] font-mono text-gray-400 dark:text-gray-500">{{ timeline.length }} entries</span>
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+          <span class="text-[11px] font-mono text-gray-400 dark:text-gray-500 tracking-wide uppercase">{{ timeline.length }} entries</span>
         </div>
-        <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900 dark:text-gray-100 font-['Outfit']">
+        <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-gray-950 dark:text-[#F3F4F6] font-['Outfit']">
           {{ selectedFeed ? selectedFeed.title : 'Feeds' }}
         </h1>
       </div>
 
-      <!-- Controls: Refresh -->
+      <!-- Controls: Refresh Button with Tactile Feedback -->
       <button
         @click="fetchTimeline(selectedFeedId, true)"
         :disabled="isLoadingTimeline"
         title="Refresh Timeline"
         aria-label="Refresh Timeline"
-        class="p-2 rounded-xl text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white bg-gray-100/70 dark:bg-white/[0.03] border border-gray-200/50 dark:border-white/[0.05] hover:bg-gray-200/70 dark:hover:bg-white/[0.08] transition-all cursor-pointer disabled:opacity-50"
+        class="p-2.5 rounded-xl text-gray-400 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white bg-gray-100/80 dark:bg-white/[0.03] border border-gray-200/60 dark:border-white/[0.06] hover:bg-gray-200/80 dark:hover:bg-white/[0.08] active:scale-95 transition-all cursor-pointer disabled:opacity-40"
       >
         <svg
           class="w-4 h-4"
@@ -242,9 +245,9 @@ onBeforeUnmount(() => {
       </button>
     </header>
 
-    <!-- Source Channels & Quick Subscribe Shelf -->
+    <!-- Glassmorphic Source Shelf (Apple TV Floating Channel Tray) -->
     <section class="space-y-2">
-      <div class="flex flex-wrap items-center gap-1.5 pt-0.5">
+      <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
         
         <!-- "All Feeds" Pill -->
         <div
@@ -254,14 +257,14 @@ onBeforeUnmount(() => {
           @click="selectFeed(null)"
           @keydown.enter.prevent="selectFeed(null)"
           @keydown.space.prevent="selectFeed(null)"
-          class="group inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer border"
+          class="group shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer border"
           :class="selectedFeedId === null
-            ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900 border-transparent shadow-xs'
-            : 'bg-gray-100/70 dark:bg-white/[0.03] text-gray-600 dark:text-gray-300 border-gray-200/60 dark:border-white/[0.06] hover:border-gray-300 dark:hover:border-white/15'"
+            ? 'bg-gray-950 text-white dark:bg-white dark:text-gray-950 border-transparent shadow-xs font-semibold'
+            : 'bg-gray-100/80 dark:bg-white/[0.03] text-gray-600 dark:text-gray-400 border-gray-200/60 dark:border-white/[0.06] hover:border-gray-300 dark:hover:border-white/15 hover:text-gray-900 dark:hover:text-gray-200'"
         >
           <span>All Feeds</span>
           <span
-            class="text-[10px] font-mono px-1.5 py-0.2 rounded"
+            class="text-[10px] font-mono px-1.5 py-0.5 rounded"
             :class="selectedFeedId === null ? 'bg-white/20 dark:bg-black/10' : 'bg-gray-200/60 dark:bg-white/10 text-gray-500 dark:text-gray-400'"
           >
             {{ timeline.length }}
@@ -278,12 +281,12 @@ onBeforeUnmount(() => {
           @click="selectFeed(feed.id)"
           @keydown.enter.prevent="selectFeed(feed.id)"
           @keydown.space.prevent="selectFeed(feed.id)"
-          class="group inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer border"
+          class="group shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer border"
           :class="selectedFeedId === feed.id
-            ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900 border-transparent shadow-xs'
-            : 'bg-gray-100/70 dark:bg-white/[0.03] text-gray-600 dark:text-gray-300 border-gray-200/60 dark:border-white/[0.06] hover:border-gray-300 dark:hover:border-white/15'"
+            ? 'bg-gray-950 text-white dark:bg-white dark:text-gray-950 border-transparent shadow-xs font-semibold'
+            : 'bg-gray-100/80 dark:bg-white/[0.03] text-gray-600 dark:text-gray-400 border-gray-200/60 dark:border-white/[0.06] hover:border-gray-300 dark:hover:border-white/15 hover:text-gray-900 dark:hover:text-gray-200'"
         >
-          <span class="truncate max-w-[130px]">{{ feed.title || feed.url }}</span>
+          <span class="truncate max-w-[140px]">{{ feed.title || feed.url }}</span>
           
           <!-- Delete button inside channel pill -->
           <button
@@ -300,15 +303,15 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- Inline Subscribe Input Form -->
-        <form @submit.prevent="handleAddFeed" class="inline-flex items-center">
+        <form @submit.prevent="handleAddFeed" class="shrink-0 inline-flex items-center">
           <div class="relative flex items-center">
             <input
               v-model="newFeedUrl"
               type="url"
-              placeholder="+ Add URL..."
+              placeholder="+ Add feed URL..."
               :disabled="isAddingFeed"
               aria-label="Feed URL"
-              class="text-xs px-2.5 py-1 pr-6 rounded-lg border border-dashed border-gray-300 dark:border-white/15 bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-emerald-500 dark:focus:border-emerald-400/60 w-32 sm:w-44 focus:w-56 transition-all"
+              class="text-xs px-3 py-1.5 pr-7 rounded-xl border border-dashed border-gray-300 dark:border-white/15 bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-emerald-500 dark:focus:border-emerald-400/60 w-36 sm:w-48 focus:w-60 transition-all"
             />
             <button
               type="submit"
@@ -339,8 +342,8 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <!-- Main Ticker Stream -->
-    <main class="space-y-2 flex-1 pt-1">
+    <!-- Main Dispatch Wire Area (Continuous Editorial Slat Stream) -->
+    <main class="space-y-4 flex-1">
       
       <!-- Loading State -->
       <div v-if="isLoadingTimeline" class="flex flex-col items-center justify-center py-28 text-gray-400">
@@ -352,8 +355,8 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Empty State: Zero Subscriptions -->
-      <div v-else-if="feeds.length === 0" class="flex flex-col items-center justify-center py-28 text-center px-4">
-        <div class="w-11 h-11 rounded-xl bg-gray-100 dark:bg-white/[0.04] border border-gray-200/80 dark:border-white/[0.08] text-gray-400 flex items-center justify-center mb-3">
+      <div v-else-if="feeds.length === 0" class="flex flex-col items-center justify-center py-32 text-center px-4">
+        <div class="w-12 h-12 rounded-2xl bg-gray-100/80 dark:bg-white/[0.03] border border-gray-200/80 dark:border-white/[0.08] text-gray-400 flex items-center justify-center mb-4">
           <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M4 11a9 9 0 0 1 9 9" />
             <path d="M4 4a16 16 0 0 1 16 16" />
@@ -367,8 +370,8 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Empty State: Subscribed but timeline empty -->
-      <div v-else-if="timeline.length === 0" class="flex flex-col items-center justify-center py-28 text-center px-4">
-        <div class="w-11 h-11 rounded-xl bg-gray-100 dark:bg-white/[0.04] border border-gray-200/80 dark:border-white/[0.08] text-gray-400 flex items-center justify-center mb-3">
+      <div v-else-if="timeline.length === 0" class="flex flex-col items-center justify-center py-32 text-center px-4">
+        <div class="w-12 h-12 rounded-2xl bg-gray-100/80 dark:bg-white/[0.03] border border-gray-200/80 dark:border-white/[0.08] text-gray-400 flex items-center justify-center mb-4">
           <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10" />
             <line x1="8" y1="12" x2="16" y2="12" />
@@ -380,64 +383,65 @@ onBeforeUnmount(() => {
         </p>
       </div>
 
-      <!-- UNIFIED TICKER STREAM (Clean, Tactile, High-Efficiency) -->
-      <div v-else class="space-y-2">
+      <!-- EDITORIAL SLAT STREAM (Hairline Dividers + Edge-to-Edge Hover Spotlight) -->
+      <div v-else class="divide-y divide-gray-200/50 dark:divide-white/[0.05]">
         <article
           v-for="item in timeline"
           :key="item.url"
           data-testid="timeline-card"
-          class="group bg-white dark:bg-[#12151C] rounded-xl border border-gray-200/70 dark:border-white/[0.06] hover:border-gray-300 dark:hover:border-white/20 p-4 transition-all duration-150 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-2xs hover:shadow-xs"
+          class="group -mx-4 px-4 py-5 sm:py-6 rounded-2xl hover:bg-gray-50/80 dark:hover:bg-white/[0.02] transition-all duration-150 flex flex-col md:flex-row md:items-start justify-between gap-5"
         >
-          <!-- Article Info & Excerpt -->
-          <div class="space-y-1.5 flex-1 min-w-0">
-            <div class="flex items-center gap-2">
-              <span class="text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 font-medium">
-                {{ item.feedTitle || 'Feed' }}
-              </span>
-              <time v-if="item.published" class="text-[11px] text-gray-400 dark:text-gray-500 font-mono">
-                {{ formatDate(item.published) }}
-              </time>
-              <span v-if="extractHostname(item.url)" class="text-[11px] font-mono text-gray-400 dark:text-gray-500 hidden md:inline">
-                • {{ extractHostname(item.url) }}
-              </span>
-            </div>
+          <!-- Left Anchor Rail: Time, Source & Domain (~160px desktop) -->
+          <div class="md:w-44 shrink-0 flex flex-wrap md:flex-col items-center md:items-start gap-1.5 md:gap-1 pt-0.5">
+            <time v-if="item.published" class="text-xs font-mono text-gray-400 dark:text-gray-500">
+              {{ formatDate(item.published) }}
+            </time>
 
-            <!-- Headline -->
-            <h2 class="text-base sm:text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors leading-snug font-['Outfit']">
+            <span class="inline-flex items-center text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20 font-medium">
+              {{ item.feedTitle || 'Feed' }}
+            </span>
+
+            <span v-if="extractHostname(item.url)" class="text-[11px] font-mono text-gray-400 dark:text-gray-600 truncate max-w-[150px]">
+              {{ extractHostname(item.url) }}
+            </span>
+          </div>
+
+          <!-- Center Content: Headline & Excerpt -->
+          <div class="flex-1 min-w-0 space-y-2">
+            <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-950 dark:text-[#F3F4F6] group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors leading-snug font-['Outfit']">
               <a :href="item.url" target="_blank" rel="noopener noreferrer" class="hover:underline">
                 {{ item.title }}
               </a>
             </h2>
 
-            <!-- Excerpt preview -->
             <div
               v-if="item.description"
               v-html="sanitizeDescription(item.description)"
-              class="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed break-words max-w-4xl"
+              class="text-xs sm:text-sm text-gray-600 dark:text-gray-400 line-clamp-2 leading-relaxed break-words max-w-3xl"
             ></div>
           </div>
 
-          <!-- Actions -->
-          <div class="shrink-0 flex items-center gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-100 dark:border-white/[0.04]">
+          <!-- Right Action Rail: Tactile Save to Vault -->
+          <div class="shrink-0 flex items-center md:flex-col md:items-end justify-between md:justify-start gap-2.5 pt-2 md:pt-0">
             <a
               :href="item.url"
               target="_blank"
               rel="noopener noreferrer"
               class="text-xs font-mono text-gray-400 hover:text-emerald-500 transition-colors hidden sm:inline"
-              title="Open source"
+              title="Open source in new tab"
             >
-              {{ extractHostname(item.url) }} ↗
+              source ↗
             </a>
 
-            <!-- Tactile Apple-Style Save Button -->
+            <!-- Tactile Apple-Grade Pill Button -->
             <button
               data-testid="save-to-vault-btn"
               @click="handleSaveToVault(item)"
               :disabled="savingUrls[item.url] || savedUrls[item.url]"
-              class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all active:scale-95 cursor-pointer shadow-xs shrink-0 flex items-center gap-1.5"
+              class="px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all active:scale-95 cursor-pointer shadow-xs shrink-0 flex items-center gap-1.5"
               :class="savedUrls[item.url]
                 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                : 'bg-gray-900 text-white dark:bg-white dark:text-gray-900 hover:opacity-90 disabled:opacity-60'"
+                : 'bg-gray-950 text-white dark:bg-white dark:text-gray-950 hover:opacity-90 disabled:opacity-60'"
             >
               <template v-if="savingUrls[item.url]">
                 <span class="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin"></span>
@@ -448,7 +452,7 @@ onBeforeUnmount(() => {
                 <span>Saved!</span>
               </template>
               <template v-else>
-                <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <svg class="w-3 h-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                   <line x1="12" y1="5" x2="12" y2="19" />
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
