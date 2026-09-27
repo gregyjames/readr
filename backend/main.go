@@ -207,8 +207,13 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	eventHub := handlers.NewEventHub(logger)
 
 	app := fiber.New(fiber.Config{
-		JSONEncoder: sonic.Marshal,
-		JSONDecoder: sonic.Unmarshal,
+		JSONEncoder:              sonic.Marshal,
+		JSONDecoder:              sonic.Unmarshal,
+		Concurrency:              256 * 1024,
+		ReadBufferSize:           8 * 1024,
+		WriteBufferSize:          8 * 1024,
+		DisableHeaderNormalizing: false,
+		StreamRequestBody:        true,
 	})
 
 	// Panic recovery protects server goroutines from crashes
