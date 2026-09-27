@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -101,4 +102,28 @@ func TestSettingsStoreColdStartCorruptFile_BlocksAuth(t *testing.T) {
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, "must deny access when configuration is degraded")
+}
+
+func TestSettingsUpdateWithoutContentType(t *testing.T) {
+	tempDir := t.TempDir()
+	logger := zap.NewNop()
+	store := NewSettingsStore(tempDir, logger)
+
+	app := fiber.New()
+	api := app.Group("/api")
+	hCtx := &HandlerContext{
+		DataDir:       tempDir,
+		Logger:        logger,
+		SettingsStore: store,
+	}
+	RegisterSettings(api, hCtx)
+
+	req := httptest.NewRequest("POST", "/api/settings", bytes.NewBufferString(`{"theme":"dark","model":"custom/test-model"}`))
+	// Omit Content-Type header
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	current := store.Get()
+	assert.Equal(t, "custom/test-model", current.Model)
 }

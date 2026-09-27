@@ -207,7 +207,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 
 	router.Post("/add", func(c fiber.Ctx) error {
 		var body RequestBody
-		if err := c.Bind().Body(&body); err != nil {
+		if err := c.Bind().JSON(&body); err != nil {
 			if h.Logger != nil {
 				h.Logger.Error("Failed to unmarshal request body", zap.Error(err))
 			}

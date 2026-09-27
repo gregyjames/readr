@@ -115,7 +115,7 @@ func RegisterArticleStatus(router fiber.Router, h *HandlerContext) {
 		var body struct {
 			Progress *float64 `json:"progress"`
 		}
-		if err := c.Bind().Body(&body); err != nil || body.Progress == nil {
+		if err := c.Bind().JSON(&body); err != nil || body.Progress == nil {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid progress payload"})
 		}
 		if *body.Progress < 0 || *body.Progress > 100 {
@@ -161,7 +161,7 @@ func RegisterArticleStatus(router fiber.Router, h *HandlerContext) {
 		var body struct {
 			Status string `json:"status"`
 		}
-		if err := c.Bind().Body(&body); err != nil {
+		if err := c.Bind().JSON(&body); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid status payload"})
 		}
 		if !repository.IsValidStatusKey(body.Status) {

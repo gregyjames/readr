@@ -141,6 +141,18 @@ func TestRecordProgressHandler(t *testing.T) {
 			t.Fatalf("expected 400, got %d", resp.StatusCode)
 		}
 	})
+
+	t.Run("decodes progress independently of Content-Type header", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/articles/101/progress", bytes.NewBufferString(`{"progress": 65.0}`))
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("expected 200 without Content-Type header, got %d", resp.StatusCode)
+		}
+	})
 }
 
 func TestManualStatusHandlers(t *testing.T) {
@@ -191,6 +203,18 @@ func TestManualStatusHandlers(t *testing.T) {
 		resp, _ := postJSON(t, app, "/articles/999/status", `{"status": "finished"}`)
 		if resp.StatusCode != 404 {
 			t.Fatalf("expected 404, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("decodes reading status independently of Content-Type header", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/articles/101/status", bytes.NewBufferString(`{"status": "finished"}`))
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("expected 200 without Content-Type header, got %d", resp.StatusCode)
 		}
 	})
 }

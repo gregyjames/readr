@@ -694,4 +694,11 @@ func TestAddArticle_Integration(t *testing.T) {
 	if dupResp.Status != "exists" || dupResp.ID != addResp.ID {
 		t.Errorf("expected duplicate response with id %d, got %+v", addResp.ID, dupResp)
 	}
+
+	// 6. Ingest decoding succeeds independently of Content-Type header
+	reqNoCT := httptest.NewRequest("POST", "/api/add", bytes.NewReader(addPayload))
+	respNoCT, err := app.Test(reqNoCT, fiber.TestConfig{Timeout: 10 * time.Second})
+	if err != nil || respNoCT.StatusCode != 200 {
+		t.Fatalf("expected 200 for ingest without Content-Type header, got %d, err: %v", respNoCT.StatusCode, err)
+	}
 }

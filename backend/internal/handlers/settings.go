@@ -172,7 +172,7 @@ func RegisterSettings(router fiber.Router, h *HandlerContext) {
 
 	router.Post("/settings", func(c fiber.Ctx) error {
 		var req ServerSettings
-		if err := c.Bind().Body(&req); err != nil {
+		if err := c.Bind().JSON(&req); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid JSON"})
 		}
 
