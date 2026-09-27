@@ -308,7 +308,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	api.Get("/feeds", handlers.GetFeeds(hCtx))
 	api.Post("/feeds", handlers.AddFeed(hCtx))
 	api.Delete("/feeds/:id", handlers.RemoveFeed(hCtx))
-	api.Get("/feeds/timeline", handlers.GetTimeline(hCtx))
+	api.Get("/feeds/timeline", handlers.TimelinePaginator, handlers.GetTimeline(hCtx))
 	handlers.RegisterGraph(api, hCtx)
 	handlers.RegisterChat(api, hCtx)
 	handlers.RegisterSettings(api, hCtx)
