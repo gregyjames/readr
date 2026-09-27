@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -19,9 +20,10 @@ import (
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
 	"example.com/backend/internal/vault"
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/compress"
-	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/compress"
+	"github.com/gofiber/fiber/v3/middleware/cors"
+	"github.com/gofiber/fiber/v3/middleware/static"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gorm.io/driver/sqlite"
@@ -200,20 +202,23 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	settingsStore := handlers.NewSettingsStore(dataDirectory, logger)
 	eventHub := handlers.NewEventHub(logger)
 
-	app := fiber.New(fiber.Config{
-		DisableStartupMessage: true,
-	})
+	app := fiber.New()
 
 	app.Use(compress.New(compress.Config{
 		Level: compress.LevelDefault,
 	}))
 
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowHeaders: "Origin, Content-Type, Accept, Cache-Control, Pragma, Authorization, X-Openrouter-Key, X-Openrouter-Model, X-OpenRouter-Key, X-OpenRouter-Model, X-Api-Key, X-Agent-Enricher, X-Agent-Linker, X-Agent-Summarizer",
+		AllowOrigins: []string{"*"},
+		AllowHeaders: []string{
+			"Origin", "Content-Type", "Accept", "Cache-Control", "Pragma",
+			"Authorization", "X-Openrouter-Key", "X-Openrouter-Model",
+			"X-OpenRouter-Key", "X-OpenRouter-Model", "X-Api-Key",
+			"X-Agent-Enricher", "X-Agent-Linker", "X-Agent-Summarizer",
+		},
 	}))
 
-	app.Use(func(c *fiber.Ctx) error {
+	app.Use(func(c fiber.Ctx) error {
 		start := time.Now()
 		err := c.Next()
 		duration := time.Since(start)
@@ -228,7 +233,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return err
 	})
 
-	app.Static("/images", filepath.Join(dataDirectory, "images"))
+	app.Get("/images/*", static.New(filepath.Join(dataDirectory, "images")))
 
 	repo := repository.NewGormRepository(db)
 	graphEngine := graph.NewEngine(repo)
@@ -277,7 +282,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	api.Use(handlers.AuthMiddleware(hCtx))
 
-	api.Get("/", func(c *fiber.Ctx) error {
+	api.Get("/", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"message": "Hello from Go!"})
 	})
 
@@ -332,10 +337,10 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	if distDir != "" {
 		if info, err := os.Stat(distDir); err == nil && info.IsDir() {
 			logger.Info("Serving static frontend files from", zap.String("distDir", distDir))
-			app.Static("/", distDir)
+			app.Get("/*", static.New(distDir))
 
 			// SPA Fallback for client-side routing
-			app.Get("*", func(c *fiber.Ctx) error {
+			app.Get("*", func(c fiber.Ctx) error {
 				if strings.HasPrefix(c.Path(), "/api") || strings.HasPrefix(c.Path(), "/images") {
 					return c.Next()
 				}
@@ -377,7 +382,9 @@ func main() {
 		logger.Info("Shutdown signal received, commencing graceful shutdown...")
 
 		// Step 1: Stop accepting new requests with 10s timeout
-		if err := app.ShutdownWithTimeout(10 * time.Second); err != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		if err := app.ShutdownWithContext(shutdownCtx); err != nil {
 			logger.Error("Fiber shutdown error", zap.Error(err))
 		}
 
@@ -396,7 +403,9 @@ func main() {
 	}()
 
 	logger.Info("Starting server on port", zap.String("port", port))
-	if err := app.Listen(port); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := app.Listen(port, fiber.ListenConfig{
+		DisableStartupMessage: true,
+	}); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Fatal("Failed to start server", zap.Error(err))
 	}
 
