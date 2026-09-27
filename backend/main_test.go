@@ -1376,3 +1376,91 @@ func TestRssFeedsTableMigration(t *testing.T) {
 		t.Fatalf("expected rss_feeds table name to exist in sqlite schema")
 	}
 }
+
+func TestMiddlewareStack(t *testing.T) {
+	app := setupApp()
+
+	// 1. Test Request ID generation
+	req1 := httptest.NewRequest("GET", "/api/", nil)
+	resp1, err := app.Test(req1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	reqID := resp1.Header.Get("X-Request-ID")
+	if reqID == "" {
+		t.Errorf("expected X-Request-ID header to be present")
+	}
+
+	// 2. Test ETag generation and 304 Not Modified
+	req2 := httptest.NewRequest("GET", "/api/", nil)
+	resp2, err := app.Test(req2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	etagVal := resp2.Header.Get("ETag")
+	if etagVal == "" {
+		t.Errorf("expected ETag header on GET /api/")
+	}
+
+	// Send conditional GET with If-None-Match
+	req3 := httptest.NewRequest("GET", "/api/", nil)
+	req3.Header.Set("If-None-Match", etagVal)
+	resp3, err := app.Test(req3)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp3.StatusCode != http.StatusNotModified {
+		t.Errorf("expected status 304 Not Modified, got %d", resp3.StatusCode)
+	}
+
+	// 3. Test Panic Recovery
+	// Register a panicking route on /api to verify recover middleware returns 500 without crashing
+	app.Get("/api/panic-test", func(c fiber.Ctx) error {
+		panic("simulated unhandled panic in handler")
+	})
+	reqPanic := httptest.NewRequest("GET", "/api/panic-test", nil)
+	respPanic, err := app.Test(reqPanic)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if respPanic.StatusCode != http.StatusInternalServerError {
+		t.Errorf("expected status 500 from recovered panic, got %d", respPanic.StatusCode)
+	}
+
+	// 4. Test Static Asset Headers (Cache-Control & ByteRange)
+	// Create a dummy image in data/images
+	dataDir := getDataDir()
+	imagesDir := filepath.Join(dataDir, "images")
+	_ = os.MkdirAll(imagesDir, 0755)
+	dummyImagePath := filepath.Join(imagesDir, "test.png")
+	_ = os.WriteFile(dummyImagePath, []byte("fake image binary content for testing range"), 0644)
+	defer os.Remove(dummyImagePath)
+
+	reqImg := httptest.NewRequest("GET", "/images/test.png", nil)
+	respImg, err := app.Test(reqImg)
+	if err != nil {
+		t.Fatalf("unexpected error fetching static image: %v", err)
+	}
+	if respImg.StatusCode != http.StatusOK {
+		t.Errorf("expected status 200 for static image, got %d", respImg.StatusCode)
+	}
+	cacheControl := respImg.Header.Get("Cache-Control")
+	if !strings.Contains(cacheControl, "max-age=86400") {
+		t.Errorf("expected Cache-Control to contain max-age=86400, got: %s", cacheControl)
+	}
+	acceptRanges := respImg.Header.Get("Accept-Ranges")
+	if acceptRanges != "bytes" {
+		t.Errorf("expected Accept-Ranges: bytes, got: %s", acceptRanges)
+	}
+
+	// Test Byte Range Request
+	reqRange := httptest.NewRequest("GET", "/images/test.png", nil)
+	reqRange.Header.Set("Range", "bytes=0-3")
+	respRange, err := app.Test(reqRange)
+	if err != nil {
+		t.Fatalf("unexpected error fetching range: %v", err)
+	}
+	if respRange.StatusCode != http.StatusPartialContent {
+		t.Errorf("expected status 206 Partial Content, got %d", respRange.StatusCode)
+	}
+}

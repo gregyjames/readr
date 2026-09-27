@@ -20,9 +20,13 @@ import (
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
 	"example.com/backend/internal/vault"
+	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/compress"
 	"github.com/gofiber/fiber/v3/middleware/cors"
+	"github.com/gofiber/fiber/v3/middleware/etag"
+	"github.com/gofiber/fiber/v3/middleware/recover"
+	"github.com/gofiber/fiber/v3/middleware/requestid"
 	"github.com/gofiber/fiber/v3/middleware/static"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -202,7 +206,24 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	settingsStore := handlers.NewSettingsStore(dataDirectory, logger)
 	eventHub := handlers.NewEventHub(logger)
 
-	app := fiber.New()
+	app := fiber.New(fiber.Config{
+		JSONEncoder:              sonic.Marshal,
+		JSONDecoder:              sonic.Unmarshal,
+		Concurrency:              256 * 1024,
+		ReadBufferSize:           8 * 1024,
+		WriteBufferSize:          8 * 1024,
+		DisableHeaderNormalizing: false,
+		StreamRequestBody:        true,
+	})
+
+	// Panic recovery protects server goroutines from crashes
+	app.Use(recover.New())
+
+	// Request ID tags each request with a unique ID for end-to-end tracing
+	app.Use(requestid.New())
+
+	// HTTP caching via ETags saves bandwidth and serialization overhead with 304 Not Modified
+	app.Use(etag.New())
 
 	app.Use(compress.New(compress.Config{
 		Level: compress.LevelDefault,
@@ -215,7 +236,9 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			"Authorization", "X-Openrouter-Key", "X-Openrouter-Model",
 			"X-OpenRouter-Key", "X-OpenRouter-Model", "X-Api-Key",
 			"X-Agent-Enricher", "X-Agent-Linker", "X-Agent-Summarizer",
+			"X-Request-ID",
 		},
+		ExposeHeaders: []string{"X-Request-ID"},
 	}))
 
 	app.Use(func(c fiber.Ctx) error {
@@ -224,6 +247,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		duration := time.Since(start)
 
 		logger.Info("Request handled",
+			zap.String("req_id", requestid.FromContext(c)),
 			zap.String("method", c.Method()),
 			zap.String("path", c.Path()),
 			zap.Int("status", c.Response().StatusCode()),
@@ -233,7 +257,14 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		return err
 	})
 
-	app.Get("/images/*", static.New(filepath.Join(dataDirectory, "images")))
+	staticConfig := static.Config{
+		Compress:      true,
+		ByteRange:     true,
+		MaxAge:        86400, // 24 hours
+		CacheDuration: 24 * time.Hour,
+	}
+
+	app.Get("/images/*", static.New(filepath.Join(dataDirectory, "images"), staticConfig))
 
 	repo := repository.NewGormRepository(db)
 	graphEngine := graph.NewEngine(repo)
@@ -308,7 +339,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	api.Get("/feeds", handlers.GetFeeds(hCtx))
 	api.Post("/feeds", handlers.AddFeed(hCtx))
 	api.Delete("/feeds/:id", handlers.RemoveFeed(hCtx))
-	api.Get("/feeds/timeline", handlers.GetTimeline(hCtx))
+	api.Get("/feeds/timeline", handlers.TimelinePaginator, handlers.GetTimeline(hCtx))
 	handlers.RegisterGraph(api, hCtx)
 	handlers.RegisterChat(api, hCtx)
 	handlers.RegisterSettings(api, hCtx)
@@ -337,7 +368,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	if distDir != "" {
 		if info, err := os.Stat(distDir); err == nil && info.IsDir() {
 			logger.Info("Serving static frontend files from", zap.String("distDir", distDir))
-			app.Get("/*", static.New(distDir))
+			app.Get("/*", static.New(distDir, staticConfig))
 
 			// SPA Fallback for client-side routing
 			app.Get("*", func(c fiber.Ctx) error {

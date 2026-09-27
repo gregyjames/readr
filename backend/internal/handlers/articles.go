@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"example.com/backend/internal/repository"
 	"example.com/backend/internal/vault"
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/paginate"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -86,9 +88,32 @@ func hydrateReadingTime(articles []repository.GormArticle) {
 }
 
 func RegisterArticles(router fiber.Router, h *HandlerContext) {
-	router.Get("/getarticles", func(c fiber.Ctx) error {
+	router.Get("/getarticles", paginate.New(paginate.Config{
+		DefaultPage:  1,
+		DefaultLimit: 25,
+		MaxLimit:     100,
+		PageKey:      "page",
+		LimitKey:     "limit",
+	}), func(c fiber.Ctx) error {
+		if h.DB == nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Database not configured",
+			})
+		}
+
 		archivedParam := c.Query("archived")
 		isArchived := archivedParam == "true"
+		allParam := c.Query("all") == "true" || c.Query("all") == "1"
+
+		pageInfo, _ := paginate.FromContext(c)
+		page := 1
+		limit := 25
+		offset := 0
+		if pageInfo != nil {
+			page = pageInfo.Page
+			limit = pageInfo.Limit
+			offset = pageInfo.Start()
+		}
 
 		if h.Vault != nil {
 			var isArchivedPtr *bool
@@ -98,9 +123,34 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 				f := false
 				isArchivedPtr = &f
 			}
-			articles, err := h.Vault.ListArticles(c.Context(), vault.ArticleFilter{
+
+			var total int64
+			countQuery := h.DB.WithContext(c.Context()).Model(&repository.GormArticle{}).Where("deleted_at IS NULL")
+			if isArchivedPtr != nil {
+				if *isArchivedPtr {
+					countQuery = countQuery.Where("is_archived = ?", true)
+				} else {
+					countQuery = countQuery.Where("is_archived = ? OR is_archived IS NULL", false)
+				}
+			}
+			if err := countQuery.Count(&total).Error; err != nil {
+				if h.Logger != nil {
+					h.Logger.Error("Failed to count articles from DB", zap.Error(err))
+				}
+				return c.Status(500).JSON(fiber.Map{
+					"error": "Failed to retrieve articles",
+				})
+			}
+
+			filter := vault.ArticleFilter{
 				Archived: isArchivedPtr,
-			})
+			}
+			if !allParam {
+				filter.Limit = limit
+				filter.Offset = offset
+			}
+
+			articles, err := h.Vault.ListArticles(c.Context(), filter)
 			if err != nil {
 				if h.Logger != nil {
 					h.Logger.Error("Failed to retrieve articles from Vault", zap.Error(err))
@@ -109,13 +159,67 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 					"error": "Failed to retrieve articles",
 				})
 			}
-			return c.JSON(articles)
+			if articles == nil {
+				articles = []repository.GormArticle{}
+			}
+
+			if allParam {
+				limitVal := int(total)
+				if limitVal == 0 {
+					limitVal = 25
+				}
+				return c.JSON(fiber.Map{
+					"data":        articles,
+					"page":        1,
+					"limit":       limitVal,
+					"total":       total,
+					"total_pages": 1,
+				})
+			}
+
+			totalPages := 0
+			if limit > 0 {
+				totalPages = int(math.Ceil(float64(total) / float64(limit)))
+			}
+			if totalPages == 0 {
+				totalPages = 1
+			}
+
+			return c.JSON(fiber.Map{
+				"data":        articles,
+				"page":        page,
+				"limit":       limit,
+				"total":       total,
+				"total_pages": totalPages,
+			})
+		}
+
+		var total int64
+		countQuery := h.DB.WithContext(c.Context()).Model(&repository.GormArticle{}).Where("deleted_at IS NULL")
+		if isArchived {
+			countQuery = countQuery.Where("is_archived = ?", true)
+		} else {
+			countQuery = countQuery.Where("is_archived = ? OR is_archived IS NULL", false)
+		}
+		if err := countQuery.Count(&total).Error; err != nil {
+			if h.Logger != nil {
+				h.Logger.Error("Failed to count articles from DB", zap.Error(err))
+			}
+			return c.Status(500).JSON(fiber.Map{
+				"error": "Failed to retrieve articles",
+			})
 		}
 
 		var articles []repository.GormArticle
-		query := h.DB.Where("is_archived = ?", isArchived)
-		if !isArchived {
-			query = h.DB.Where("is_archived = ? OR is_archived IS NULL", false)
+		query := h.DB.WithContext(c.Context()).Where("deleted_at IS NULL").Order("id DESC")
+		if isArchived {
+			query = query.Where("is_archived = ?", true)
+		} else {
+			query = query.Where("is_archived = ? OR is_archived IS NULL", false)
+		}
+
+		if !allParam {
+			query = query.Offset(offset).Limit(limit)
 		}
 
 		if err := query.Find(&articles).Error; err != nil {
@@ -126,10 +230,43 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 				"error": "Failed to retrieve articles",
 			})
 		}
+		if articles == nil {
+			articles = []repository.GormArticle{}
+		}
+
 		hydrateReadingStatus(c.Context(), h, articles)
 		hydrateMOCProgress(c.Context(), h, articles)
 		hydrateReadingTime(articles)
-		return c.JSON(articles)
+
+		if allParam {
+			limitVal := int(total)
+			if limitVal == 0 {
+				limitVal = 25
+			}
+			return c.JSON(fiber.Map{
+				"data":        articles,
+				"page":        1,
+				"limit":       limitVal,
+				"total":       total,
+				"total_pages": 1,
+			})
+		}
+
+		totalPages := 0
+		if limit > 0 {
+			totalPages = int(math.Ceil(float64(total) / float64(limit)))
+		}
+		if totalPages == 0 {
+			totalPages = 1
+		}
+
+		return c.JSON(fiber.Map{
+			"data":        articles,
+			"page":        page,
+			"limit":       limit,
+			"total":       total,
+			"total_pages": totalPages,
+		})
 	})
 
 	router.Get("/articles", func(c fiber.Ctx) error {

@@ -8,11 +8,26 @@ const sessionTimelines = ref<Record<string, TimelineItem[]>>({})
 </script>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount } from 'vue'
+import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { feedsAPI, ingestAPI } from '../services/feeds'
+import PaginationControls from '../components/PaginationControls.vue'
+
+const route = useRoute()
+const router = useRouter()
+
+// ── Pagination state ────────────────────────────────────────
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
+const storedPageSize = Number(localStorage.getItem('readr_page_size')) || 25
+const initialPage = Number(route?.query?.page) > 0 ? Number(route?.query?.page) : 1
+const currentPage = ref(initialPage)
+const pageSize = ref(PAGE_SIZE_OPTIONS.includes(storedPageSize) ? storedPageSize : 25)
+const totalItems = ref(0)
+const totalPages = ref(1)
 
 const feeds = ref<RssFeed[]>(sessionFeeds.value)
-const timeline = ref<TimelineItem[]>(sessionTimelines.value['all'] || [])
+const initialTimelineKey = `all_p${initialPage}_l${pageSize.value}`
+const timeline = ref<TimelineItem[]>(sessionTimelines.value[initialTimelineKey] || sessionTimelines.value['all'] || [])
 const selectedFeedId = ref<number | null>(null)
 
 const isLoadingFeeds = ref(false)
@@ -29,6 +44,44 @@ const savedUrls = ref<Record<string, boolean>>({})
 
 const toastMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 let toastTimeout: ReturnType<typeof setTimeout> | null = null
+
+function updateQuery(page: number) {
+  if (!router || !route || !route.path) return
+  const query = { ...(route.query || {}) }
+  if (page > 1) {
+    query.page = String(page)
+  } else {
+    delete query.page
+  }
+  router.replace({ path: route.path, query }).catch(() => {})
+}
+
+async function onPageChange(page: number) {
+  currentPage.value = page
+  updateQuery(page)
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+  await fetchTimeline(selectedFeedId.value, false, page, pageSize.value)
+}
+
+async function onPageSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1
+  updateQuery(1)
+  try { localStorage.setItem('readr_page_size', String(size)) } catch {}
+  await fetchTimeline(selectedFeedId.value, false, 1, size)
+}
+
+// Watch URL changes (e.g. browser back/forward buttons)
+if (route) {
+  watch(() => route.query?.page, async (newPage) => {
+    const p = Number(newPage) > 0 ? Number(newPage) : 1
+    if (p !== currentPage.value) {
+      currentPage.value = p
+      await fetchTimeline(selectedFeedId.value, false, p, pageSize.value)
+    }
+  })
+}
+// ────────────────────────────────────────────────────────────
 
 const showToast = (text: string, type: 'success' | 'error' = 'success') => {
   if (toastTimeout) clearTimeout(toastTimeout)
@@ -59,8 +112,16 @@ const fetchFeeds = async () => {
   }
 }
 
-const fetchTimeline = async (feedId: number | null = selectedFeedId.value, forceRefresh = false) => {
-  const cacheKey = feedId !== null ? String(feedId) : 'all'
+let timelineGeneration = 0
+
+const fetchTimeline = async (
+  feedId: number | null = selectedFeedId.value,
+  forceRefresh = false,
+  page = currentPage.value,
+  limit = pageSize.value
+) => {
+  const currentGen = ++timelineGeneration
+  const cacheKey = `${feedId !== null ? String(feedId) : 'all'}_p${page}_l${limit}`
 
   // Instant cache preview if already in memory
   if (!forceRefresh && sessionTimelines.value[cacheKey]) {
@@ -75,20 +136,24 @@ const fetchTimeline = async (feedId: number | null = selectedFeedId.value, force
   }
 
   try {
-    const data = await feedsAPI.getTimeline(feedId ?? undefined, forceRefresh)
-    // Race condition guard: ignore if user switched feeds in the meantime
-    if (selectedFeedId.value !== feedId) {
+    const envelope = await feedsAPI.getTimeline(feedId, forceRefresh, page, limit)
+    // Race condition guard: ignore if user switched feeds or a newer request was dispatched
+    if (selectedFeedId.value !== feedId || currentGen !== timelineGeneration) {
       return
     }
-    timeline.value = data
-    sessionTimelines.value[cacheKey] = data
+    const items = envelope.data ?? []
+    timeline.value = items
+    sessionTimelines.value[cacheKey] = items
+    totalItems.value = envelope.total ?? items.length
+    totalPages.value = envelope.total_pages ?? Math.max(1, Math.ceil(totalItems.value / limit))
+    currentPage.value = envelope.page ?? page
   } catch (err: any) {
-    if (selectedFeedId.value !== feedId) {
+    if (selectedFeedId.value !== feedId || currentGen !== timelineGeneration) {
       return
     }
     showToast(err.message || 'Failed to load timeline', 'error')
   } finally {
-    if (selectedFeedId.value === feedId) {
+    if (selectedFeedId.value === feedId && currentGen === timelineGeneration) {
       isLoadingTimeline.value = false
       isRevalidating.value = false
     }
@@ -97,7 +162,9 @@ const fetchTimeline = async (feedId: number | null = selectedFeedId.value, force
 
 const selectFeed = async (feedId: number | null) => {
   selectedFeedId.value = feedId
-  await fetchTimeline(feedId)
+  currentPage.value = 1
+  updateQuery(1)
+  await fetchTimeline(feedId, false, 1, pageSize.value)
 }
 
 const handleAddFeed = async () => {
@@ -178,7 +245,7 @@ const extractHostname = (url: string) => {
 }
 
 onMounted(async () => {
-  await Promise.all([fetchFeeds(), fetchTimeline()])
+  await Promise.all([fetchFeeds(), fetchTimeline(selectedFeedId.value, false, initialPage, pageSize.value)])
 })
 
 onBeforeUnmount(() => {
@@ -224,7 +291,7 @@ onBeforeUnmount(() => {
       <div class="space-y-1">
         <div class="flex items-center gap-2">
           <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-          <span class="text-[11px] font-mono text-gray-400 dark:text-gray-500 tracking-wide uppercase">{{ timeline.length }} entries</span>
+          <span class="text-[11px] font-mono text-gray-400 dark:text-gray-500 tracking-wide uppercase">{{ totalItems }} entries</span>
         </div>
         <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-gray-950 dark:text-[#F3F4F6] font-['Outfit']">
           {{ selectedFeed ? selectedFeed.title : 'Feeds' }}
@@ -277,10 +344,10 @@ onBeforeUnmount(() => {
         >
           <span>All Feeds</span>
           <span
-            class="text-[10px] font-mono px-1.5 py-0.5 rounded"
-            :class="selectedFeedId === null ? 'bg-white/20 dark:bg-black/10' : 'bg-gray-200/60 dark:bg-white/10 text-gray-500 dark:text-gray-400'"
+            v-if="selectedFeedId === null"
+            class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/20 dark:bg-black/10"
           >
-            {{ timeline.length }}
+            {{ totalItems }}
           </span>
         </div>
 
@@ -476,6 +543,17 @@ onBeforeUnmount(() => {
           </div>
         </article>
       </div>
+
+      <!-- Pagination -->
+      <PaginationControls
+        :current-page="currentPage"
+        :total-pages="totalPages"
+        :total-items="totalItems"
+        :page-size="pageSize"
+        :page-size-options="[10, 25, 50, 100]"
+        @update:page="onPageChange"
+        @update:page-size="onPageSizeChange"
+      />
 
     </main>
 

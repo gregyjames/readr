@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/paginate"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -123,6 +125,14 @@ func RemoveFeed(hCtx *HandlerContext) fiber.Handler {
 	}
 }
 
+var TimelinePaginator = paginate.New(paginate.Config{
+	DefaultPage:  1,
+	DefaultLimit: 25,
+	MaxLimit:     100,
+	PageKey:      "page",
+	LimitKey:     "limit",
+})
+
 // GetTimeline fetches and combines timeline items from all feeds or a single feed if ?feed_id=X is given.
 func GetTimeline(hCtx *HandlerContext) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -159,15 +169,7 @@ func GetTimeline(hCtx *HandlerContext) fiber.Handler {
 			}
 		}
 
-		limit := 150
-		if limitStr := c.Query("limit"); limitStr != "" {
-			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
-				if parsedLimit > 300 {
-					parsedLimit = 300
-				}
-				limit = parsedLimit
-			}
-		}
+		pageInfo, _ := paginate.FromContext(c)
 
 		forceRefresh := c.Query("refresh") == "true" || c.Query("refresh") == "1"
 		items := ingest.FetchFeedsTimelineWithOptions(c.Context(), feeds, 10*time.Second, forceRefresh)
@@ -175,10 +177,37 @@ func GetTimeline(hCtx *HandlerContext) fiber.Handler {
 			items = make([]ingest.TimelineItem, 0)
 		}
 
-		if len(items) > limit {
-			items = items[:limit]
+		total := int64(len(items))
+		page := 1
+		limit := 25
+		start := 0
+		if pageInfo != nil {
+			page = pageInfo.Page
+			limit = pageInfo.Limit
+			start = pageInfo.Start()
+		}
+		if start > len(items) {
+			start = len(items)
+		}
+		end := start + limit
+		if end > len(items) {
+			end = len(items)
+		}
+		pagedItems := items[start:end]
+		if pagedItems == nil {
+			pagedItems = make([]ingest.TimelineItem, 0)
+		}
+		totalPages := int(math.Ceil(float64(total) / float64(limit)))
+		if totalPages == 0 {
+			totalPages = 1
 		}
 
-		return c.JSON(items)
+		return c.JSON(fiber.Map{
+			"data":        pagedItems,
+			"page":        page,
+			"limit":       limit,
+			"total":       total,
+			"total_pages": totalPages,
+		})
 	}
 }

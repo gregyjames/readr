@@ -99,6 +99,85 @@ describe('Core Views: Home and Article', () => {
 
       expect(wrapper.text()).toContain('Kubernetes Networking Deep Dive')
     })
+
+    it('renders timeline stream in list view mode', async () => {
+      localStorage.setItem('readr_viewMode', 'list')
+      const router = await setupRouter('/')
+      const wrapper = mount(Home, {
+        global: {
+          plugins: [router],
+          stubs: {
+            ArticleProgressLabel: true,
+            MocProgressLabel: true,
+          },
+        },
+      })
+
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Kubernetes Networking Deep Dive')
+      expect(wrapper.text()).toContain('Distributed Consensus with Raft')
+      localStorage.removeItem('readr_viewMode')
+    })
+
+    it('immediately replaces the lead article when archived without refresh', async () => {
+      const router = await setupRouter('/')
+      const origPost = axios.post
+      axios.post = (async () => ({ data: { status: 'success' } })) as unknown as typeof axios.post
+
+      const wrapper = mount(Home, {
+        global: {
+          plugins: [router],
+          stubs: {
+            ArticleProgressLabel: true,
+            MocProgressLabel: true,
+          },
+        },
+      })
+
+      await flushPromises()
+
+      // Initially lead article is Distributed Consensus with Raft (latest sort order: ID 2 before ID 1)
+      expect(wrapper.text()).toContain('Distributed Consensus with Raft')
+      expect(wrapper.text()).toContain('Kubernetes Networking Deep Dive')
+
+      // Find archive button for lead article (article ID 2)
+      const archiveBtn = wrapper.find('button[aria-label="Archive note"]')
+      expect(archiveBtn.exists()).toBe(true)
+
+      await archiveBtn.trigger('click')
+      // Wait for particle delay (320ms) and promise resolution
+      await new Promise(r => setTimeout(r, 350))
+      await flushPromises()
+
+      // The archived article is removed and the next note takes its place
+      expect(wrapper.text()).not.toContain('Distributed Consensus with Raft')
+      expect(wrapper.text()).toContain('Kubernetes Networking Deep Dive')
+
+      axios.post = origPost
+    })
+
+    it('clamps out-of-range route query page to loaded totalPages and updates query', async () => {
+      const router = await setupRouter('/?page=99')
+      const wrapper = mount(Home, {
+        global: {
+          plugins: [router],
+          stubs: {
+            ArticleProgressLabel: true,
+            MocProgressLabel: true,
+          },
+        },
+      })
+
+      await flushPromises()
+
+      // With 2 sample articles and pageSize=25, totalPages is 1.
+      // Current page must clamp from 99 to 1, and query.page should be removed (page 1)
+      expect(router.currentRoute.value.query.page).toBeUndefined()
+      // Card view should not be empty, it should show the articles on page 1
+      expect(wrapper.text()).toContain('Distributed Consensus with Raft')
+      expect(wrapper.text()).toContain('Kubernetes Networking Deep Dive')
+    })
   })
 
   describe('Article.vue', () => {

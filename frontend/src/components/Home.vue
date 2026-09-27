@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import emitter from '../event-bus.ts'
 import BookmarkIcon from '../assets/book.svg'
@@ -7,6 +8,7 @@ import { settings, setViewMode as saveGlobalViewMode } from '../store/settings'
 import ArticleProgressLabel from './ArticleProgressLabel.vue'
 import MocProgressLabel from './MocProgressLabel.vue'
 import { isMoc, type MocProgress } from '../utils/moc'
+import PaginationControls from './PaginationControls.vue'
 
 interface Article {
   ID: number
@@ -36,7 +38,12 @@ const changeViewMode = (mode: 'card' | 'list') => {
     localStorage.setItem('readr_viewMode', mode)
   } catch {}
   saveGlobalViewMode(mode)
-  nextTick(initReveal)
+  nextTick(() => {
+    initReveal()
+    if (mode === 'list') {
+      initTimelineObserver()
+    }
+  })
 }
 
 const selectedTag = ref<string | null>(null)
@@ -68,11 +75,21 @@ const getProceduralGradient = (id: number) => {
 
 const fetchArticles = async () => {
   try {
-    const res = await axios.get('/api/getarticles')
-    articles.value = res.data.map((article: any) => ({
+    const res = await axios.get('/api/getarticles?all=true')
+    const raw: any[] = (res.data?.data ?? res.data) || []
+    articles.value = raw.map((article: any) => ({
       ...article,
       parsedTags: article.tags ? article.tags.split(',').map((tag: string) => tag.trim()) : []
     }))
+    // Only reset to page 1 on initial load if route query does not specify a page
+    const qPage = Number(route?.query?.page)
+    const targetPage = qPage > 0 ? qPage : 1
+    if (targetPage > totalPages.value) {
+      currentPage.value = totalPages.value
+      updateQuery(totalPages.value)
+    } else {
+      currentPage.value = targetPage
+    }
     await nextTick()
     initReveal()
   } catch (err: any) {
@@ -301,6 +318,7 @@ const archiveArticle = async (id: number) => {
   try {
     await axios.post(`/api/articles/${id}/archive`)
     articles.value = articles.value.filter(article => article.ID !== id)
+    nextTick(initReveal)
     showToast('Article moved to archive', id, targetArticle)
   } catch (err) {
     console.error('Failed to archive article', err)
@@ -438,6 +456,7 @@ const deleteArticle = async (id: number) => {
   try {
     await axios.delete(`/api/delete/${id}`)
     articles.value = articles.value.filter(article => article.ID !== id)
+    nextTick(initReveal)
   } catch (err) {
     console.error('Failed to delete article', err)
   } finally {
@@ -462,6 +481,7 @@ onBeforeUnmount(() => {
   }
   emitter.off('article-added', fetchArticles)
   observer?.disconnect()
+  timelineObserver?.disconnect()
 })
 
 watch(() => settings.view_mode, (newMode) => {
@@ -506,15 +526,136 @@ const filteredArticles = computed(() => {
   return list
 })
 
-const leadArticle = computed(() => {
-  if (filteredArticles.value.length === 0) return null
-  return filteredArticles.value[0]
+
+// ── Pagination ──────────────────────────────────────────────
+const route = useRoute()
+const router = useRouter()
+
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
+const storedPageSize = Number(localStorage.getItem('readr_page_size')) || 25
+const initialPage = Number(route?.query?.page) > 0 ? Number(route?.query?.page) : 1
+const currentPage = ref(initialPage)
+const pageSize = ref(PAGE_SIZE_OPTIONS.includes(storedPageSize) ? storedPageSize : 25)
+
+const totalPages = computed(() => Math.max(1, Math.ceil(filteredArticles.value.length / pageSize.value)))
+
+function updateQuery(page: number) {
+  if (!router || !route || !route.path) return
+  const query = { ...(route.query || {}) }
+  if (page > 1) {
+    query.page = String(page)
+  } else {
+    delete query.page
+  }
+  router.replace({ path: route.path, query }).catch(() => {})
+}
+
+// Reset to page 1 when filters or page size change
+watch([selectedTag, filterMocOnly, sortOrder, pageSize], () => {
+  currentPage.value = 1
+  updateQuery(1)
+  nextTick(initReveal)
 })
 
-const secondaryArticles = computed(() => {
-  if (filteredArticles.value.length <= 1) return []
-  return filteredArticles.value.slice(1)
+// Watch URL changes (e.g. browser back/forward buttons)
+if (route) {
+  watch(() => route.query?.page, (newPage) => {
+    const p = Number(newPage) > 0 ? Number(newPage) : 1
+    if (p !== currentPage.value) {
+      currentPage.value = p
+      nextTick(initReveal)
+    }
+  })
+}
+
+watch(totalPages, (newTotal) => {
+  if (currentPage.value > newTotal) {
+    currentPage.value = newTotal
+    updateQuery(newTotal)
+    nextTick(initReveal)
+  }
 })
+
+const pagedArticles = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredArticles.value.slice(start, start + pageSize.value)
+})
+
+const pagedLeadArticle = computed(() => pagedArticles.value[0] ?? null)
+const pagedSecondaryArticles = computed(() => pagedArticles.value.slice(1))
+
+// ── Infinite Scroll for Timeline Stream ─────────────────────
+const timelinePage = ref(initialPage)
+const timelineSentinel = ref<HTMLElement | null>(null)
+let timelineObserver: IntersectionObserver | null = null
+
+const timelineArticles = computed(() => {
+  const count = timelinePage.value * pageSize.value
+  return filteredArticles.value.slice(0, count)
+})
+
+const hasMoreTimelineArticles = computed(() => {
+  return timelineArticles.value.length < filteredArticles.value.length
+})
+
+function loadMoreTimeline() {
+  if (hasMoreTimelineArticles.value) {
+    timelinePage.value++
+    nextTick(initReveal)
+  }
+}
+
+function initTimelineObserver() {
+  if (timelineObserver) {
+    timelineObserver.disconnect()
+    timelineObserver = null
+  }
+  if (!timelineSentinel.value) return
+
+  timelineObserver = new IntersectionObserver(
+    (entries) => {
+      const first = entries[0]
+      if (first && first.isIntersecting) {
+        loadMoreTimeline()
+      }
+    },
+    { rootMargin: '200px 0px', threshold: 0.1 }
+  )
+  timelineObserver.observe(timelineSentinel.value)
+}
+
+watch(timelineSentinel, (el) => {
+  if (el) {
+    initTimelineObserver()
+  } else if (timelineObserver) {
+    timelineObserver.disconnect()
+    timelineObserver = null
+  }
+})
+
+// Reset timeline scroll when filters change
+watch([selectedTag, filterMocOnly, sortOrder, pageSize], () => {
+  timelinePage.value = 1
+  nextTick(() => {
+    initTimelineObserver()
+  })
+})
+
+function onPageChange(page: number) {
+  currentPage.value = page
+  timelinePage.value = page
+  updateQuery(page)
+  nextTick(initReveal)
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+function onPageSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1
+  timelinePage.value = 1
+  updateQuery(1)
+  try { localStorage.setItem('readr_page_size', String(size)) } catch {}
+}
 </script>
 
 <template>
@@ -639,7 +780,7 @@ const secondaryArticles = computed(() => {
     <div v-else-if="viewMode === 'card' || viewMode === 'studio'" class="space-y-8">
       
       <!-- Lead Spotlight Card (Hero Ingestion) -->
-      <div v-if="leadArticle" class="reveal-item" :class="{ 'archiving': archivingId === leadArticle.ID, 'deleting': deletingId === leadArticle.ID }" :data-article-id="leadArticle.ID">
+      <div v-if="pagedLeadArticle" class="reveal-item" :class="{ 'archiving': archivingId === pagedLeadArticle.ID, 'deleting': deletingId === pagedLeadArticle.ID }" :data-article-id="pagedLeadArticle.ID">
         <div class="relative group bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-300 overflow-hidden shadow-xs hover:shadow-md">
           
           <div class="flex flex-col lg:flex-row items-stretch">
@@ -651,35 +792,35 @@ const secondaryArticles = computed(() => {
                 <div class="flex flex-wrap items-center gap-2.5 text-xs font-mono text-gray-400 dark:text-gray-500 mb-3">
                   <span class="text-emerald-600 dark:text-emerald-400 font-semibold tracking-wide">// 01 · LATEST NOTE</span>
                   <span>•</span>
-                  <span class="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-white/[0.05] text-[10px] text-gray-600 dark:text-gray-300 font-mono font-medium">{{ getDomain(leadArticle) }}</span>
+                  <span class="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-white/[0.05] text-[10px] text-gray-600 dark:text-gray-300 font-mono font-medium">{{ getDomain(pagedLeadArticle) }}</span>
                   <span>•</span>
-                  <span>{{ formatDate(leadArticle.ID) || 'Recent' }}</span>
+                  <span>{{ formatDate(pagedLeadArticle.ID) || 'Recent' }}</span>
                   <span>•</span>
-                  <span>{{ getReadingTime(leadArticle) }}</span>
-                  <span v-if="hasReadingIndicator(leadArticle)">&bull;</span>
+                  <span>{{ getReadingTime(pagedLeadArticle) }}</span>
+                  <span v-if="hasReadingIndicator(pagedLeadArticle)">&bull;</span>
                   <MocProgressLabel
-                    v-if="isMocArticle(leadArticle)"
+                    v-if="isMocArticle(pagedLeadArticle)"
                     variant="meta"
-                    :progress="leadArticle.moc_progress"
+                    :progress="pagedLeadArticle.moc_progress"
                   />
                   <ArticleProgressLabel
                     v-else
                     variant="meta"
-                    :status="leadArticle.reading_status"
-                    :progress="leadArticle.reading_progress"
+                    :status="pagedLeadArticle.reading_status"
+                    :progress="pagedLeadArticle.reading_progress"
                   />
                 </div>
 
                 <!-- Tags / MOC Badge -->
                 <div class="flex flex-wrap items-center gap-1.5 mb-3">
                   <span
-                    v-if="isMocArticle(leadArticle)"
+                    v-if="isMocArticle(pagedLeadArticle)"
                     class="px-2 py-0.5 rounded text-[11px] font-mono bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 font-medium"
                   >
                     ★ MOC HUB
                   </span>
                   <button
-                    v-for="tag in leadArticle.parsedTags.slice(0, 4)"
+                    v-for="tag in pagedLeadArticle.parsedTags.slice(0, 4)"
                     :key="tag"
                     @click="selectedTag = tag"
                     class="text-[11px] font-mono px-2 py-0.5 rounded bg-gray-100 dark:bg-white/[0.05] hover:bg-emerald-500/10 hover:text-emerald-700 dark:hover:text-emerald-300 text-gray-600 dark:text-gray-400 transition-colors cursor-pointer"
@@ -690,21 +831,21 @@ const secondaryArticles = computed(() => {
 
                 <!-- Title -->
                 <h2 class="text-xl sm:text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors mb-3 leading-snug font-['Outfit']">
-                  <router-link :to="`/articles/${leadArticle.ID}`">
-                    {{ leadArticle.title }}
+                  <router-link :to="`/articles/${pagedLeadArticle.ID}`">
+                    {{ pagedLeadArticle.title }}
                   </router-link>
                 </h2>
 
                 <!-- Excerpt -->
                 <p class="text-xs sm:text-sm text-gray-600 dark:text-gray-400 line-clamp-3 leading-relaxed max-w-[65ch]">
-                  {{ leadArticle.article }}
+                  {{ pagedLeadArticle.article }}
                 </p>
               </div>
 
               <!-- Action Bar -->
               <div class="flex items-center justify-between pt-6 mt-6 border-t border-gray-100 dark:border-white/[0.04]">
                 <router-link
-                  :to="`/articles/${leadArticle.ID}`"
+                  :to="`/articles/${pagedLeadArticle.ID}`"
                   class="inline-flex items-center gap-1.5 text-xs font-mono font-medium text-emerald-600 dark:text-emerald-400 group-hover:translate-x-0.5 transition-transform"
                 >
                   <span>Open article</span>
@@ -713,7 +854,7 @@ const secondaryArticles = computed(() => {
 
                 <div class="flex items-center gap-1">
                   <button
-                    @click="archiveArticle(leadArticle.ID)"
+                    @click="archiveArticle(pagedLeadArticle.ID)"
                     class="p-1.5 rounded-lg text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-colors cursor-pointer"
                     title="Archive note"
                     aria-label="Archive note"
@@ -726,7 +867,7 @@ const secondaryArticles = computed(() => {
                   </button>
 
                   <button
-                    @click="deleteArticle(leadArticle.ID)"
+                    @click="deleteArticle(pagedLeadArticle.ID)"
                     class="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-white/[0.05] transition-colors cursor-pointer"
                     title="Permanently delete note"
                     aria-label="Permanently delete note"
@@ -742,13 +883,13 @@ const secondaryArticles = computed(() => {
 
             <!-- Right Cover Media -->
             <div
-              v-if="hasValidImage(leadArticle)"
+              v-if="hasValidImage(pagedLeadArticle)"
               class="lg:w-96 xl:w-[420px] h-56 lg:h-auto overflow-hidden bg-gray-100 dark:bg-[#0A0C10] border-t lg:border-t-0 lg:border-l border-gray-100 dark:border-white/[0.06] flex-shrink-0 relative"
             >
               <img
-                :src="leadArticle.image"
-                :alt="leadArticle.title"
-                @error="onImageError(leadArticle.ID)"
+                :src="pagedLeadArticle.image"
+                :alt="pagedLeadArticle.title"
+                @error="onImageError(pagedLeadArticle.ID)"
                 class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out"
                 loading="lazy"
               />
@@ -757,7 +898,7 @@ const secondaryArticles = computed(() => {
             <div
               v-else
               class="lg:w-80 h-44 lg:h-auto overflow-hidden p-6 flex flex-col justify-between border-t lg:border-t-0 lg:border-l border-gray-100 dark:border-white/[0.06] flex-shrink-0 relative bg-gradient-to-br"
-              :class="getProceduralGradient(leadArticle.ID)"
+              :class="getProceduralGradient(pagedLeadArticle.ID)"
             >
               <div class="absolute inset-0 opacity-10 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:14px_14px]"></div>
               <div class="relative z-10 flex justify-end">
@@ -773,9 +914,9 @@ const secondaryArticles = computed(() => {
       </div>
 
       <!-- Secondary Articles Masonry / Grid -->
-      <div v-if="secondaryArticles.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div v-if="pagedSecondaryArticles.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <article
-          v-for="(article, idx) in secondaryArticles"
+          v-for="(article, idx) in pagedSecondaryArticles"
           :key="article.ID"
           class="reveal-item group relative bg-white dark:bg-[#12151C] rounded-2xl border border-gray-200/80 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/20 transition-all duration-300 shadow-2xs hover:shadow-md overflow-hidden flex flex-col justify-between"
           :class="{ 'archiving': archivingId === article.ID, 'deleting': deletingId === article.ID }"
@@ -933,6 +1074,17 @@ const secondaryArticles = computed(() => {
         </article>
       </div>
 
+      <!-- Pagination -->
+      <PaginationControls
+        :current-page="currentPage"
+        :total-pages="totalPages"
+        :total-items="filteredArticles.length"
+        :page-size="pageSize"
+        :page-size-options="[10, 25, 50, 100]"
+        @update:page="onPageChange"
+        @update:page-size="onPageSizeChange"
+      />
+
     </div>
 
     <!-- VIEW MODE 2: BREATHTAKING VERTICAL TIMELINE STREAM -->
@@ -943,7 +1095,7 @@ const secondaryArticles = computed(() => {
 
       <div class="space-y-6 sm:space-y-8">
         <div
-          v-for="(article, idx) in filteredArticles"
+          v-for="(article, idx) in timelineArticles"
           :key="article.ID"
           class="reveal-item relative group"
           :class="{ 'archiving': archivingId === article.ID, 'deleting': deletingId === article.ID }"
@@ -1106,6 +1258,18 @@ const secondaryArticles = computed(() => {
           </div>
         </div>
       </div>
+
+      <!-- Infinite Scroll Trigger Sentinel & Loading/End Indicator -->
+      <div ref="timelineSentinel" class="py-8 flex flex-col items-center justify-center text-center">
+        <div v-if="hasMoreTimelineArticles" class="flex items-center gap-2 text-xs font-mono text-gray-400 dark:text-gray-500">
+          <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+          <span>Loading more entries...</span>
+        </div>
+        <div v-else-if="filteredArticles.length > pageSize" class="flex items-center gap-2 text-xs font-mono text-gray-400 dark:text-gray-600">
+          <span>— End of Timeline ({{ filteredArticles.length }} items) —</span>
+        </div>
+      </div>
+
     </div>
 
     <!-- Toast Notification (Archive Feedback with Undo) -->

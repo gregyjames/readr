@@ -1,7 +1,30 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createRouter, createMemoryHistory } from 'vue-router'
 import FeedsView from './FeedsView.vue'
-import { feedsAPI, ingestAPI, type RssFeed, type TimelineItem } from '../services/feeds'
+import PaginationControls from '../components/PaginationControls.vue'
+import { feedsAPI, ingestAPI, type RssFeed, type TimelineItem, type PaginatedResponse } from '../services/feeds'
+
+const testRouter = createRouter({
+  history: createMemoryHistory(),
+  routes: [{ path: '/feeds', component: { template: '<div />' } }],
+})
+await testRouter.push('/feeds')
+await testRouter.isReady()
+
+function mountFeedsView(options: any = {}) {
+  return mount(FeedsView, {
+    global: {
+      plugins: [testRouter],
+    },
+    ...options,
+  })
+}
+
+// Helper to wrap timeline items in PaginatedResponse envelope
+function envelope(items: TimelineItem[]): PaginatedResponse<TimelineItem> {
+  return { data: items, page: 1, limit: 25, total: items.length, total_pages: 1 }
+}
 
 describe('FeedsView.vue', () => {
   const origGetFeeds = feedsAPI.getFeeds
@@ -57,11 +80,12 @@ describe('FeedsView.vue', () => {
     },
   ]
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await testRouter.push('/feeds')
     feedsAPI.getFeeds = async () => [...mockFeeds]
-    feedsAPI.getTimeline = async (feedId?: number) => {
-      if (feedId === 1) return [...mockTimelineFiltered]
-      return [...mockTimelineAll]
+    feedsAPI.getTimeline = async (feedId?: number | null) => {
+      if (feedId === 1) return envelope([...mockTimelineFiltered])
+      return envelope([...mockTimelineAll])
     }
     feedsAPI.addFeed = async (url: string) => ({
       id: 3,
@@ -83,7 +107,7 @@ describe('FeedsView.vue', () => {
   })
 
   it('renders feeds list and timeline items on initial load', async () => {
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     // Verify sidebar feeds
@@ -104,15 +128,15 @@ describe('FeedsView.vue', () => {
   })
 
   it('clicking a feed filters the timeline', async () => {
-    let requestedFeedId: number | undefined = -1
+    let requestedFeedId: number | null | undefined = -1
 
-    feedsAPI.getTimeline = async (feedId?: number) => {
-      requestedFeedId = feedId
-      if (feedId === 1) return [...mockTimelineFiltered]
-      return [...mockTimelineAll]
+    feedsAPI.getTimeline = async (feedId?: number | null) => {
+      requestedFeedId = feedId ?? null
+      if (feedId === 1) return envelope([...mockTimelineFiltered])
+      return envelope([...mockTimelineAll])
     }
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     // Click on feed item 1 (Hacker News)
@@ -132,7 +156,7 @@ describe('FeedsView.vue', () => {
     await allFeedsBtn.trigger('click')
     await flushPromises()
 
-    expect(requestedFeedId).toBeUndefined()
+    expect(requestedFeedId).toBeNull()
     const allCards = wrapper.findAll('[data-testid="timeline-card"]')
     expect(allCards.length).toBe(2)
 
@@ -140,15 +164,15 @@ describe('FeedsView.vue', () => {
   })
 
   it('keyboard navigation triggers feed selection', async () => {
-    let requestedFeedId: number | undefined = -1
+    let requestedFeedId: number | null | undefined = -1
 
-    feedsAPI.getTimeline = async (feedId?: number) => {
-      requestedFeedId = feedId
-      if (feedId === 2) return []
-      return [...mockTimelineAll]
+    feedsAPI.getTimeline = async (feedId?: number | null) => {
+      requestedFeedId = feedId ?? null
+      if (feedId === 2) return envelope([])
+      return envelope([...mockTimelineAll])
     }
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     // Select feed 2 with Enter key
@@ -167,13 +191,13 @@ describe('FeedsView.vue', () => {
 
     await allFeedsBtn.trigger('keydown.space')
     await flushPromises()
-    expect(requestedFeedId).toBeUndefined()
+    expect(requestedFeedId).toBeNull()
 
     wrapper.unmount()
   })
 
   it('renders item description as plain text literally without parsing HTML', async () => {
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     const firstCard = wrapper.find('[data-testid="timeline-card"]')
@@ -198,7 +222,7 @@ describe('FeedsView.vue', () => {
       }
     }
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     const input = wrapper.find('input[type="url"]')
@@ -221,7 +245,7 @@ describe('FeedsView.vue', () => {
       throw new Error('Invalid feed: not a valid RSS/Atom feed')
     }
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     const input = wrapper.find('input[type="url"]')
@@ -243,7 +267,7 @@ describe('FeedsView.vue', () => {
       return { status: 'success', id: 42 }
     }
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     const saveButtons = wrapper.findAll('[data-testid="save-to-vault-btn"]')
@@ -271,7 +295,7 @@ describe('FeedsView.vue', () => {
       return { status: 'success', success: true }
     }
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     const removeBtn = wrapper.find('[data-testid="remove-feed-1"]')
@@ -286,19 +310,19 @@ describe('FeedsView.vue', () => {
   })
 
   it('race condition guard ignores stale timeline responses when feed selection changes', async () => {
-    let resolveSlowFeed: (items: TimelineItem[]) => void = () => {}
-    const slowPromise = new Promise<TimelineItem[]>((resolve) => {
+    let resolveSlowFeed: (items: PaginatedResponse<TimelineItem>) => void = () => {}
+    const slowPromise = new Promise<PaginatedResponse<TimelineItem>>((resolve) => {
       resolveSlowFeed = resolve
     })
 
-    feedsAPI.getTimeline = async (feedId?: number) => {
+    feedsAPI.getTimeline = async (feedId?: number | null) => {
       if (feedId === 1) {
         return slowPromise
       }
-      return [...mockTimelineAll]
+      return envelope([...mockTimelineAll])
     }
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     // User selects feed 1 (which will be slow to respond)
@@ -311,7 +335,7 @@ describe('FeedsView.vue', () => {
     await flushPromises()
 
     // Now slow feed 1 resolves
-    resolveSlowFeed([mockTimelineFiltered[0]])
+    resolveSlowFeed(envelope([mockTimelineFiltered[0]]))
     await flushPromises()
 
     // Timeline should reflect All Feeds (2 items), not the stale feed 1 result
@@ -321,11 +345,97 @@ describe('FeedsView.vue', () => {
     wrapper.unmount()
   })
 
+  it('generation guard ignores stale same-feed responses when newer page is requested', async () => {
+    let resolveFirstPage: (res: PaginatedResponse<TimelineItem>) => void = () => {}
+    const slowPagePromise = new Promise<PaginatedResponse<TimelineItem>>((resolve) => {
+      resolveFirstPage = resolve
+    })
+
+    feedsAPI.getTimeline = async (_feedId?: number | null, _refresh?: boolean, page?: number) => {
+      if (page === 1) {
+        return slowPagePromise
+      }
+      return {
+        data: [mockTimelineAll[1]],
+        page: 2,
+        limit: 25,
+        total: 50,
+        total_pages: 2,
+      }
+    }
+
+    const wrapper = mountFeedsView()
+
+    // Trigger page 2 request directly on PaginationControls
+    const paginator = wrapper.findComponent(PaginationControls)
+    expect(paginator.exists()).toBe(true)
+    await paginator.vm.$emit('update:page', 2)
+    await flushPromises()
+
+    // Page 2 response resolved and timeline should now have item 1
+    expect(wrapper.text()).toContain('SQLite in Production: WAL and Concurrency')
+
+    // Now resolve the stale first page response with item 0
+    resolveFirstPage({
+      data: [mockTimelineAll[0]],
+      page: 1,
+      limit: 25,
+      total: 50,
+      total_pages: 2,
+    })
+    await flushPromises()
+
+    // Generation guard must ensure timeline still shows page 2 item, not overwritten by stale page 1
+    expect(wrapper.text()).toContain('SQLite in Production: WAL and Concurrency')
+    expect(wrapper.text()).not.toContain('Show HN: Readr - Self-hosted reader')
+
+    wrapper.unmount()
+  })
+
+  it('navigates pages and updates timeline using server-side pagination envelope', async () => {
+    let capturedPage = 1
+    let capturedLimit = 25
+
+    feedsAPI.getTimeline = async (feedId?: number | null, refresh?: boolean, page?: number, limit?: number) => {
+      capturedPage = page ?? 1
+      capturedLimit = limit ?? 25
+      return {
+        data: capturedPage === 1 ? [mockTimelineAll[0]] : [mockTimelineAll[1]],
+        page: capturedPage,
+        limit: capturedLimit,
+        total: 150,
+        total_pages: 6,
+      }
+    }
+
+    const wrapper = mountFeedsView()
+    await flushPromises()
+
+    // Header count should reflect total from envelope
+    expect(wrapper.text()).toContain('150 entries')
+
+    // Pagination controls should reflect multi-page state
+    expect(wrapper.text()).toContain('Showing 1–25 of 150 items')
+
+    // Click Next page button
+    const nextBtn = wrapper.find('button[aria-label="Next page"]')
+    expect(nextBtn.exists()).toBe(true)
+    expect(nextBtn.attributes('disabled')).toBeUndefined()
+
+    await nextBtn.trigger('click')
+    await flushPromises()
+
+    expect(capturedPage).toBe(2)
+    expect(wrapper.text()).toContain('Showing 26–50 of 150 items')
+
+    wrapper.unmount()
+  })
+
   it('renders empty state when no feeds are subscribed', async () => {
     feedsAPI.getFeeds = async () => []
-    feedsAPI.getTimeline = async () => []
+    feedsAPI.getTimeline = async () => envelope([])
 
-    const wrapper = mount(FeedsView)
+    const wrapper = mountFeedsView()
     await flushPromises()
 
     expect(wrapper.text()).toContain('No subscribed feeds')

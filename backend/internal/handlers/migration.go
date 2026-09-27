@@ -215,7 +215,7 @@ func MigrateLegacyWordCounts(db *gorm.DB, dataDir string, logger *zap.Logger) (i
 			continue
 		}
 
-		words, _ := repository.CalculateReadingTime(string(contentBytes))
+		words, _ := repository.CalculateReadingTimeBytes(contentBytes)
 		if words > 0 {
 			if err := db.Model(&repository.GormArticle{}).Where("id = ?", a.ID).Update("word_count", words).Error; err != nil {
 				logger.Warn("Failed to update word_count in database", zap.Int64("id", a.ID), zap.Error(err))

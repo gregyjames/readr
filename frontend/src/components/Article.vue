@@ -676,11 +676,11 @@ const { zoomIn: localZoomIn, zoomOut: localZoomOut, fitGraph: localFitView } = u
 const fetchArticles = async () => {
   try {
     const [activeRes, archivedRes] = await Promise.all([
-      axios.get('/api/getarticles'),
-      axios.get('/api/getarticles?archived=true'),
+      axios.get('/api/getarticles?all=true'),
+      axios.get('/api/getarticles?archived=true&all=true'),
     ])
-    const active: ArticleData[] = activeRes.data || []
-    const archived: ArticleData[] = archivedRes.data || []
+    const active: ArticleData[] = (activeRes.data?.data ?? activeRes.data) || []
+    const archived: ArticleData[] = (archivedRes.data?.data ?? archivedRes.data) || []
     // Merge, deduplicating by ID (active takes precedence)
     const seen = new Set(active.map((a) => a.ID))
     allArticles.value = [...active, ...archived.filter((a) => !seen.has(a.ID))]

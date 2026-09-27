@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"example.com/backend/internal/ingest"
 	"example.com/backend/internal/repository"
 	"github.com/gofiber/fiber/v3"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
@@ -23,6 +25,184 @@ import (
 
 func makeTestRequest(method, target string) *http.Request {
 	return httptest.NewRequest(method, strings.ReplaceAll(target, " ", "%20"), nil)
+}
+
+func setupArticlesTestApp(t *testing.T) (*fiber.App, *gorm.DB, *HandlerContext, func()) {
+	t.Helper()
+	tempDir := t.TempDir()
+	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "test.db")), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&repository.GormArticle{},
+		&repository.GormArticleLink{},
+		&repository.GormArticleStatusType{},
+		&repository.GormArticleStatus{},
+	))
+
+	repo := repository.NewGormRepository(db)
+	hCtx := &HandlerContext{
+		DB:      db,
+		DataDir: tempDir,
+		Repo:    repo,
+		Logger:  zap.NewNop(),
+	}
+
+	app := fiber.New()
+	api := app.Group("/api")
+	RegisterArticles(api, hCtx)
+
+	cleanup := func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	}
+	return app, db, hCtx, cleanup
+}
+
+func TestGetArticles_Pagination(t *testing.T) {
+	app, db, _, cleanup := setupArticlesTestApp(t)
+	defer cleanup()
+
+	// Seed 15 test articles
+	for i := 1; i <= 15; i++ {
+		art := repository.GormArticle{
+			Title:      fmt.Sprintf("Paginated Article %02d", i),
+			Article:    fmt.Sprintf("article-%02d.md", i),
+			IsArchived: false,
+			WordCount:  100,
+		}
+		require.NoError(t, db.Create(&art).Error)
+	}
+
+	// 1. Default pagination (page 1, limit 10)
+	req1 := httptest.NewRequest("GET", "/api/getarticles?page=1&limit=10", nil)
+	resp1, err := app.Test(req1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp1.StatusCode)
+
+	var envelope1 struct {
+		Data       []repository.GormArticle `json:"data"`
+		Page       int                      `json:"page"`
+		Limit      int                      `json:"limit"`
+		Total      int64                    `json:"total"`
+		TotalPages int                      `json:"total_pages"`
+	}
+	require.NoError(t, json.NewDecoder(resp1.Body).Decode(&envelope1))
+	assert.Equal(t, 10, len(envelope1.Data))
+	assert.Equal(t, 1, envelope1.Page)
+	assert.Equal(t, 10, envelope1.Limit)
+	assert.Equal(t, int64(15), envelope1.Total)
+	assert.Equal(t, 2, envelope1.TotalPages)
+
+	// 2. Second page (page 2, limit 10)
+	req2 := httptest.NewRequest("GET", "/api/getarticles?page=2&limit=10", nil)
+	resp2, err := app.Test(req2)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var envelope2 struct {
+		Data       []repository.GormArticle `json:"data"`
+		Page       int                      `json:"page"`
+		Limit      int                      `json:"limit"`
+		Total      int64                    `json:"total"`
+		TotalPages int                      `json:"total_pages"`
+	}
+	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&envelope2))
+	assert.Equal(t, 5, len(envelope2.Data))
+	assert.Equal(t, 2, envelope2.Page)
+
+	// 3. All articles requested (all=true)
+	req3 := httptest.NewRequest("GET", "/api/getarticles?all=true", nil)
+	resp3, err := app.Test(req3)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp3.StatusCode)
+
+	var envelope3 struct {
+		Data       []repository.GormArticle `json:"data"`
+		Page       int                      `json:"page"`
+		Limit      int                      `json:"limit"`
+		Total      int64                    `json:"total"`
+		TotalPages int                      `json:"total_pages"`
+	}
+	require.NoError(t, json.NewDecoder(resp3.Body).Decode(&envelope3))
+	assert.Equal(t, 15, len(envelope3.Data))
+	assert.Equal(t, 1, envelope3.Page)
+	assert.Equal(t, 15, envelope3.Limit)
+	assert.Equal(t, int64(15), envelope3.Total)
+	assert.Equal(t, 1, envelope3.TotalPages)
+
+	// 4. Default pagination without query parameters (page 1, limit 25)
+	req4 := httptest.NewRequest("GET", "/api/getarticles", nil)
+	resp4, err := app.Test(req4)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp4.StatusCode)
+
+	var envelope4 struct {
+		Data       []repository.GormArticle `json:"data"`
+		Page       int                      `json:"page"`
+		Limit      int                      `json:"limit"`
+		Total      int64                    `json:"total"`
+		TotalPages int                      `json:"total_pages"`
+	}
+	require.NoError(t, json.NewDecoder(resp4.Body).Decode(&envelope4))
+	assert.Equal(t, 15, len(envelope4.Data))
+	assert.Equal(t, 1, envelope4.Page)
+	assert.Equal(t, 25, envelope4.Limit)
+	assert.Equal(t, int64(15), envelope4.Total)
+	assert.Equal(t, 1, envelope4.TotalPages)
+
+	// 5. Empty database pagination clamping (totalPages >= 1)
+	emptyApp, _, _, emptyCleanup := setupArticlesTestApp(t)
+	defer emptyCleanup()
+	req5 := httptest.NewRequest("GET", "/api/getarticles", nil)
+	resp5, err := emptyApp.Test(req5)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp5.StatusCode)
+
+	var envelope5 struct {
+		Data       []repository.GormArticle `json:"data"`
+		Page       int                      `json:"page"`
+		Limit      int                      `json:"limit"`
+		Total      int64                    `json:"total"`
+		TotalPages int                      `json:"total_pages"`
+	}
+	require.NoError(t, json.NewDecoder(resp5.Body).Decode(&envelope5))
+	assert.Equal(t, 0, len(envelope5.Data))
+	assert.Equal(t, 1, envelope5.Page)
+	assert.Equal(t, 25, envelope5.Limit)
+	assert.Equal(t, int64(0), envelope5.Total)
+	assert.Equal(t, 1, envelope5.TotalPages)
+
+	// 6. all=1 parameter requested
+	req6 := httptest.NewRequest("GET", "/api/getarticles?all=1", nil)
+	resp6, err := app.Test(req6)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp6.StatusCode)
+
+	var envelope6 struct {
+		Data       []repository.GormArticle `json:"data"`
+		Page       int                      `json:"page"`
+		Limit      int                      `json:"limit"`
+		Total      int64                    `json:"total"`
+		TotalPages int                      `json:"total_pages"`
+	}
+	require.NoError(t, json.NewDecoder(resp6.Body).Decode(&envelope6))
+	assert.Equal(t, 15, len(envelope6.Data))
+	assert.Equal(t, 1, envelope6.Page)
+	assert.Equal(t, 15, envelope6.Limit)
+	assert.Equal(t, int64(15), envelope6.Total)
+	assert.Equal(t, 1, envelope6.TotalPages)
+	// Verify deterministic id DESC ordering
+	assert.True(t, envelope6.Data[0].ID > envelope6.Data[1].ID)
+
+	// 7. Nil DB returns 500 error
+	nilDBApp := fiber.New()
+	RegisterArticles(nilDBApp.Group("/api"), &HandlerContext{DB: nil})
+	req7 := httptest.NewRequest("GET", "/api/getarticles", nil)
+	resp7, err := nilDBApp.Test(req7)
+	require.NoError(t, err)
+	assert.Equal(t, 500, resp7.StatusCode)
 }
 
 func TestGetArticleContent_NestedTopicDirectories(t *testing.T) {
@@ -173,10 +353,13 @@ func TestArticleArchiveHandlers(t *testing.T) {
 		if resp.StatusCode != 200 {
 			t.Fatalf("expected 200, got %d", resp.StatusCode)
 		}
-		var list []repository.GormArticle
-		if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		var envelope struct {
+			Data []repository.GormArticle `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
 			t.Fatalf("failed to decode response: %v", err)
 		}
+		list := envelope.Data
 		if len(list) != 1 || list[0].ID != 101 {
 			t.Fatalf("expected 1 active article with ID 101, got: %+v", list)
 		}
@@ -198,10 +381,13 @@ func TestArticleArchiveHandlers(t *testing.T) {
 		if resp.StatusCode != 200 {
 			t.Fatalf("expected 200, got %d", resp.StatusCode)
 		}
-		var list []repository.GormArticle
-		if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		var envelope struct {
+			Data []repository.GormArticle `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
 			t.Fatalf("failed to decode response: %v", err)
 		}
+		list := envelope.Data
 		if len(list) != 1 || list[0].ID != 101 {
 			t.Fatalf("expected 1 active article with ID 101, got: %+v", list)
 		}
@@ -218,10 +404,13 @@ func TestArticleArchiveHandlers(t *testing.T) {
 		if resp.StatusCode != 200 {
 			t.Fatalf("expected 200, got %d", resp.StatusCode)
 		}
-		var list []repository.GormArticle
-		if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		var envelope struct {
+			Data []repository.GormArticle `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
 			t.Fatalf("failed to decode response: %v", err)
 		}
+		list := envelope.Data
 		if len(list) != 1 || list[0].ID != 102 {
 			t.Fatalf("expected 1 archived article with ID 102, got: %+v", list)
 		}
