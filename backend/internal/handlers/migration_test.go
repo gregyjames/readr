@@ -6,9 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"example.com/backend/internal/repository"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -131,7 +132,7 @@ func TestGetArticleContent_EndpointVariations(t *testing.T) {
 	for _, p := range pathsToTest {
 		t.Run(p, func(t *testing.T) {
 			req := httptest.NewRequest("GET", p, nil)
-			resp, err := app.Test(req, 5000)
+			resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 			if err != nil {
 				t.Fatalf("request %s failed: %v", p, err)
 			}
@@ -213,7 +214,7 @@ func TestGetArticleContent_PathTraversalRejected(t *testing.T) {
 	for _, tp := range traversalPaths {
 		t.Run(tp, func(t *testing.T) {
 			req := httptest.NewRequest("GET", tp, nil)
-			resp, err := app.Test(req, 5000)
+			resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 			if err != nil {
 				t.Fatalf("request %s failed: %v", tp, err)
 			}

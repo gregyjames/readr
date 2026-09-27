@@ -7,9 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"example.com/backend/internal/repository"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -144,7 +145,7 @@ func TestCleanLinksEndpoint(t *testing.T) {
 	RegisterArticles(app, hCtx)
 
 	req := httptest.NewRequest("POST", "/vault/clean-links", nil)
-	resp, err := app.Test(req, 5000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}

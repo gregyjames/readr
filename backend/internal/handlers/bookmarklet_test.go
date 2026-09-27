@@ -6,8 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -32,7 +33,7 @@ func TestBookmarkletEndpoint(t *testing.T) {
 	RegisterBookmarklet(app, hCtx)
 
 	req := httptest.NewRequest("GET", "/bookmarklet.js", nil)
-	resp, err := app.Test(req, 5000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	defer resp.Body.Close()
 

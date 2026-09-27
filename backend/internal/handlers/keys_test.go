@@ -11,7 +11,7 @@ import (
 
 	"example.com/backend/internal/auth"
 	"example.com/backend/internal/repository"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -44,7 +44,7 @@ func setupKeysTestApp(t *testing.T) (*fiber.App, *HandlerContext, *gorm.DB) {
 	RegisterAuth(api, hCtx)
 	RegisterKeys(api, hCtx)
 
-	api.Get("/protected-resource", func(c *fiber.Ctx) error {
+	api.Get("/protected-resource", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 
@@ -69,7 +69,7 @@ func TestAPIKeysCRUDAndAuth(t *testing.T) {
 	// 1. Initial list of keys should be empty
 	req := httptest.NewRequest("GET", "/api/keys", nil)
 	req.Header.Set("Authorization", "Bearer "+sessionToken)
-	resp, err := app.Test(req, 5000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
@@ -84,7 +84,7 @@ func TestAPIKeysCRUDAndAuth(t *testing.T) {
 	req = httptest.NewRequest("POST", "/api/keys", bytes.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+sessionToken)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusCreated, resp.StatusCode)
 
@@ -103,7 +103,7 @@ func TestAPIKeysCRUDAndAuth(t *testing.T) {
 	// 3. List keys - should contain the new key with prefix, not raw key
 	req = httptest.NewRequest("GET", "/api/keys", nil)
 	req.Header.Set("Authorization", "Bearer "+sessionToken)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
@@ -119,35 +119,35 @@ func TestAPIKeysCRUDAndAuth(t *testing.T) {
 	// 4. Access protected resource with Bearer API Key
 	req = httptest.NewRequest("GET", "/api/protected-resource", nil)
 	req.Header.Set("Authorization", "Bearer "+apiKeyStr)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
 	// 5. Access protected resource with X-API-Key header
 	req = httptest.NewRequest("GET", "/api/protected-resource", nil)
 	req.Header.Set("X-API-Key", apiKeyStr)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
 	// 6. Access protected resource with invalid API key
 	req = httptest.NewRequest("GET", "/api/protected-resource", nil)
 	req.Header.Set("Authorization", "Bearer rdr_live_invalidkey1234567890")
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 
 	// 7. Delete the API key
 	req = httptest.NewRequest("DELETE", "/api/keys/1", nil)
 	req.Header.Set("Authorization", "Bearer "+sessionToken)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
 	// 8. Access with deleted API key should now fail
 	req = httptest.NewRequest("GET", "/api/protected-resource", nil)
 	req.Header.Set("Authorization", "Bearer "+apiKeyStr)
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 }
@@ -158,14 +158,14 @@ func TestAuthMiddleware_PasswordlessAllowsRequests(t *testing.T) {
 	// No password configured (PasswordHash == "")
 	// 1. Request without token
 	req := httptest.NewRequest("GET", "/api/protected-resource", nil)
-	resp, err := app.Test(req, 5000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
 	// 2. Request with invalid/stale API key when password is not configured
 	req = httptest.NewRequest("GET", "/api/protected-resource", nil)
 	req.Header.Set("Authorization", "Bearer rdr_live_invalidkey1234567890")
-	resp, err = app.Test(req, 5000)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 }

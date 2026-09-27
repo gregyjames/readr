@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -92,7 +92,7 @@ func TestSettingsStoreColdStartCorruptFile_BlocksAuth(t *testing.T) {
 	api := app.Group("/api")
 	api.Use(AuthMiddleware(hCtx))
 
-	api.Get("/protected-vault-data", func(c *fiber.Ctx) error {
+	api.Get("/protected-vault-data", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"data": "secret"})
 	})
 
