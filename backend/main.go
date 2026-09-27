@@ -2,10 +2,14 @@ package main
 
 import (
 	"database/sql"
+	"errors"
+	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"example.com/backend/internal/agents"
@@ -244,6 +248,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	articleFetcher := &handlers.ArticleFileFetcher{DataDir: dataDirectory, DB: db}
 	chatService := chat.NewService(chatRepo, articleFetcher)
 	vaultInstance := vault.NewVault(dataDirectory, db, logger, graphEngine)
+	maintenanceService := vault.NewMaintenanceService(dataDirectory, db, logger)
 
 	hCtx := &handlers.HandlerContext{
 		DB:               db,
@@ -259,6 +264,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 		TemplateRenderer: templateRenderer,
 		EventHub:         eventHub,
 		ArticleFetcher:   articleFetcher,
+		Maintenance:      maintenanceService,
 	}
 
 	api := app.Group("/api")
@@ -296,6 +302,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	handlers.RegisterEvents(api, hCtx)
 	handlers.RegisterDiagnostics(api, hCtx)
 	handlers.RegisterLibrarian(api, hCtx, librarianRunner, librarianCron)
+	handlers.RegisterMaintenance(api, hCtx)
 
 	distDir := os.Getenv("DIST_DIR")
 	if distDir == "" {
@@ -310,6 +317,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 
 	hCtx.DistDir = distDir
 	handlers.RegisterBookmarklet(app, hCtx)
+	handlers.RegisterHealth(app, hCtx)
 
 	if distDir != "" {
 		if info, err := os.Stat(distDir); err == nil && info.IsDir() {
@@ -349,8 +357,38 @@ func main() {
 		port = ":" + port
 	}
 
+	// Trap SIGINT and SIGTERM for graceful shutdown
+	shutdownChan := make(chan os.Signal, 1)
+	signal.Notify(shutdownChan, os.Interrupt, syscall.SIGTERM)
+	shutdownDone := make(chan struct{})
+
+	go func() {
+		<-shutdownChan
+		logger.Info("Shutdown signal received, commencing graceful shutdown...")
+
+		// Step 1: Stop accepting new requests with 10s timeout
+		if err := app.ShutdownWithTimeout(10 * time.Second); err != nil {
+			logger.Error("Fiber shutdown error", zap.Error(err))
+		}
+
+		// Step 2: Drain background agent pool
+		if agents.Pool != nil {
+			_ = agents.Pool.Shutdown(15 * time.Second)
+		}
+
+		// Step 3: Close database
+		if sqlDB, err := db.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+
+		logger.Info("Server stopped cleanly")
+		close(shutdownDone)
+	}()
+
 	logger.Info("Starting server on port", zap.String("port", port))
-	if err := app.Listen(port); err != nil {
+	if err := app.Listen(port); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Fatal("Failed to start server", zap.Error(err))
 	}
+
+	<-shutdownDone
 }

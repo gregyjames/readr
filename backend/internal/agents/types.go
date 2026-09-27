@@ -1,5 +1,17 @@
 package agents
 
+type ProviderError struct {
+	Err error
+}
+
+func (e *ProviderError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *ProviderError) Unwrap() error {
+	return e.Err
+}
+
 type llmLink struct {
 	ExistingArticleID int64  `json:"existing_article_id"`
 	ExactPhraseInText string `json:"exact_phrase_in_text"`
