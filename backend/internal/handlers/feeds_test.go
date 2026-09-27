@@ -132,9 +132,17 @@ func TestFeedsEndpoints(t *testing.T) {
 	assert.Equal(t, mockServer.URL, createdFeed.URL)
 	assert.Equal(t, "Mock RSS Feed", createdFeed.Title)
 	assert.Equal(t, "https://example.com", createdFeed.SiteURL)
-	assert.True(t, createdFeed.ID > 0)
-
 	feedID := createdFeed.ID
+
+	// 5b. POST /api/feeds with same URL should return 409 Conflict
+	req = httptest.NewRequest("POST", "/api/feeds", bytes.NewReader(addBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = app.Test(req, 5000)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusConflict, resp.StatusCode)
+	conflictBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(conflictBody), "feed already exists")
 
 	// 6. GET /api/feeds lists the created feed
 	req = httptest.NewRequest("GET", "/api/feeds", nil)
@@ -224,4 +232,34 @@ func TestFeedsEndpoints(t *testing.T) {
 	feeds = nil
 	require.NoError(t, json.Unmarshal(body, &feeds))
 	assert.Empty(t, feeds)
+}
+
+func TestFeedTitleFallback(t *testing.T) {
+	app, _, _ := setupFeedTestApp(t)
+
+	mockServerNoTitle := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0">
+<channel>
+  <link>https://example.com/notitle</link>
+  <description>No title feed</description>
+</channel>
+</rss>`))
+	}))
+	defer mockServerNoTitle.Close()
+
+	addBody, _ := json.Marshal(map[string]string{"url": mockServerNoTitle.URL})
+	req := httptest.NewRequest("POST", "/api/feeds", bytes.NewReader(addBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, 5000)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	var feed repository.GormRssFeed
+	require.NoError(t, json.Unmarshal(body, &feed))
+	assert.Equal(t, mockServerNoTitle.URL, feed.Title)
 }

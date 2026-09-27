@@ -64,6 +64,21 @@ func AddFeed(hCtx *HandlerContext) fiber.Handler {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Failed to parse feed: " + err.Error()})
 		}
 
+		var count int64
+		if err := hCtx.DB.WithContext(c.Context()).Model(&repository.GormRssFeed{}).Where("url = ?", feed.URL).Count(&count).Error; err != nil {
+			if hCtx.Logger != nil {
+				hCtx.Logger.Error("Failed to check existing feed", zap.String("url", feed.URL), zap.Error(err))
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to check existing feed"})
+		}
+		if count > 0 {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "feed already exists"})
+		}
+
+		if strings.TrimSpace(feed.Title) == "" {
+			feed.Title = feed.URL
+		}
+
 		feed.CreatedAt = time.Now()
 		if err := hCtx.DB.WithContext(c.Context()).Create(feed).Error; err != nil {
 			if hCtx.Logger != nil {

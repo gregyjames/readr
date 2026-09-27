@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,9 +30,14 @@ func ValidateAndParseFeed(ctx context.Context, url string) (*repository.GormRssF
 		return nil, err
 	}
 
+	title := strings.TrimSpace(feed.Title)
+	if title == "" {
+		title = url
+	}
+
 	return &repository.GormRssFeed{
 		URL:     url,
-		Title:   feed.Title,
+		Title:   title,
 		SiteURL: feed.Link,
 	}, nil
 }
