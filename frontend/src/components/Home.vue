@@ -38,7 +38,12 @@ const changeViewMode = (mode: 'card' | 'list') => {
     localStorage.setItem('readr_viewMode', mode)
   } catch {}
   saveGlobalViewMode(mode)
-  nextTick(initReveal)
+  nextTick(() => {
+    initReveal()
+    if (mode === 'list') {
+      initTimelineObserver()
+    }
+  })
 }
 
 const selectedTag = ref<string | null>(null)

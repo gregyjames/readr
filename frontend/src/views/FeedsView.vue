@@ -16,8 +16,18 @@ import PaginationControls from '../components/PaginationControls.vue'
 const route = useRoute()
 const router = useRouter()
 
+// ── Pagination state ────────────────────────────────────────
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
+const storedPageSize = Number(localStorage.getItem('readr_page_size')) || 25
+const initialPage = Number(route?.query?.page) > 0 ? Number(route?.query?.page) : 1
+const currentPage = ref(initialPage)
+const pageSize = ref(PAGE_SIZE_OPTIONS.includes(storedPageSize) ? storedPageSize : 25)
+const totalItems = ref(0)
+const totalPages = ref(1)
+
 const feeds = ref<RssFeed[]>(sessionFeeds.value)
-const timeline = ref<TimelineItem[]>(sessionTimelines.value['all'] || [])
+const initialTimelineKey = `all_p${initialPage}_l${pageSize.value}`
+const timeline = ref<TimelineItem[]>(sessionTimelines.value[initialTimelineKey] || sessionTimelines.value['all'] || [])
 const selectedFeedId = ref<number | null>(null)
 
 const isLoadingFeeds = ref(false)
@@ -34,15 +44,6 @@ const savedUrls = ref<Record<string, boolean>>({})
 
 const toastMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 let toastTimeout: ReturnType<typeof setTimeout> | null = null
-
-// ── Pagination state ────────────────────────────────────────
-const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
-const storedPageSize = Number(localStorage.getItem('readr_page_size')) || 25
-const initialPage = Number(route?.query?.page) > 0 ? Number(route?.query?.page) : 1
-const currentPage = ref(initialPage)
-const pageSize = ref(PAGE_SIZE_OPTIONS.includes(storedPageSize) ? storedPageSize : 25)
-const totalItems = ref(0)
-const totalPages = ref(1)
 
 function updateQuery(page: number) {
   if (!router || !route || !route.path) return
@@ -241,7 +242,7 @@ const extractHostname = (url: string) => {
 }
 
 onMounted(async () => {
-  await Promise.all([fetchFeeds(), fetchTimeline()])
+  await Promise.all([fetchFeeds(), fetchTimeline(selectedFeedId.value, false, initialPage, pageSize.value)])
 })
 
 onBeforeUnmount(() => {
