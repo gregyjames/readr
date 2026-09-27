@@ -379,7 +379,7 @@ func (v *DefaultVault) ListArticles(ctx context.Context, filter ArticleFilter) (
 	}
 
 	if filter.MocOnly != nil {
-		mocCondition := "(LOWER(title) LIKE 'moc - %' OR LOWER(title) LIKE 'moc:%' OR LOWER(title) LIKE 'moc %' OR LOWER(title) = 'moc' OR LOWER(tags) LIKE '%moc%')"
+		mocCondition := "(LOWER(title) LIKE 'moc - %' OR LOWER(title) LIKE 'moc:%' OR LOWER(title) LIKE 'moc %' OR LOWER(title) = 'moc' OR LOWER(COALESCE(tags, '')) LIKE '%moc%')"
 		if *filter.MocOnly {
 			query = query.Where(mocCondition)
 		} else {
