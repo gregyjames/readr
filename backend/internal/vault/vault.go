@@ -376,6 +376,8 @@ func (v *DefaultVault) ListArticles(ctx context.Context, filter ArticleFilter) (
 		query = query.Where("article LIKE ?", "%/articles/"+filter.Topic+"/%")
 	}
 
+	query = query.Order("id DESC")
+
 	if filter.Limit > 0 {
 		query = query.Limit(filter.Limit)
 	}
