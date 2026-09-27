@@ -119,6 +119,43 @@ describe('Core Views: Home and Article', () => {
       expect(wrapper.text()).toContain('Distributed Consensus with Raft')
       localStorage.removeItem('readr_viewMode')
     })
+
+    it('immediately replaces the lead article when archived without refresh', async () => {
+      const router = await setupRouter('/')
+      const origPost = axios.post
+      axios.post = (async () => ({ data: { status: 'success' } })) as unknown as typeof axios.post
+
+      const wrapper = mount(Home, {
+        global: {
+          plugins: [router],
+          stubs: {
+            ArticleProgressLabel: true,
+            MocProgressLabel: true,
+          },
+        },
+      })
+
+      await flushPromises()
+
+      // Initially lead article is Distributed Consensus with Raft (latest sort order: ID 2 before ID 1)
+      expect(wrapper.text()).toContain('Distributed Consensus with Raft')
+      expect(wrapper.text()).toContain('Kubernetes Networking Deep Dive')
+
+      // Find archive button for lead article (article ID 2)
+      const archiveBtn = wrapper.find('button[aria-label="Archive note"]')
+      expect(archiveBtn.exists()).toBe(true)
+
+      await archiveBtn.trigger('click')
+      // Wait for particle delay (320ms) and promise resolution
+      await new Promise(r => setTimeout(r, 350))
+      await flushPromises()
+
+      // The archived article is removed and the next note takes its place
+      expect(wrapper.text()).not.toContain('Distributed Consensus with Raft')
+      expect(wrapper.text()).toContain('Kubernetes Networking Deep Dive')
+
+      axios.post = origPost
+    })
   })
 
   describe('Article.vue', () => {

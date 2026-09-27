@@ -316,6 +316,7 @@ const archiveArticle = async (id: number) => {
   try {
     await axios.post(`/api/articles/${id}/archive`)
     articles.value = articles.value.filter(article => article.ID !== id)
+    nextTick(initReveal)
     showToast('Article moved to archive', id, targetArticle)
   } catch (err) {
     console.error('Failed to archive article', err)
@@ -453,6 +454,7 @@ const deleteArticle = async (id: number) => {
   try {
     await axios.delete(`/api/delete/${id}`)
     articles.value = articles.value.filter(article => article.ID !== id)
+    nextTick(initReveal)
   } catch (err) {
     console.error('Failed to delete article', err)
   } finally {
