@@ -3,12 +3,17 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import DOMPurify from 'dompurify'
 import { feedsAPI, ingestAPI, type RssFeed, type TimelineItem } from '../services/feeds'
 
-const feeds = ref<RssFeed[]>([])
-const timeline = ref<TimelineItem[]>([])
+// Module-scoped persistent cache across route transitions
+const sessionFeeds = ref<RssFeed[]>([])
+const sessionTimelines = ref<Record<string, TimelineItem[]>>({})
+
+const feeds = ref<RssFeed[]>(sessionFeeds.value)
+const timeline = ref<TimelineItem[]>(sessionTimelines.value['all'] || [])
 const selectedFeedId = ref<number | null>(null)
 
 const isLoadingFeeds = ref(false)
 const isLoadingTimeline = ref(false)
+const isRevalidating = ref(false)
 
 const newFeedUrl = ref('')
 const isAddingFeed = ref(false)
@@ -46,9 +51,13 @@ const selectedFeed = computed(() => {
 })
 
 const fetchFeeds = async () => {
-  isLoadingFeeds.value = true
+  if (feeds.value.length === 0) {
+    isLoadingFeeds.value = true
+  }
   try {
-    feeds.value = await feedsAPI.getFeeds()
+    const data = await feedsAPI.getFeeds()
+    feeds.value = data
+    sessionFeeds.value = data
   } catch (err: any) {
     showToast(err.message || 'Failed to load feeds', 'error')
   } finally {
@@ -57,14 +66,28 @@ const fetchFeeds = async () => {
 }
 
 const fetchTimeline = async (feedId: number | null = selectedFeedId.value, forceRefresh = false) => {
-  isLoadingTimeline.value = true
+  const cacheKey = feedId !== null ? String(feedId) : 'all'
+
+  // Instant cache preview if already in memory
+  if (!forceRefresh && sessionTimelines.value[cacheKey]) {
+    timeline.value = sessionTimelines.value[cacheKey]
+  }
+
+  // Only show the full-page empty spinner if we have no entries to display yet
+  if (timeline.value.length === 0) {
+    isLoadingTimeline.value = true
+  } else {
+    isRevalidating.value = true
+  }
+
   try {
     const data = await feedsAPI.getTimeline(feedId ?? undefined, forceRefresh)
-    // Race condition guard: ignore if user has switched to another feed in the meantime
+    // Race condition guard: ignore if user switched feeds in the meantime
     if (selectedFeedId.value !== feedId) {
       return
     }
     timeline.value = data
+    sessionTimelines.value[cacheKey] = data
   } catch (err: any) {
     if (selectedFeedId.value !== feedId) {
       return
@@ -73,6 +96,7 @@ const fetchTimeline = async (feedId: number | null = selectedFeedId.value, force
   } finally {
     if (selectedFeedId.value === feedId) {
       isLoadingTimeline.value = false
+      isRevalidating.value = false
     }
   }
 }
@@ -91,9 +115,10 @@ const handleAddFeed = async () => {
   try {
     const created = await feedsAPI.addFeed(url)
     newFeedUrl.value = ''
+    sessionTimelines.value = {}
     await fetchFeeds()
     showToast(`Subscribed to "${created.title || created.url}"`, 'success')
-    await fetchTimeline(selectedFeedId.value)
+    await fetchTimeline(selectedFeedId.value, true)
   } catch (err: any) {
     addError.value = err.message || 'Failed to add feed'
   } finally {
@@ -106,12 +131,14 @@ const handleRemoveFeed = async (feed: RssFeed, e?: Event) => {
   removingFeedId.value = feed.id
   try {
     await feedsAPI.removeFeed(feed.id)
+    sessionTimelines.value = {}
     feeds.value = feeds.value.filter(f => f.id !== feed.id)
+    sessionFeeds.value = feeds.value
     if (selectedFeedId.value === feed.id) {
       selectedFeedId.value = null
     }
     showToast(`Unsubscribed from "${feed.title || feed.url}"`, 'success')
-    await fetchTimeline(selectedFeedId.value)
+    await fetchTimeline(selectedFeedId.value, true)
   } catch (err: any) {
     showToast(err.message || 'Failed to remove feed', 'error')
   } finally {
@@ -221,14 +248,14 @@ onBeforeUnmount(() => {
       <!-- Controls: Refresh Button with Tactile Feedback -->
       <button
         @click="fetchTimeline(selectedFeedId, true)"
-        :disabled="isLoadingTimeline"
+        :disabled="isLoadingTimeline || isRevalidating"
         title="Refresh Timeline"
         aria-label="Refresh Timeline"
         class="p-2.5 rounded-xl text-gray-400 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white bg-gray-100/80 dark:bg-white/[0.03] border border-gray-200/60 dark:border-white/[0.06] hover:bg-gray-200/80 dark:hover:bg-white/[0.08] active:scale-95 transition-all cursor-pointer disabled:opacity-40"
       >
         <svg
           class="w-4 h-4"
-          :class="{ 'animate-spin': isLoadingTimeline }"
+          :class="{ 'animate-spin': isLoadingTimeline || isRevalidating }"
           xmlns="http://www.w3.org/2000/svg"
           viewBox="0 0 24 24"
           fill="none"
@@ -345,8 +372,8 @@ onBeforeUnmount(() => {
     <!-- Main Dispatch Wire Area (Continuous Editorial Slat Stream) -->
     <main class="space-y-4 flex-1">
       
-      <!-- Loading State -->
-      <div v-if="isLoadingTimeline" class="flex flex-col items-center justify-center py-28 text-gray-400">
+      <!-- Loading State: only displayed when we have no cached entries to show -->
+      <div v-if="isLoadingTimeline && timeline.length === 0" class="flex flex-col items-center justify-center py-28 text-gray-400">
         <svg class="w-6 h-6 animate-spin text-emerald-500 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
