@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import FeedsView from './FeedsView.vue'
+import PaginationControls from '../components/PaginationControls.vue'
 import { feedsAPI, ingestAPI, type RssFeed, type TimelineItem, type PaginatedResponse } from '../services/feeds'
 
 const testRouter = createRouter({
@@ -79,7 +80,8 @@ describe('FeedsView.vue', () => {
     },
   ]
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await testRouter.push('/feeds')
     feedsAPI.getFeeds = async () => [...mockFeeds]
     feedsAPI.getTimeline = async (feedId?: number | null) => {
       if (feedId === 1) return envelope([...mockTimelineFiltered])
@@ -339,6 +341,53 @@ describe('FeedsView.vue', () => {
     // Timeline should reflect All Feeds (2 items), not the stale feed 1 result
     const cards = wrapper.findAll('[data-testid="timeline-card"]')
     expect(cards.length).toBe(2)
+
+    wrapper.unmount()
+  })
+
+  it('generation guard ignores stale same-feed responses when newer page is requested', async () => {
+    let resolveFirstPage: (res: PaginatedResponse<TimelineItem>) => void = () => {}
+    const slowPagePromise = new Promise<PaginatedResponse<TimelineItem>>((resolve) => {
+      resolveFirstPage = resolve
+    })
+
+    feedsAPI.getTimeline = async (_feedId?: number | null, _refresh?: boolean, page?: number) => {
+      if (page === 1) {
+        return slowPagePromise
+      }
+      return {
+        data: [mockTimelineAll[1]],
+        page: 2,
+        limit: 25,
+        total: 50,
+        total_pages: 2,
+      }
+    }
+
+    const wrapper = mountFeedsView()
+
+    // Trigger page 2 request directly on PaginationControls
+    const paginator = wrapper.findComponent(PaginationControls)
+    expect(paginator.exists()).toBe(true)
+    await paginator.vm.$emit('update:page', 2)
+    await flushPromises()
+
+    // Page 2 response resolved and timeline should now have item 1
+    expect(wrapper.text()).toContain('SQLite in Production: WAL and Concurrency')
+
+    // Now resolve the stale first page response with item 0
+    resolveFirstPage({
+      data: [mockTimelineAll[0]],
+      page: 1,
+      limit: 25,
+      total: 50,
+      total_pages: 2,
+    })
+    await flushPromises()
+
+    // Generation guard must ensure timeline still shows page 2 item, not overwritten by stale page 1
+    expect(wrapper.text()).toContain('SQLite in Production: WAL and Concurrency')
+    expect(wrapper.text()).not.toContain('Show HN: Readr - Self-hosted reader')
 
     wrapper.unmount()
   })

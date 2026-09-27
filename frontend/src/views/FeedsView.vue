@@ -112,12 +112,15 @@ const fetchFeeds = async () => {
   }
 }
 
+let timelineGeneration = 0
+
 const fetchTimeline = async (
   feedId: number | null = selectedFeedId.value,
   forceRefresh = false,
   page = currentPage.value,
   limit = pageSize.value
 ) => {
+  const currentGen = ++timelineGeneration
   const cacheKey = `${feedId !== null ? String(feedId) : 'all'}_p${page}_l${limit}`
 
   // Instant cache preview if already in memory
@@ -134,8 +137,8 @@ const fetchTimeline = async (
 
   try {
     const envelope = await feedsAPI.getTimeline(feedId, forceRefresh, page, limit)
-    // Race condition guard: ignore if user switched feeds in the meantime
-    if (selectedFeedId.value !== feedId) {
+    // Race condition guard: ignore if user switched feeds or a newer request was dispatched
+    if (selectedFeedId.value !== feedId || currentGen !== timelineGeneration) {
       return
     }
     const items = envelope.data ?? []
@@ -145,12 +148,12 @@ const fetchTimeline = async (
     totalPages.value = envelope.total_pages ?? Math.max(1, Math.ceil(totalItems.value / limit))
     currentPage.value = envelope.page ?? page
   } catch (err: any) {
-    if (selectedFeedId.value !== feedId) {
+    if (selectedFeedId.value !== feedId || currentGen !== timelineGeneration) {
       return
     }
     showToast(err.message || 'Failed to load timeline', 'error')
   } finally {
-    if (selectedFeedId.value === feedId) {
+    if (selectedFeedId.value === feedId && currentGen === timelineGeneration) {
       isLoadingTimeline.value = false
       isRevalidating.value = false
     }
@@ -341,8 +344,8 @@ onBeforeUnmount(() => {
         >
           <span>All Feeds</span>
           <span
-            class="text-[10px] font-mono px-1.5 py-0.5 rounded"
-            :class="selectedFeedId === null ? 'bg-white/20 dark:bg-black/10' : 'bg-gray-200/60 dark:bg-white/10 text-gray-500 dark:text-gray-400'"
+            v-if="selectedFeedId === null"
+            class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/20 dark:bg-black/10"
           >
             {{ totalItems }}
           </span>

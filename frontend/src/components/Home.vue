@@ -564,6 +564,14 @@ if (route) {
   })
 }
 
+watch(totalPages, (newTotal) => {
+  if (currentPage.value > newTotal) {
+    currentPage.value = newTotal
+    updateQuery(newTotal)
+    nextTick(initReveal)
+  }
+})
+
 const pagedArticles = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   return filteredArticles.value.slice(start, start + pageSize.value)
@@ -589,7 +597,6 @@ const hasMoreTimelineArticles = computed(() => {
 function loadMoreTimeline() {
   if (hasMoreTimelineArticles.value) {
     timelinePage.value++
-    updateQuery(timelinePage.value)
     nextTick(initReveal)
   }
 }
