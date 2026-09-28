@@ -108,8 +108,8 @@ export const articlesAPI = {
       limit: Number(rawData?.limit) || (items.length || 25),
       total: Number(rawData?.total) || items.length,
       total_pages: Number(rawData?.total_pages) || 1,
-      total_notes: Number(rawData?.total_notes) ?? items.length,
-      total_mocs: Number(rawData?.total_mocs) ?? 0,
+      total_notes: Number.isFinite(Number(rawData?.total_notes)) ? Number(rawData.total_notes) : items.length,
+      total_mocs: Number.isFinite(Number(rawData?.total_mocs)) ? Number(rawData.total_mocs) : 0,
     }
   },
 

@@ -391,7 +391,7 @@ func (v *DefaultVault) ListArticles(ctx context.Context, filter ArticleFilter) (
 	case "oldest":
 		query = query.Order("id ASC")
 	case "title":
-		query = query.Order("LOWER(title) ASC")
+		query = query.Order("LOWER(title) ASC, id ASC")
 	default:
 		query = query.Order("id DESC")
 	}

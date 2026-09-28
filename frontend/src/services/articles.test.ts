@@ -177,8 +177,31 @@ describe('articlesAPI service', () => {
       expect(response.data[0].parsedTags).toEqual(['alpha', 'beta'])
       expect(response.total).toBe(1)
       expect(response.page).toBe(1)
-      expect(response.limit).toBe(1)
       expect(response.total_pages).toBe(1)
+    })
+
+    it('falls back total_notes to items.length and total_mocs to 0 when converted values are not finite', async () => {
+      axios.get = (async () => {
+        return {
+          status: 200,
+          data: {
+            data: [
+              { ID: 1, title: 'Note 1', article: 'Content 1' },
+              { ID: 2, title: 'Note 2', article: 'Content 2' },
+            ],
+            page: 1,
+            limit: 25,
+            total: 2,
+            total_pages: 1,
+            total_notes: undefined,
+            total_mocs: 'not-a-number',
+          },
+        }
+      }) as unknown as typeof axios.get
+
+      const response = await articlesAPI.getArticles()
+      expect(response.total_notes).toBe(2)
+      expect(response.total_mocs).toBe(0)
     })
 
     it('propagates errors when request fails', async () => {

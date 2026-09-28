@@ -569,4 +569,3 @@ func TestVault_ListArticles_FiltersAndSorting(t *testing.T) {
 		}
 	}
 }
-

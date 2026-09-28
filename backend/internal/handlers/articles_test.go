@@ -369,7 +369,6 @@ func TestGetArticles_ServerSideFilters(t *testing.T) {
 	assert.Equal(t, int64(2), env7.TotalMocs)
 }
 
-
 func TestGetArticleContent_NestedTopicDirectories(t *testing.T) {
 	tempDir := t.TempDir()
 	nestedDir := filepath.Join(tempDir, "articles", "Distributed Systems")

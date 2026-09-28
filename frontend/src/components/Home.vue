@@ -117,29 +117,30 @@ const fetchArticles = async (page = currentPage.value, append = false) => {
       return
     }
 
-    totalItems.value = res.total
-    totalPages.value = res.total_pages
     totalNotes.value = res.total_notes
     totalMocs.value = res.total_mocs
 
+    if (!append && page > res.total_pages && res.total_pages > 0) {
+      currentPage.value = res.total_pages
+      updateQuery(res.total_pages)
+      await fetchArticles(res.total_pages)
+      return
+    }
+
+    totalItems.value = res.total
+    totalPages.value = res.total_pages
+
     if (append) {
       timelineArticles.value = [...timelineArticles.value, ...res.data]
+      timelinePage.value = res.page
     } else {
       articles.value = res.data
       timelineArticles.value = res.data
       timelinePage.value = res.page
-    }
-
-    if (!append) {
-      if (res.page > res.total_pages && res.total_pages > 0) {
-        currentPage.value = res.total_pages
-        updateQuery(res.total_pages)
-      } else {
-        const normalizedPage = res.page || 1
-        if (normalizedPage !== currentPage.value) {
-          currentPage.value = normalizedPage
-          updateQuery(normalizedPage)
-        }
+      const normalizedPage = res.page || 1
+      if (normalizedPage !== currentPage.value) {
+        currentPage.value = normalizedPage
+        updateQuery(normalizedPage)
       }
     }
 
@@ -377,6 +378,14 @@ const archiveArticle = async (id: number) => {
     articles.value = articles.value.filter(article => article.ID !== id)
     timelineArticles.value = timelineArticles.value.filter(article => article.ID !== id)
     totalItems.value = Math.max(0, totalItems.value - 1)
+    if (targetArticle) {
+      if (isMocArticle(targetArticle)) {
+        totalMocs.value = Math.max(0, totalMocs.value - 1)
+      } else {
+        totalNotes.value = Math.max(0, totalNotes.value - 1)
+      }
+    }
+    totalPages.value = Math.max(1, Math.ceil(totalItems.value / pageSize.value))
     if (articles.value.length === 0 && currentPage.value > 1) {
       await onPageChange(currentPage.value - 1)
     } else {
@@ -401,6 +410,12 @@ const undoArchive = async () => {
     if (cachedArticle && !articles.value.some(a => a.ID === id)) {
       articles.value = [cachedArticle, ...articles.value]
       totalItems.value = totalItems.value + 1
+      if (isMocArticle(cachedArticle)) {
+        totalMocs.value = totalMocs.value + 1
+      } else {
+        totalNotes.value = totalNotes.value + 1
+      }
+      totalPages.value = Math.max(1, Math.ceil(totalItems.value / pageSize.value))
       nextTick(initReveal)
     } else {
       await fetchArticles(currentPage.value)
@@ -514,6 +529,7 @@ function spawnDeleteParticles(id: number) {
 
 const deleteArticle = async (id: number) => {
   if (!confirm('Are you sure you want to permanently delete this note from the vault?')) return
+  const targetArticle = articles.value.find(a => a.ID === id) || timelineArticles.value.find(a => a.ID === id) || null
   deletingId.value = id
   spawnDeleteParticles(id)
   await new Promise(resolve => setTimeout(resolve, 300))
@@ -522,6 +538,14 @@ const deleteArticle = async (id: number) => {
     articles.value = articles.value.filter(article => article.ID !== id)
     timelineArticles.value = timelineArticles.value.filter(article => article.ID !== id)
     totalItems.value = Math.max(0, totalItems.value - 1)
+    if (targetArticle) {
+      if (isMocArticle(targetArticle)) {
+        totalMocs.value = Math.max(0, totalMocs.value - 1)
+      } else {
+        totalNotes.value = Math.max(0, totalNotes.value - 1)
+      }
+    }
+    totalPages.value = Math.max(1, Math.ceil(totalItems.value / pageSize.value))
     if (articles.value.length === 0 && currentPage.value > 1) {
       await onPageChange(currentPage.value - 1)
     } else {
@@ -579,7 +603,6 @@ const hasMoreTimelineArticles = computed(() => {
 async function loadMoreTimeline() {
   if (hasMoreTimelineArticles.value && !isLoading.value) {
     const nextPage = timelinePage.value + 1
-    timelinePage.value = nextPage
     await fetchArticles(nextPage, true)
   }
 }
