@@ -7,7 +7,7 @@ import BookmarkIcon from '../assets/book.svg'
 import { settings, setViewMode as saveGlobalViewMode } from '../store/settings'
 import ArticleProgressLabel from './ArticleProgressLabel.vue'
 import MocProgressLabel from './MocProgressLabel.vue'
-import { isMoc, type MocProgress } from '../utils/moc'
+import { isMoc } from '../utils/moc'
 import { articlesAPI, type ArticleItem } from '../services/api'
 import PaginationControls from './PaginationControls.vue'
 
