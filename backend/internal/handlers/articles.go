@@ -129,7 +129,7 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		}
 
 		// Calculate vault summary counts for non-archived articles: total_notes and total_mocs
-		const mocCondition = "(LOWER(title) LIKE 'moc - %' OR LOWER(title) LIKE 'moc:%' OR LOWER(title) LIKE 'moc %' OR LOWER(title) = 'moc' OR LOWER(COALESCE(tags, '')) LIKE '%moc%')"
+		mocCondition := vault.MocSQLCondition
 		var totalNotes int64
 		var totalMocs int64
 		if err := h.DB.WithContext(c.Context()).Model(&repository.GormArticle{}).

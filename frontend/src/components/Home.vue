@@ -43,6 +43,11 @@ const changeViewMode = (mode: 'card' | 'list') => {
     localStorage.setItem('readr_viewMode', mode)
   } catch {}
   saveGlobalViewMode(mode)
+  if (mode === 'list') {
+    timelinePage.value = 1
+    timelineArticles.value = []
+    fetchArticles(1)
+  }
   nextTick(() => {
     initReveal()
     if (mode === 'list') {
@@ -565,7 +570,13 @@ onMounted(async () => {
   } else if (settings.view_mode) {
     viewMode.value = (settings.view_mode === 'list' || settings.view_mode === 'ledger') ? 'list' : 'card'
   }
-  await fetchArticles()
+  if (viewMode.value === 'list') {
+    timelinePage.value = 1
+    timelineArticles.value = []
+    await fetchArticles(1)
+  } else {
+    await fetchArticles()
+  }
   emitter.on('article-added', fetchArticles)
 })
 
@@ -580,7 +591,13 @@ onBeforeUnmount(() => {
 
 watch(() => settings.view_mode, (newMode) => {
   if (newMode === 'card' || newMode === 'list' || newMode === 'studio' || newMode === 'ledger') {
-    viewMode.value = (newMode === 'list' || newMode === 'ledger') ? 'list' : 'card'
+    const isList = (newMode === 'list' || newMode === 'ledger')
+    viewMode.value = isList ? 'list' : 'card'
+    if (isList) {
+      timelinePage.value = 1
+      timelineArticles.value = []
+      fetchArticles(1)
+    }
     nextTick(initReveal)
   }
 })
