@@ -104,6 +104,19 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		archivedParam := c.Query("archived")
 		isArchived := archivedParam == "true"
 		allParam := c.Query("all") == "true" || c.Query("all") == "1"
+		sortParam := c.Query("sort")
+		tagParam := c.Query("tag")
+		topicParam := c.Query("topic")
+		mocOnlyParam := c.Query("moc_only")
+
+		var mocOnlyPtr *bool
+		if mocOnlyParam == "true" {
+			t := true
+			mocOnlyPtr = &t
+		} else if mocOnlyParam == "false" {
+			f := false
+			mocOnlyPtr = &f
+		}
 
 		pageInfo, _ := paginate.FromContext(c)
 		page := 1
@@ -115,6 +128,25 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			offset = pageInfo.Start()
 		}
 
+		// Calculate vault summary counts for non-archived articles: total_notes and total_mocs
+		mocCondition := vault.MocSQLCondition
+		var totalNotes int64
+		var totalMocs int64
+		if err := h.DB.WithContext(c.Context()).Model(&repository.GormArticle{}).
+			Where("deleted_at IS NULL AND (is_archived = ? OR is_archived IS NULL) AND NOT "+mocCondition, false).
+			Count(&totalNotes).Error; err != nil {
+			if h.Logger != nil {
+				h.Logger.Error("Failed to count total notes", zap.Error(err))
+			}
+		}
+		if err := h.DB.WithContext(c.Context()).Model(&repository.GormArticle{}).
+			Where("deleted_at IS NULL AND (is_archived = ? OR is_archived IS NULL) AND "+mocCondition, false).
+			Count(&totalMocs).Error; err != nil {
+			if h.Logger != nil {
+				h.Logger.Error("Failed to count total mocs", zap.Error(err))
+			}
+		}
+
 		if h.Vault != nil {
 			var isArchivedPtr *bool
 			if archivedParam != "" {
@@ -124,7 +156,6 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 				isArchivedPtr = &f
 			}
 
-			var total int64
 			countQuery := h.DB.WithContext(c.Context()).Model(&repository.GormArticle{}).Where("deleted_at IS NULL")
 			if isArchivedPtr != nil {
 				if *isArchivedPtr {
@@ -133,6 +164,21 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 					countQuery = countQuery.Where("is_archived = ? OR is_archived IS NULL", false)
 				}
 			}
+			if tagParam != "" {
+				countQuery = countQuery.Where("tags LIKE ?", "%"+tagParam+"%")
+			}
+			if topicParam != "" {
+				countQuery = countQuery.Where("article LIKE ?", "%/articles/"+topicParam+"/%")
+			}
+			if mocOnlyPtr != nil {
+				if *mocOnlyPtr {
+					countQuery = countQuery.Where(mocCondition)
+				} else {
+					countQuery = countQuery.Where("NOT " + mocCondition)
+				}
+			}
+
+			var total int64
 			if err := countQuery.Count(&total).Error; err != nil {
 				if h.Logger != nil {
 					h.Logger.Error("Failed to count articles from DB", zap.Error(err))
@@ -144,6 +190,10 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 
 			filter := vault.ArticleFilter{
 				Archived: isArchivedPtr,
+				Tag:      tagParam,
+				Topic:    topicParam,
+				Sort:     sortParam,
+				MocOnly:  mocOnlyPtr,
 			}
 			if !allParam {
 				filter.Limit = limit
@@ -174,6 +224,8 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 					"limit":       limitVal,
 					"total":       total,
 					"total_pages": 1,
+					"total_notes": totalNotes,
+					"total_mocs":  totalMocs,
 				})
 			}
 
@@ -191,16 +243,36 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 				"limit":       limit,
 				"total":       total,
 				"total_pages": totalPages,
+				"total_notes": totalNotes,
+				"total_mocs":  totalMocs,
 			})
 		}
 
-		var total int64
 		countQuery := h.DB.WithContext(c.Context()).Model(&repository.GormArticle{}).Where("deleted_at IS NULL")
-		if isArchived {
-			countQuery = countQuery.Where("is_archived = ?", true)
+		if archivedParam != "" {
+			if isArchived {
+				countQuery = countQuery.Where("is_archived = ?", true)
+			} else {
+				countQuery = countQuery.Where("is_archived = ? OR is_archived IS NULL", false)
+			}
 		} else {
 			countQuery = countQuery.Where("is_archived = ? OR is_archived IS NULL", false)
 		}
+		if tagParam != "" {
+			countQuery = countQuery.Where("tags LIKE ?", "%"+tagParam+"%")
+		}
+		if topicParam != "" {
+			countQuery = countQuery.Where("article LIKE ?", "%/articles/"+topicParam+"/%")
+		}
+		if mocOnlyPtr != nil {
+			if *mocOnlyPtr {
+				countQuery = countQuery.Where(mocCondition)
+			} else {
+				countQuery = countQuery.Where("NOT " + mocCondition)
+			}
+		}
+
+		var total int64
 		if err := countQuery.Count(&total).Error; err != nil {
 			if h.Logger != nil {
 				h.Logger.Error("Failed to count articles from DB", zap.Error(err))
@@ -211,11 +283,37 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 		}
 
 		var articles []repository.GormArticle
-		query := h.DB.WithContext(c.Context()).Where("deleted_at IS NULL").Order("id DESC")
-		if isArchived {
-			query = query.Where("is_archived = ?", true)
+		query := h.DB.WithContext(c.Context()).Where("deleted_at IS NULL")
+		if archivedParam != "" {
+			if isArchived {
+				query = query.Where("is_archived = ?", true)
+			} else {
+				query = query.Where("is_archived = ? OR is_archived IS NULL", false)
+			}
 		} else {
 			query = query.Where("is_archived = ? OR is_archived IS NULL", false)
+		}
+		if tagParam != "" {
+			query = query.Where("tags LIKE ?", "%"+tagParam+"%")
+		}
+		if topicParam != "" {
+			query = query.Where("article LIKE ?", "%/articles/"+topicParam+"/%")
+		}
+		if mocOnlyPtr != nil {
+			if *mocOnlyPtr {
+				query = query.Where(mocCondition)
+			} else {
+				query = query.Where("NOT " + mocCondition)
+			}
+		}
+
+		switch sortParam {
+		case "oldest":
+			query = query.Order("id ASC")
+		case "title":
+			query = query.Order("LOWER(title) ASC, id ASC")
+		default:
+			query = query.Order("id DESC")
 		}
 
 		if !allParam {
@@ -249,6 +347,8 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 				"limit":       limitVal,
 				"total":       total,
 				"total_pages": 1,
+				"total_notes": totalNotes,
+				"total_mocs":  totalMocs,
 			})
 		}
 
@@ -266,6 +366,8 @@ func RegisterArticles(router fiber.Router, h *HandlerContext) {
 			"limit":       limit,
 			"total":       total,
 			"total_pages": totalPages,
+			"total_notes": totalNotes,
+			"total_mocs":  totalMocs,
 		})
 	})
 

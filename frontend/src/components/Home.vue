@@ -7,26 +7,31 @@ import BookmarkIcon from '../assets/book.svg'
 import { settings, setViewMode as saveGlobalViewMode } from '../store/settings'
 import ArticleProgressLabel from './ArticleProgressLabel.vue'
 import MocProgressLabel from './MocProgressLabel.vue'
-import { isMoc, type MocProgress } from '../utils/moc'
+import { isMoc } from '../utils/moc'
+import { articlesAPI, type ArticleItem } from '../services/api'
 import PaginationControls from './PaginationControls.vue'
 
-interface Article {
-  ID: number
-  title: string
-  article: string
-  image: string
-  tags: string
-  parsedTags: string[]
-  reading_status?: string
-  reading_progress?: number
-  reading_time?: string
-  word_count?: number
-  moc_progress?: MocProgress | null
-}
+type Article = ArticleItem
 
 defineProps<{ msg?: string }>()
 
-const articles = ref<Article[]>([])
+const articles = ref<ArticleItem[]>([])
+const totalItems = ref(0)
+const totalPages = ref(1)
+const totalNotes = ref(0)
+const totalMocs = ref(0)
+const isLoading = ref(false)
+const timelineArticles = ref<ArticleItem[]>([])
+const timelinePage = ref(1)
+
+const route = useRoute()
+const router = useRouter()
+
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
+const storedPageSize = Number(localStorage.getItem('readr_page_size')) || 25
+const initialPage = Number(route?.query?.page) > 0 ? Number(route?.query?.page) : 1
+const currentPage = ref(initialPage)
+const pageSize = ref(PAGE_SIZE_OPTIONS.includes(storedPageSize) ? storedPageSize : 25)
 
 type ViewMode = 'card' | 'list' | 'studio' | 'ledger' | 'timeline'
 const initialMode = (localStorage.getItem('readr_viewMode') || settings.view_mode || 'card') as ViewMode
@@ -38,6 +43,11 @@ const changeViewMode = (mode: 'card' | 'list') => {
     localStorage.setItem('readr_viewMode', mode)
   } catch {}
   saveGlobalViewMode(mode)
+  if (mode === 'list') {
+    timelinePage.value = 1
+    timelineArticles.value = []
+    fetchArticles(1)
+  }
   nextTick(() => {
     initReveal()
     if (mode === 'list') {
@@ -73,30 +83,83 @@ const getProceduralGradient = (id: number) => {
   return gradients[Math.abs(Number(id) || 0) % gradients.length]
 }
 
-const fetchArticles = async () => {
+function updateQuery(page: number) {
+  if (!router || !route || !route.path) return
+  const query = { ...(route.query || {}) }
+  if (page > 1) {
+    query.page = String(page)
+  } else {
+    delete query.page
+  }
+  router.replace({ path: route.path, query }).catch(() => {})
+}
+
+let activeAbortController: AbortController | null = null
+let currentFetchGeneration = 0
+
+const fetchArticles = async (page = currentPage.value, append = false) => {
+  if (activeAbortController) {
+    activeAbortController.abort()
+  }
+  const controller = new AbortController()
+  activeAbortController = controller
+  const generation = ++currentFetchGeneration
+
+  isLoading.value = true
   try {
-    const res = await axios.get('/api/getarticles?all=true')
-    const raw: any[] = (res.data?.data ?? res.data) || []
-    articles.value = raw.map((article: any) => ({
-      ...article,
-      parsedTags: article.tags ? article.tags.split(',').map((tag: string) => tag.trim()) : []
-    }))
-    // Only reset to page 1 on initial load if route query does not specify a page
-    const qPage = Number(route?.query?.page)
-    const targetPage = qPage > 0 ? qPage : 1
-    if (targetPage > totalPages.value) {
-      currentPage.value = totalPages.value
-      updateQuery(totalPages.value)
-    } else {
-      currentPage.value = targetPage
+    const res = await articlesAPI.getArticles(
+      {
+        page,
+        limit: pageSize.value,
+        sort: sortOrder.value,
+        tag: selectedTag.value || undefined,
+        moc_only: filterMocOnly.value ? true : false,
+      },
+      controller.signal
+    )
+
+    if (generation !== currentFetchGeneration) {
+      return
     }
+
+    totalNotes.value = res.total_notes
+    totalMocs.value = res.total_mocs
+
+    if (!append && page > res.total_pages && res.total_pages > 0) {
+      currentPage.value = res.total_pages
+      updateQuery(res.total_pages)
+      await fetchArticles(res.total_pages)
+      return
+    }
+
+    totalItems.value = res.total
+    totalPages.value = res.total_pages
+
+    if (append) {
+      timelineArticles.value = [...timelineArticles.value, ...res.data]
+      timelinePage.value = res.page
+    } else {
+      articles.value = res.data
+      timelineArticles.value = res.data
+      timelinePage.value = res.page
+      const normalizedPage = res.page || 1
+      if (normalizedPage !== currentPage.value) {
+        currentPage.value = normalizedPage
+        updateQuery(normalizedPage)
+      }
+    }
+
     await nextTick()
     initReveal()
   } catch (err: any) {
-    if (axios.isCancel(err) || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') {
+    if (axios.isCancel(err) || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || err?.name === 'AbortError') {
       return
     }
     console.error('Failed to load articles', err)
+  } finally {
+    if (generation === currentFetchGeneration) {
+      isLoading.value = false
+    }
   }
 }
 
@@ -311,14 +374,28 @@ function spawnArchiveParticles(id: number) {
 }
 
 const archiveArticle = async (id: number) => {
-  const targetArticle = articles.value.find(a => a.ID === id) || null
+  const targetArticle = articles.value.find(a => a.ID === id) || timelineArticles.value.find(a => a.ID === id) || null
   archivingId.value = id
   spawnArchiveParticles(id)
   await new Promise(resolve => setTimeout(resolve, 320))
   try {
-    await axios.post(`/api/articles/${id}/archive`)
+    await articlesAPI.archiveArticle(id)
     articles.value = articles.value.filter(article => article.ID !== id)
-    nextTick(initReveal)
+    timelineArticles.value = timelineArticles.value.filter(article => article.ID !== id)
+    totalItems.value = Math.max(0, totalItems.value - 1)
+    if (targetArticle) {
+      if (isMocArticle(targetArticle)) {
+        totalMocs.value = Math.max(0, totalMocs.value - 1)
+      } else {
+        totalNotes.value = Math.max(0, totalNotes.value - 1)
+      }
+    }
+    totalPages.value = Math.max(1, Math.ceil(totalItems.value / pageSize.value))
+    if (articles.value.length === 0 && currentPage.value > 1) {
+      await onPageChange(currentPage.value - 1)
+    } else {
+      nextTick(initReveal)
+    }
     showToast('Article moved to archive', id, targetArticle)
   } catch (err) {
     console.error('Failed to archive article', err)
@@ -334,12 +411,19 @@ const undoArchive = async () => {
   if (!id) return
 
   try {
-    await axios.post(`/api/articles/${id}/unarchive`)
+    await articlesAPI.unarchiveArticle(id)
     if (cachedArticle && !articles.value.some(a => a.ID === id)) {
       articles.value = [cachedArticle, ...articles.value]
+      totalItems.value = totalItems.value + 1
+      if (isMocArticle(cachedArticle)) {
+        totalMocs.value = totalMocs.value + 1
+      } else {
+        totalNotes.value = totalNotes.value + 1
+      }
+      totalPages.value = Math.max(1, Math.ceil(totalItems.value / pageSize.value))
       nextTick(initReveal)
     } else {
-      await fetchArticles()
+      await fetchArticles(currentPage.value)
     }
   } catch (err) {
     console.error('Failed to unarchive article', err)
@@ -450,13 +534,28 @@ function spawnDeleteParticles(id: number) {
 
 const deleteArticle = async (id: number) => {
   if (!confirm('Are you sure you want to permanently delete this note from the vault?')) return
+  const targetArticle = articles.value.find(a => a.ID === id) || timelineArticles.value.find(a => a.ID === id) || null
   deletingId.value = id
   spawnDeleteParticles(id)
   await new Promise(resolve => setTimeout(resolve, 300))
   try {
-    await axios.delete(`/api/delete/${id}`)
+    await articlesAPI.deleteArticle(id)
     articles.value = articles.value.filter(article => article.ID !== id)
-    nextTick(initReveal)
+    timelineArticles.value = timelineArticles.value.filter(article => article.ID !== id)
+    totalItems.value = Math.max(0, totalItems.value - 1)
+    if (targetArticle) {
+      if (isMocArticle(targetArticle)) {
+        totalMocs.value = Math.max(0, totalMocs.value - 1)
+      } else {
+        totalNotes.value = Math.max(0, totalNotes.value - 1)
+      }
+    }
+    totalPages.value = Math.max(1, Math.ceil(totalItems.value / pageSize.value))
+    if (articles.value.length === 0 && currentPage.value > 1) {
+      await onPageChange(currentPage.value - 1)
+    } else {
+      nextTick(initReveal)
+    }
   } catch (err) {
     console.error('Failed to delete article', err)
   } finally {
@@ -471,7 +570,13 @@ onMounted(async () => {
   } else if (settings.view_mode) {
     viewMode.value = (settings.view_mode === 'list' || settings.view_mode === 'ledger') ? 'list' : 'card'
   }
-  await fetchArticles()
+  if (viewMode.value === 'list') {
+    timelinePage.value = 1
+    timelineArticles.value = []
+    await fetchArticles(1)
+  } else {
+    await fetchArticles()
+  }
   emitter.on('article-added', fetchArticles)
 })
 
@@ -486,7 +591,13 @@ onBeforeUnmount(() => {
 
 watch(() => settings.view_mode, (newMode) => {
   if (newMode === 'card' || newMode === 'list' || newMode === 'studio' || newMode === 'ledger') {
-    viewMode.value = (newMode === 'list' || newMode === 'ledger') ? 'list' : 'card'
+    const isList = (newMode === 'list' || newMode === 'ledger')
+    viewMode.value = isList ? 'list' : 'card'
+    if (isList) {
+      timelinePage.value = 1
+      timelineArticles.value = []
+      fetchArticles(1)
+    }
     nextTick(initReveal)
   }
 })
@@ -495,113 +606,21 @@ watch([viewMode, sortOrder, selectedTag, filterMocOnly], () => {
   nextTick(initReveal)
 })
 
-const totalMocs = computed(() => articles.value.filter(isMocArticle).length)
-const totalNotes = computed(() => articles.value.filter(a => !isMocArticle(a)).length)
-
-const filteredArticles = computed(() => {
-  let list = [...articles.value]
-
-  // Filter by tag
-  if (selectedTag.value) {
-    list = list.filter(a => a.parsedTags.includes(selectedTag.value!))
-  }
-
-  // Filter MOCs: Hubs tab shows ONLY MOCs; Notes tab shows ONLY non-MOC articles
-  if (filterMocOnly.value) {
-    list = list.filter(isMocArticle)
-  } else {
-    list = list.filter(a => !isMocArticle(a))
-  }
-
-
-  // Sorting
-  if (sortOrder.value === 'latest') {
-    list.sort((a, b) => b.ID - a.ID)
-  } else if (sortOrder.value === 'oldest') {
-    list.sort((a, b) => a.ID - b.ID)
-  } else if (sortOrder.value === 'title') {
-    list.sort((a, b) => a.title.localeCompare(b.title))
-  }
-
-  return list
-})
-
-
-// ── Pagination ──────────────────────────────────────────────
-const route = useRoute()
-const router = useRouter()
-
-const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
-const storedPageSize = Number(localStorage.getItem('readr_page_size')) || 25
-const initialPage = Number(route?.query?.page) > 0 ? Number(route?.query?.page) : 1
-const currentPage = ref(initialPage)
-const pageSize = ref(PAGE_SIZE_OPTIONS.includes(storedPageSize) ? storedPageSize : 25)
-
-const totalPages = computed(() => Math.max(1, Math.ceil(filteredArticles.value.length / pageSize.value)))
-
-function updateQuery(page: number) {
-  if (!router || !route || !route.path) return
-  const query = { ...(route.query || {}) }
-  if (page > 1) {
-    query.page = String(page)
-  } else {
-    delete query.page
-  }
-  router.replace({ path: route.path, query }).catch(() => {})
-}
-
-// Reset to page 1 when filters or page size change
-watch([selectedTag, filterMocOnly, sortOrder, pageSize], () => {
-  currentPage.value = 1
-  updateQuery(1)
-  nextTick(initReveal)
-})
-
-// Watch URL changes (e.g. browser back/forward buttons)
-if (route) {
-  watch(() => route.query?.page, (newPage) => {
-    const p = Number(newPage) > 0 ? Number(newPage) : 1
-    if (p !== currentPage.value) {
-      currentPage.value = p
-      nextTick(initReveal)
-    }
-  })
-}
-
-watch(totalPages, (newTotal) => {
-  if (currentPage.value > newTotal) {
-    currentPage.value = newTotal
-    updateQuery(newTotal)
-    nextTick(initReveal)
-  }
-})
-
-const pagedArticles = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  return filteredArticles.value.slice(start, start + pageSize.value)
-})
-
-const pagedLeadArticle = computed(() => pagedArticles.value[0] ?? null)
-const pagedSecondaryArticles = computed(() => pagedArticles.value.slice(1))
+const pagedLeadArticle = computed(() => articles.value[0] ?? null)
+const pagedSecondaryArticles = computed(() => articles.value.slice(1))
 
 // ── Infinite Scroll for Timeline Stream ─────────────────────
-const timelinePage = ref(initialPage)
 const timelineSentinel = ref<HTMLElement | null>(null)
 let timelineObserver: IntersectionObserver | null = null
 
-const timelineArticles = computed(() => {
-  const count = timelinePage.value * pageSize.value
-  return filteredArticles.value.slice(0, count)
-})
-
 const hasMoreTimelineArticles = computed(() => {
-  return timelineArticles.value.length < filteredArticles.value.length
+  return timelineArticles.value.length < totalItems.value
 })
 
-function loadMoreTimeline() {
-  if (hasMoreTimelineArticles.value) {
-    timelinePage.value++
-    nextTick(initReveal)
+async function loadMoreTimeline() {
+  if (hasMoreTimelineArticles.value && !isLoading.value) {
+    const nextPage = timelinePage.value + 1
+    await fetchArticles(nextPage, true)
   }
 }
 
@@ -633,28 +652,51 @@ watch(timelineSentinel, (el) => {
   }
 })
 
-// Reset timeline scroll when filters change
+// Reset to page 1 and fetch fresh when filters or page size change
 watch([selectedTag, filterMocOnly, sortOrder, pageSize], () => {
+  currentPage.value = 1
   timelinePage.value = 1
+  updateQuery(1)
+  fetchArticles(1)
   nextTick(() => {
     initTimelineObserver()
   })
 })
 
-function onPageChange(page: number) {
+// Watch URL changes (e.g. browser back/forward buttons)
+if (route) {
+  watch(() => route.query?.page, (newPage) => {
+    const p = Number(newPage) > 0 ? Number(newPage) : 1
+    if (p !== currentPage.value) {
+      currentPage.value = p
+      fetchArticles(p)
+    }
+  })
+}
+
+watch(totalPages, (newTotal) => {
+  if (currentPage.value > newTotal && newTotal > 0) {
+    currentPage.value = newTotal
+    updateQuery(newTotal)
+    fetchArticles(newTotal)
+  }
+})
+
+async function onPageChange(page: number) {
   currentPage.value = page
   timelinePage.value = page
   updateQuery(page)
-  nextTick(initReveal)
+  await fetchArticles(page)
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-function onPageSizeChange(size: number) {
+async function onPageSizeChange(size: number) {
   pageSize.value = size
   currentPage.value = 1
   timelinePage.value = 1
   updateQuery(1)
   try { localStorage.setItem('readr_page_size', String(size)) } catch {}
+  await fetchArticles(1)
 }
 </script>
 
@@ -671,7 +713,7 @@ function onPageSizeChange(size: number) {
             Vault
           </h1>
           <span class="text-xs font-mono text-gray-400 dark:text-gray-500 font-medium">
-            {{ filteredArticles.length }}
+            {{ totalItems }}
           </span>
         </div>
 
@@ -766,7 +808,7 @@ function onPageSizeChange(size: number) {
     </div>
 
     <!-- Empty Vault State -->
-    <div v-if="filteredArticles.length === 0" class="flex flex-col items-center justify-center py-32 px-4 text-center">
+    <div v-if="totalItems === 0" class="flex flex-col items-center justify-center py-32 px-4 text-center">
       <div class="w-12 h-12 bg-gray-100 dark:bg-white/[0.05] rounded-xl flex items-center justify-center mb-4 border border-gray-200/80 dark:border-white/[0.08]">
         <BookmarkIcon class="w-6 h-6 text-gray-400 dark:text-gray-500" />
       </div>
@@ -1078,7 +1120,7 @@ function onPageSizeChange(size: number) {
       <PaginationControls
         :current-page="currentPage"
         :total-pages="totalPages"
-        :total-items="filteredArticles.length"
+        :total-items="totalItems"
         :page-size="pageSize"
         :page-size-options="[10, 25, 50, 100]"
         @update:page="onPageChange"
@@ -1265,8 +1307,8 @@ function onPageSizeChange(size: number) {
           <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
           <span>Loading more entries...</span>
         </div>
-        <div v-else-if="filteredArticles.length > pageSize" class="flex items-center gap-2 text-xs font-mono text-gray-400 dark:text-gray-600">
-          <span>— End of Timeline ({{ filteredArticles.length }} items) —</span>
+        <div v-else-if="totalItems > pageSize" class="flex items-center gap-2 text-xs font-mono text-gray-400 dark:text-gray-600">
+          <span>— End of Timeline ({{ totalItems }} items) —</span>
         </div>
       </div>
 

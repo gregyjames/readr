@@ -453,3 +453,119 @@ func TestVault_GetArticle_ReadRacingWithEdit(t *testing.T) {
 		t.Errorf("expected persisted WordCount 7, got %d", dbCheck.WordCount)
 	}
 }
+
+func TestVault_ListArticles_FiltersAndSorting(t *testing.T) {
+	v, db, _, _ := setupTestVaultEnv(t)
+	ctx := context.Background()
+
+	// Seed articles
+	// 1. MOC note with title starting with "MOC - "
+	moc1 := repository.GormArticle{
+		Title: "MOC - Artificial Intelligence",
+		Tags:  "ai, computing",
+	}
+	// 2. MOC note with tag "moc"
+	moc2 := repository.GormArticle{
+		Title: "Machine Learning Hub",
+		Tags:  "ml, moc, algorithms",
+	}
+	// 3. Regular note with "golang" tag
+	reg1 := repository.GormArticle{
+		Title: "Go Concurrency Deep Dive",
+		Tags:  "golang, concurrency",
+	}
+	// 4. Regular note with "architecture" tag
+	reg2 := repository.GormArticle{
+		Title: "Clean Architecture Principles",
+		Tags:  "architecture, design",
+	}
+
+	db.Create(&moc1)
+	db.Create(&moc2)
+	db.Create(&reg1)
+	db.Create(&reg2)
+
+	trueVal := true
+	falseVal := false
+
+	// Test Sort: "latest" (default, id DESC)
+	latestArts, err := v.ListArticles(ctx, ArticleFilter{Sort: "latest"})
+	if err != nil {
+		t.Fatalf("failed to list latest: %v", err)
+	}
+	if len(latestArts) != 4 {
+		t.Fatalf("expected 4 articles, got %d", len(latestArts))
+	}
+	if latestArts[0].ID != reg2.ID || latestArts[3].ID != moc1.ID {
+		t.Errorf("expected latest order by id DESC, got first %d, last %d", latestArts[0].ID, latestArts[3].ID)
+	}
+
+	// Test Sort: "oldest" (id ASC)
+	oldestArts, err := v.ListArticles(ctx, ArticleFilter{Sort: "oldest"})
+	if err != nil {
+		t.Fatalf("failed to list oldest: %v", err)
+	}
+	if len(oldestArts) != 4 {
+		t.Fatalf("expected 4 articles, got %d", len(oldestArts))
+	}
+	if oldestArts[0].ID != moc1.ID || oldestArts[3].ID != reg2.ID {
+		t.Errorf("expected oldest order by id ASC, got first %d, last %d", oldestArts[0].ID, oldestArts[3].ID)
+	}
+
+	// Test Sort: "title" (LOWER(title) ASC)
+	titleArts, err := v.ListArticles(ctx, ArticleFilter{Sort: "title"})
+	if err != nil {
+		t.Fatalf("failed to list by title: %v", err)
+	}
+	if len(titleArts) != 4 {
+		t.Fatalf("expected 4 articles, got %d", len(titleArts))
+	}
+	expectedTitleOrder := []string{
+		"Clean Architecture Principles",
+		"Go Concurrency Deep Dive",
+		"Machine Learning Hub",
+		"MOC - Artificial Intelligence",
+	}
+	for i, expected := range expectedTitleOrder {
+		if titleArts[i].Title != expected {
+			t.Errorf("expected index %d title %q, got %q", i, expected, titleArts[i].Title)
+		}
+	}
+
+	// Test Tag filtering
+	tagArts, err := v.ListArticles(ctx, ArticleFilter{Tag: "golang"})
+	if err != nil {
+		t.Fatalf("failed to list by tag: %v", err)
+	}
+	if len(tagArts) != 1 || tagArts[0].ID != reg1.ID {
+		t.Errorf("expected only reg1 for tag golang, got %v", tagArts)
+	}
+
+	// Test MocOnly: true
+	mocOnlyArts, err := v.ListArticles(ctx, ArticleFilter{MocOnly: &trueVal})
+	if err != nil {
+		t.Fatalf("failed to list moc only: %v", err)
+	}
+	if len(mocOnlyArts) != 2 {
+		t.Fatalf("expected 2 MOC articles, got %d", len(mocOnlyArts))
+	}
+	for _, a := range mocOnlyArts {
+		if a.ID != moc1.ID && a.ID != moc2.ID {
+			t.Errorf("unexpected non-MOC article in mocOnly list: %s", a.Title)
+		}
+	}
+
+	// Test MocOnly: false (non-MOCs only)
+	nonMocArts, err := v.ListArticles(ctx, ArticleFilter{MocOnly: &falseVal})
+	if err != nil {
+		t.Fatalf("failed to list non-moc: %v", err)
+	}
+	if len(nonMocArts) != 2 {
+		t.Fatalf("expected 2 non-MOC articles, got %d", len(nonMocArts))
+	}
+	for _, a := range nonMocArts {
+		if a.ID != reg1.ID && a.ID != reg2.ID {
+			t.Errorf("unexpected MOC article in nonMoc list: %s", a.Title)
+		}
+	}
+}

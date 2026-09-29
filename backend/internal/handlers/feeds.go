@@ -186,6 +186,24 @@ func GetTimeline(hCtx *HandlerContext) fiber.Handler {
 			limit = pageInfo.Limit
 			start = pageInfo.Start()
 		}
+		// Clamp page and limit, compute pagination safely
+		if page < 1 {
+			page = 1
+		}
+		if limit <= 0 {
+			limit = 25
+		}
+		// Compute total pages (at least 1)
+		totalPages := int(math.Ceil(float64(total) / float64(limit)))
+		if totalPages == 0 {
+			totalPages = 1
+		}
+		// Clamp page to totalPages
+		if page > totalPages {
+			page = totalPages
+		}
+		// Recalculate start based on possibly adjusted page
+		start = (page - 1) * limit
 		if start > len(items) {
 			start = len(items)
 		}
@@ -196,10 +214,6 @@ func GetTimeline(hCtx *HandlerContext) fiber.Handler {
 		pagedItems := items[start:end]
 		if pagedItems == nil {
 			pagedItems = make([]ingest.TimelineItem, 0)
-		}
-		totalPages := int(math.Ceil(float64(total) / float64(limit)))
-		if totalPages == 0 {
-			totalPages = 1
 		}
 
 		return c.JSON(fiber.Map{

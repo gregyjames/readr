@@ -35,6 +35,8 @@ type ArticleFilter struct {
 	Archived *bool
 	Tag      string
 	Topic    string
+	Sort     string // "latest", "oldest", "title"
+	MocOnly  *bool  // nil = any, true = only MOCs, false = only non-MOCs
 	Limit    int
 	Offset   int
 }
@@ -376,7 +378,22 @@ func (v *DefaultVault) ListArticles(ctx context.Context, filter ArticleFilter) (
 		query = query.Where("article LIKE ?", "%/articles/"+filter.Topic+"/%")
 	}
 
-	query = query.Order("id DESC")
+	if filter.MocOnly != nil {
+		if *filter.MocOnly {
+			query = query.Where(MocSQLCondition)
+		} else {
+			query = query.Where("NOT " + MocSQLCondition)
+		}
+	}
+
+	switch filter.Sort {
+	case "oldest":
+		query = query.Order("id ASC")
+	case "title":
+		query = query.Order("LOWER(title) ASC, id ASC")
+	default:
+		query = query.Order("id DESC")
+	}
 
 	if filter.Limit > 0 {
 		query = query.Limit(filter.Limit)

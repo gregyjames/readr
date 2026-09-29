@@ -90,39 +90,42 @@ func NewHTTPFetcher(timeout time.Duration) *HTTPFetcher {
 				return nil, fmt.Errorf("invalid address %q: %w", addr, err)
 			}
 
-			if !fetcher.AllowLocalhost {
-				if ip := net.ParseIP(host); ip != nil {
-					if isPrivateOrRestrictedIP(ip) {
-						return nil, fmt.Errorf("access to private or restricted IP blocked: %s", ip)
-					}
-					return dialer.DialContext(ctx, network, addr)
-				}
-
-				ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
-				if err != nil {
-					return nil, fmt.Errorf("DNS resolution failed for host %s: %w", host, err)
-				}
-				if len(ips) == 0 {
-					return nil, fmt.Errorf("no IP address found for host: %s", host)
-				}
-				for _, ip := range ips {
-					if isPrivateOrRestrictedIP(ip) {
-						return nil, fmt.Errorf("access to private or restricted IP blocked for host %s: %s", host, ip)
-					}
-				}
-
-				var lastErr error
-				for _, ip := range ips {
-					conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
-					if err == nil {
-						return conn, nil
-					}
-					lastErr = err
-				}
-				return nil, lastErr
+			// If localhost is explicitly allowed, bypass all private/restricted checks
+			if fetcher.AllowLocalhost {
+				return dialer.DialContext(ctx, network, addr)
 			}
 
-			return dialer.DialContext(ctx, network, addr)
+			// Private IP check for direct IP literals
+			if ip := net.ParseIP(host); ip != nil {
+				if isPrivateOrRestrictedIP(ip) {
+					return nil, fmt.Errorf("access to private or restricted IP blocked: %s", ip)
+				}
+				return dialer.DialContext(ctx, network, addr)
+			}
+
+			// Resolve DNS and ensure none of the returned IPs are private/restricted
+			ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+			if err != nil {
+				return nil, fmt.Errorf("DNS resolution failed for host %s: %w", host, err)
+			}
+			if len(ips) == 0 {
+				return nil, fmt.Errorf("no IP address found for host: %s", host)
+			}
+			for _, ip := range ips {
+				if isPrivateOrRestrictedIP(ip) {
+					return nil, fmt.Errorf("access to private or restricted IP blocked for host %s: %s", host, ip)
+				}
+			}
+
+			var lastErr error
+			for _, ip := range ips {
+				conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+				if err == nil {
+					return conn, nil
+				}
+				lastErr = err
+			}
+			return nil, lastErr
 		},
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
