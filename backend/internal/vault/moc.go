@@ -3,8 +3,7 @@ package vault
 import "strings"
 
 // MocSQLCondition is the SQL fragment used for MOC detection. It trims leading whitespace
-// and performs case‑insensitive matching on the title, mirroring the Go helper IsMOCArticle.
-var MocSQLCondition = "(TRIM(LOWER(title)) LIKE 'moc - %' OR TRIM(LOWER(title)) LIKE 'moc:%' OR TRIM(LOWER(title)) LIKE 'moc %' OR TRIM(LOWER(title)) = 'moc' OR LOWER(COALESCE(tags, '')) LIKE '%moc%')"
+var MocSQLCondition = "(TRIM(LOWER(title)) LIKE 'moc - %' OR TRIM(LOWER(title)) LIKE 'moc:%' OR TRIM(LOWER(title)) LIKE 'moc %' OR TRIM(LOWER(title)) = 'moc' OR ',' || REPLACE(LOWER(COALESCE(tags, '')), ' ', '') || ',' LIKE '%,moc,%')"
 
 // IsMOCArticle reports whether an article is a MOC based on its title and tags.
 // It trims whitespace from the title, lower‑cases it, and matches the same patterns as the SQL condition.
