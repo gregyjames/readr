@@ -32,8 +32,8 @@
     "@tailwindcss/typography": "^0.5.20",
     "@types/bun": "^1.4.2",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^26.6.4",
-    "@vitejs/plugin-vue": "^6.0.9",
+    "@types/node": "^26.6.5",
+    "@vitejs/plugin-vue": "^6.0.10",
     "@vue/test-utils": "^2.5.1",
     "@vue/tsconfig": "0.9.1",
     "autoprefixer": "^10.6.1",
@@ -41,6 +41,6 @@
     "postcss": "^8.5.29",
     "tailwindcss": "^4.3.3",
     "typescript": "5.8.2",
-    "vue-tsc": "3.3.12"
+    "vue-tsc": "3.3.13"
   }
 }
