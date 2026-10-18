@@ -42,5 +42,8 @@
     "tailwindcss": "^4.3.3",
     "typescript": "5.8.2",
     "vue-tsc": "3.3.13"
+  },
+  "overrides": {
+    "vue": "$vue"
   }
 }
