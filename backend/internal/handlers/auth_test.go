@@ -164,4 +164,71 @@ func TestAuthLoginWorkflow(t *testing.T) {
 	protResp, err := app.Test(protReq, fiber.TestConfig{Timeout: 10 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, protResp.StatusCode)
+
+	// Protected access with valid readr_session cookie even if Authorization header carries a non-session key
+	cookieReq := httptest.NewRequest("GET", "/api/protected", nil)
+	cookieReq.Header.Set("Authorization", "Bearer sk-or-v1-provider-key")
+	cookieReq.AddCookie(&http.Cookie{Name: "readr_session", Value: token})
+	cookieResp, err := app.Test(cookieReq, fiber.TestConfig{Timeout: 10 * time.Second})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, cookieResp.StatusCode)
+}
+
+func TestAuthStatusHeaderPrecedenceAndDualLogoutRevocation(t *testing.T) {
+	app, hCtx := setupAuthTestApp(t)
+
+	hash, err := auth.HashPassword("masterpassword123")
+	require.NoError(t, err)
+	var secret string
+	_, err = hCtx.SettingsStore.Update(func(s *ServerSettings) error {
+		s.PasswordHash = hash
+		s.SessionSecret, _ = auth.GenerateRandomSecret()
+		secret = s.SessionSecret
+		return nil
+	})
+	require.NoError(t, err)
+
+	headerToken := auth.SignSession(secret, time.Now().Add(-2*time.Minute))
+	cookieToken := auth.SignSession(secret, time.Now().Add(-1*time.Minute))
+
+	// Logout with both Authorization Bearer token and a different readr_session cookie token
+	logoutReq := httptest.NewRequest("POST", "/api/auth/logout", nil)
+	logoutReq.Header.Set("Authorization", "Bearer "+headerToken)
+	logoutReq.AddCookie(&http.Cookie{Name: "readr_session", Value: cookieToken})
+	logoutResp, err := app.Test(logoutReq, fiber.TestConfig{Timeout: 10 * time.Second})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, logoutResp.StatusCode)
+
+	// Both headerToken and cookieToken must now be revoked
+	for _, tok := range []string{headerToken, cookieToken} {
+		req := httptest.NewRequest("GET", "/api/protected", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second})
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	}
+
+	// Create a fresh valid cookie token, but send a revoked session token in Authorization header:
+	// /api/auth/status must return authenticated=false to match AuthMiddleware precedence
+	validCookieToken := auth.SignSession(secret, time.Now())
+	statusReq := httptest.NewRequest("GET", "/api/auth/status", nil)
+	statusReq.Header.Set("Authorization", "Bearer "+headerToken)
+	statusReq.AddCookie(&http.Cookie{Name: "readr_session", Value: validCookieToken})
+	statusResp, err := app.Test(statusReq, fiber.TestConfig{Timeout: 10 * time.Second})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, statusResp.StatusCode)
+
+	var statusBody map[string]interface{}
+	require.NoError(t, json.NewDecoder(statusResp.Body).Decode(&statusBody))
+	assert.Equal(t, false, statusBody["authenticated"], "revoked Authorization session token must not fall back to valid cookie")
+
+	// Similarly, an invalid rdr_live_ API key in Authorization header must not fall back to valid cookie
+	apiKeyStatusReq := httptest.NewRequest("GET", "/api/auth/status", nil)
+	apiKeyStatusReq.Header.Set("Authorization", "Bearer rdr_live_invalidkey")
+	apiKeyStatusReq.AddCookie(&http.Cookie{Name: "readr_session", Value: validCookieToken})
+	apiKeyStatusResp, err := app.Test(apiKeyStatusReq, fiber.TestConfig{Timeout: 10 * time.Second})
+	require.NoError(t, err)
+	var apiKeyStatusBody map[string]interface{}
+	require.NoError(t, json.NewDecoder(apiKeyStatusResp.Body).Decode(&apiKeyStatusBody))
+	assert.Equal(t, false, apiKeyStatusBody["authenticated"], "invalid rdr_live_ key in Authorization must not fall back to valid cookie")
 }

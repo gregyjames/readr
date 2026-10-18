@@ -19,6 +19,8 @@ if (typeof document !== 'undefined' && savedTheme) {
 }
 
 export const settings = reactive({
+  provider_type: 'openrouter',
+  provider_base_url: 'https://openrouter.ai/api/v1',
   api_key: '',
   model: 'openai/gpt-4o-mini',
   agent_enricher: true,
@@ -92,7 +94,14 @@ export async function initSettings() {
   }
 
   try {
-    const res = await fetch('/api/settings')
+    const headers: Record<string, string> = {}
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('readr_token') : null
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+      }
+    } catch {}
+    const res = await fetch('/api/settings', { headers })
     if (res.ok) {
       const data = await res.json()
       Object.assign(settings, data)
@@ -112,9 +121,16 @@ export async function initSettings() {
 }
 
 export async function saveSettingsToServer() {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  try {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('readr_token') : null
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+  } catch {}
   const res = await fetch('/api/settings', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(settings)
   })
   if (!res.ok) {

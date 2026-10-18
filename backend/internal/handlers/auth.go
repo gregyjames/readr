@@ -159,11 +159,49 @@ func AuthMiddleware(h *HandlerContext) fiber.Handler {
 
 		valid, err := auth.VerifySession(secret, token, time.Now())
 		if err != nil || !valid {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+			cookieToken := strings.Trim(strings.TrimSpace(c.Cookies("readr_session")), "\"'`")
+			if cookieToken != "" && cookieToken != token && !isSessionTokenRevoked(cookieToken) {
+				valid, err = auth.VerifySession(secret, cookieToken, time.Now())
+			}
+			if err != nil || !valid {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+			}
 		}
 
 		return c.Next()
 	}
+}
+
+func verifyRequestAuthenticated(c fiber.Ctx, h *HandlerContext, current ServerSettings) bool {
+	token := ExtractSessionToken(c)
+	if isSessionTokenRevoked(token) {
+		return false
+	}
+
+	if strings.HasPrefix(token, "rdr_live_") {
+		if h.Repo != nil {
+			hash := auth.HashAPIKey(token)
+			if apiKey, err := h.Repo.FindAPIKeyByHash(c.Context(), hash); err == nil && apiKey != nil {
+				return true
+			}
+		}
+		return false
+	}
+
+	if token != "" {
+		if valid, err := auth.VerifySession(current.SessionSecret, token, time.Now()); err == nil && valid {
+			return true
+		}
+	}
+
+	cookieToken := strings.Trim(strings.TrimSpace(c.Cookies("readr_session")), "\"'`")
+	if cookieToken != "" && cookieToken != token && !isSessionTokenRevoked(cookieToken) {
+		if valid, err := auth.VerifySession(current.SessionSecret, cookieToken, time.Now()); err == nil && valid {
+			return true
+		}
+	}
+
+	return false
 }
 
 func RegisterAuth(router fiber.Router, h *HandlerContext) {
@@ -173,13 +211,7 @@ func RegisterAuth(router fiber.Router, h *HandlerContext) {
 		authenticated := false
 
 		if authConfigured {
-			cookieOrHeaderToken := ExtractSessionToken(c)
-			if cookieOrHeaderToken != "" {
-				valid, err := auth.VerifySession(current.SessionSecret, cookieOrHeaderToken, time.Now())
-				if err == nil && valid {
-					authenticated = true
-				}
-			}
+			authenticated = verifyRequestAuthenticated(c, h, current)
 		}
 
 		theme := current.Theme
@@ -257,6 +289,10 @@ func RegisterAuth(router fiber.Router, h *HandlerContext) {
 		token := ExtractSessionToken(c)
 		if token != "" {
 			revokeSessionToken(token)
+		}
+		cookieToken := strings.Trim(strings.TrimSpace(c.Cookies("readr_session")), "\"'`")
+		if cookieToken != "" && cookieToken != token {
+			revokeSessionToken(cookieToken)
 		}
 		ClearSessionCookie(c)
 		return c.JSON(fiber.Map{"status": "success"})

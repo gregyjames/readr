@@ -126,6 +126,10 @@ export async function changePassword(currentPassword: string, newPassword: strin
       credentials: 'include',
     })
     if (res.ok) {
+      const data = await res.json().catch(() => ({}))
+      if (data.token) {
+        setStoredToken(data.token)
+      }
       return { success: true }
     }
     const data = await res.json().catch(() => ({}))

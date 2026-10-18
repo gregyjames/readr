@@ -1,18 +1,14 @@
 package chat
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
-	"github.com/hashicorp/go-retryablehttp"
+	"example.com/backend/internal/llm"
 )
 
 type ArticleFetcher interface {
@@ -21,83 +17,57 @@ type ArticleFetcher interface {
 }
 
 type Service struct {
-	repo          *FileRepository
-	fetcher       ArticleFetcher
-	client        *retryablehttp.Client
-	openRouterURL string
-	defaultModel  string
+	repo         *FileRepository
+	fetcher      ArticleFetcher
+	provider     llm.Provider
+	defaultModel string
 }
 
-func NewService(repo *FileRepository, fetcher ArticleFetcher) *Service {
-	client := retryablehttp.NewClient()
-	client.RetryMax = 2
-	client.RetryWaitMin = 500 * time.Millisecond
-	client.RetryWaitMax = 3 * time.Second
-	client.Logger = nil
-	client.HTTPClient.Timeout = 120 * time.Second
-	client.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {
-		if err != nil {
-			return retryablehttp.DefaultRetryPolicy(ctx, resp, err)
-		}
-		if resp != nil && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500) {
-			return true, nil
-		}
-		return false, nil
+func NewService(repo *FileRepository, fetcher ArticleFetcher, provider ...llm.Provider) *Service {
+	var p llm.Provider
+	if len(provider) > 0 {
+		p = provider[0]
 	}
 
 	return &Service{
-		repo:          repo,
-		fetcher:       fetcher,
-		client:        client,
-		openRouterURL: "https://openrouter.ai/api/v1/chat/completions",
-		defaultModel:  "openai/gpt-3.5-turbo",
+		repo:         repo,
+		fetcher:      fetcher,
+		provider:     p,
+		defaultModel: "openai/gpt-4o-mini",
 	}
 }
 
-// SetOpenRouterURL allows overriding the URL for testing
-func (s *Service) SetOpenRouterURL(url string) {
-	s.openRouterURL = url
+func (s *Service) SetProvider(p llm.Provider) {
+	s.provider = p
 }
 
-func (s *Service) SetHTTPClient(client *http.Client) {
-	if client != nil {
-		s.client.HTTPClient = client
+func (s *Service) GetModels(ctx context.Context, provider ...llm.Provider) ([]llm.ModelInfo, error) {
+	active := s.provider
+	if len(provider) > 0 && provider[0] != nil {
+		active = provider[0]
 	}
+	if active == nil {
+		return nil, errors.New("no LLM provider configured")
+	}
+
+	return active.ListModels(ctx)
 }
 
-type openRouterRequest struct {
-	Model    string        `json:"model"`
-	Messages []interface{} `json:"messages"`
-	Stream   bool          `json:"stream"`
-}
-
-func (s *Service) FetchModels(ctx context.Context, apiKey string) ([]byte, error) {
-	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodGet, "https://openrouter.ai/api/v1/models", nil)
+func (s *Service) FetchModels(ctx context.Context, provider ...llm.Provider) ([]byte, error) {
+	models, err := s.GetModels(ctx, provider...)
 	if err != nil {
 		return nil, err
 	}
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	req.Header.Set("HTTP-Referer", "https://github.com/gregyjames/readr")
-	req.Header.Set("X-Title", "Readr Chat")
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch models failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch models returned status: %d", resp.StatusCode)
-	}
-
-	return io.ReadAll(resp.Body)
+	return json.Marshal(map[string]any{"data": models})
 }
 
-func (s *Service) StreamMessage(ctx context.Context, sessionID string, apiKey string, model string, expandContext bool, userMsg Message, onChunk func(string) error) error {
-	if apiKey == "" {
-		return errors.New("missing OpenRouter API key")
+func (s *Service) StreamMessage(ctx context.Context, sessionID string, provider llm.Provider, model string, expandContext bool, userMsg Message, onChunk func(string) error) error {
+	activeProvider := provider
+	if activeProvider == nil {
+		activeProvider = s.provider
+	}
+	if activeProvider == nil {
+		return errors.New("no LLM provider configured")
 	}
 
 	session, err := s.repo.Get(ctx, sessionID)
@@ -164,18 +134,18 @@ func (s *Service) StreamMessage(ctx context.Context, sessionID string, apiKey st
 	// Record the user message in session
 	session.Messages = append(session.Messages, userMsg)
 
-	// 2. Prepare payload for OpenRouter
-	var apiMsgs []interface{}
+	// 2. Prepare payload for LLM Provider
+	reqMessages := make([]llm.Message, len(session.Messages))
 	for i, m := range session.Messages {
 		content := m.Content
 		// For the latest message, use the injected context content
 		if i == len(session.Messages)-1 && m.Role == RoleUser {
 			content = effectiveUserContent
 		}
-		apiMsgs = append(apiMsgs, map[string]string{
-			"role":    string(m.Role),
-			"content": content,
-		})
+		reqMessages[i] = llm.Message{
+			Role:    llm.Role(m.Role),
+			Content: content,
+		}
 	}
 
 	chosenModel := strings.TrimSpace(model)
@@ -183,86 +153,21 @@ func (s *Service) StreamMessage(ctx context.Context, sessionID string, apiKey st
 		chosenModel = s.defaultModel
 	}
 
-	reqPayload := openRouterRequest{
+	compReq := llm.CompletionRequest{
 		Model:    chosenModel,
-		Messages: apiMsgs,
-		Stream:   true,
-	}
-
-	bodyBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
-	}
-
-	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, s.openRouterURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("HTTP-Referer", "https://github.com/gregyjames/readr")
-	req.Header.Set("X-Title", "Readr Chat")
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("openrouter request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodySnippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		var errPayload struct {
-			Error struct {
-				Message string      `json:"message"`
-				Code    interface{} `json:"code"`
-			} `json:"error"`
-		}
-		if err := json.Unmarshal(bodySnippet, &errPayload); err == nil && errPayload.Error.Message != "" {
-			return fmt.Errorf("openrouter error (HTTP %d): %s", resp.StatusCode, errPayload.Error.Message)
-		}
-		if len(bodySnippet) > 0 {
-			return fmt.Errorf("openrouter error (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(bodySnippet)))
-		}
-		return fmt.Errorf("openrouter error (HTTP %d)", resp.StatusCode)
+		Messages: reqMessages,
 	}
 
 	var fullAssistantResponse strings.Builder
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
+	err = activeProvider.Stream(ctx, compReq, func(chunk string) error {
+		fullAssistantResponse.WriteString(chunk)
+		if onChunk != nil {
+			return onChunk(chunk)
 		}
-		data := strings.TrimPrefix(line, "data: ")
-		if strings.TrimSpace(data) == "[DONE]" {
-			break
-		}
-
-		var streamChunk struct {
-			Choices []struct {
-				Delta struct {
-					Content string `json:"content"`
-				} `json:"delta"`
-			} `json:"choices"`
-		}
-
-		if err := json.Unmarshal([]byte(data), &streamChunk); err == nil {
-			for _, choice := range streamChunk.Choices {
-				if choice.Delta.Content != "" {
-					fullAssistantResponse.WriteString(choice.Delta.Content)
-					if onChunk != nil {
-						if err := onChunk(choice.Delta.Content); err != nil {
-							return err
-						}
-					}
-				}
-			}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read stream: %w", err)
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	// 3. Save assistant response to session

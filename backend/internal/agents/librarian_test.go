@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"example.com/backend/internal/llm"
 	"example.com/backend/internal/repository"
 	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
@@ -2278,4 +2279,127 @@ Manual notes.
 			t.Errorf("unexpected leftover tmp files: %v", tmpFiles)
 		}
 	})
+}
+
+type mockLibrarianProvider struct {
+	name       string
+	completeFn func(ctx context.Context, req llm.CompletionRequest) (*llm.CompletionResponse, error)
+}
+
+func (m *mockLibrarianProvider) Name() string {
+	if m.name != "" {
+		return m.name
+	}
+	return "mock"
+}
+
+func (m *mockLibrarianProvider) Complete(ctx context.Context, req llm.CompletionRequest) (*llm.CompletionResponse, error) {
+	return m.completeFn(ctx, req)
+}
+
+func (m *mockLibrarianProvider) Stream(ctx context.Context, req llm.CompletionRequest, onChunk func(chunk string) error) error {
+	return nil
+}
+
+func (m *mockLibrarianProvider) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
+	return nil, nil
+}
+
+func TestLibrarian_MockLLMProvider_FreshAndDeltaSynthesis(t *testing.T) {
+	db, repo, tempDir := setupTestLibrarianEnv(t)
+	articlesDir := filepath.Join(tempDir, "articles")
+
+	for i := 1; i <= 3; i++ {
+		title := fmt.Sprintf("Rust Note %d", i)
+		filePath := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title))
+		_ = os.WriteFile(filePath, []byte("# Content"), 0644)
+
+		db.Create(&repository.GormArticle{
+			ID:      int64(i),
+			Title:   title,
+			Tags:    "rust",
+			Article: fmt.Sprintf("/articles/%s.md", title),
+		})
+	}
+
+	// Configure settings with min_cluster_size=3 and no API key (testing injected mock provider directly)
+	settingsJSON := `{"provider_type":"ollama","model":"llama3.2","librarian_enabled":true,"librarian_min_cluster_size":3}`
+	_ = os.WriteFile(filepath.Join(tempDir, "settings.json"), []byte(settingsJSON), 0644)
+
+	var capturedReqs []llm.CompletionRequest
+	mockP := &mockLibrarianProvider{
+		name: "ollama",
+		completeFn: func(ctx context.Context, req llm.CompletionRequest) (*llm.CompletionResponse, error) {
+			capturedReqs = append(capturedReqs, req)
+			if req.ResponseSchema != nil && req.ResponseSchema.Name == "moc_delta_placement" {
+				return &llm.CompletionResponse{
+					Content: `{"placements":[{"article_id":10,"target_section":"Foundations","context_note":"Async runtime"}]}`,
+					Usage: &llm.UsageInfo{
+						PromptTokens:     80,
+						CompletionTokens: 25,
+						TotalTokens:      105,
+					},
+				}, nil
+			}
+			return &llm.CompletionResponse{
+				Content: `{"topic_title":"Rust Systems","executive_summary":"Memory safety and concurrency.","sections":[{"title":"Foundations","items":[{"article_id":1,"context_note":"Ownership"},{"article_id":2,"context_note":"Borrowing"},{"article_id":3,"context_note":"Lifetimes"}]}]}`,
+				Usage: &llm.UsageInfo{
+					PromptTokens:     120,
+					CompletionTokens: 45,
+					TotalTokens:      165,
+				},
+			}, nil
+		},
+	}
+
+	runner := NewLibrarianRunner(zap.NewNop(), db, repo, tempDir, nil)
+	runner.SetProvider(mockP)
+
+	res, err := runner.RunLibrarian(context.Background(), "manual")
+	if err != nil {
+		t.Fatalf("RunLibrarian failed: %v", err)
+	}
+	if res.CreatedMOCs != 1 {
+		t.Fatalf("expected 1 created MOC, got %d (errors: %v)", res.CreatedMOCs, res.Errors)
+	}
+	if len(capturedReqs) != 1 {
+		t.Fatalf("expected 1 provider Complete call, got %d", len(capturedReqs))
+	}
+	if !capturedReqs[0].JSONMode {
+		t.Errorf("expected JSONMode=true on synthesis request")
+	}
+	if capturedReqs[0].ResponseSchema == nil || capturedReqs[0].ResponseSchema.Name != "moc_synthesis" || !capturedReqs[0].ResponseSchema.Strict {
+		t.Errorf("expected strict ResponseSchema 'moc_synthesis', got %+v", capturedReqs[0].ResponseSchema)
+	}
+	if capturedReqs[0].Model != "llama3.2" {
+		t.Errorf("expected model 'llama3.2', got %q", capturedReqs[0].Model)
+	}
+
+	// Add a 4th unlinked article (ID 10, since ID 4 is assigned to the created MOC) and run again to exercise delta synthesis
+	title4 := "Rust Note 4"
+	filePath4 := filepath.Join(articlesDir, fmt.Sprintf("%s.md", title4))
+	_ = os.WriteFile(filePath4, []byte("# Async Content"), 0644)
+	db.Create(&repository.GormArticle{
+		ID:      10,
+		Title:   title4,
+		Tags:    "rust",
+		Article: fmt.Sprintf("/articles/%s.md", title4),
+	})
+
+	res2, err := runner.RunLibrarian(context.Background(), "manual")
+	if err != nil {
+		t.Fatalf("Second RunLibrarian failed: %v", err)
+	}
+	if res2.UpdatedMOCs != 1 {
+		t.Fatalf("expected 1 updated MOC, got %d (errors: %v)", res2.UpdatedMOCs, res2.Errors)
+	}
+	if len(capturedReqs) != 2 {
+		t.Fatalf("expected 2 provider Complete calls total, got %d", len(capturedReqs))
+	}
+	if !capturedReqs[1].JSONMode {
+		t.Errorf("expected JSONMode=true on delta synthesis request")
+	}
+	if capturedReqs[1].ResponseSchema == nil || capturedReqs[1].ResponseSchema.Name != "moc_delta_placement" || !capturedReqs[1].ResponseSchema.Strict {
+		t.Errorf("expected strict ResponseSchema 'moc_delta_placement', got %+v", capturedReqs[1].ResponseSchema)
+	}
 }

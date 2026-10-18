@@ -30,7 +30,13 @@ const mentionQuery = ref('')
 const mentionIndex = ref(0)
 const selectedMentionIdx = ref(0)
 
-const hasApiKey = computed(() => Boolean(settings.api_key?.trim()))
+const isProviderConfigured = computed(() => {
+  if (settings.provider_type === 'ollama' || settings.provider_type === 'custom') {
+    return Boolean(settings.provider_base_url?.trim())
+  }
+  return Boolean(settings.api_key?.trim())
+})
+const hasApiKey = isProviderConfigured
 const currentModel = computed(() => settings.model)
 
 const filteredMentionArticles = computed(() => {
@@ -226,8 +232,8 @@ const sendMessage = async () => {
   const text = inputContent.value.trim()
   if ((!text && attachments.value.length === 0) || isStreaming.value) return
 
-  if (!hasApiKey.value) {
-    errorMessage.value = 'Please configure your OpenRouter API Key in Settings first.'
+  if (!isProviderConfigured.value) {
+    errorMessage.value = 'Please configure your AI Provider in Settings first.'
     return
   }
 
@@ -351,7 +357,7 @@ const sendMessage = async () => {
     console.error('Streaming error', err)
     errorMessage.value = err.message || 'An error occurred during communication.'
     if (!assistantMsg.content || isStreaming.value) {
-      assistantMsg.content = `> ⚠️ **OpenRouter Error:**\n>\n> ${err.message || 'Failed to stream response'}\n\n*Tip: Check that your OpenRouter account has credits, or select a free model (e.g. models ending in \`:free\`) in Settings.*`
+      assistantMsg.content = `> ⚠️ **AI Provider Error:**\n>\n> ${err.message || 'Failed to stream response'}\n\n*Tip: Check that your AI Provider credentials and endpoint are correctly configured in Settings.*`
     }
   } finally {
     isStreaming.value = false
@@ -431,7 +437,7 @@ const sendMessage = async () => {
             <line x1="12" y1="8" x2="12" y2="12"></line>
             <line x1="12" y1="16" x2="12.01" y2="16"></line>
           </svg>
-          <span>OpenRouter API Key not configured.</span>
+          <span>AI Provider not configured.</span>
         </div>
         <router-link to="/settings" class="font-medium underline hover:text-amber-900 dark:hover:text-amber-100">
           Open Settings
