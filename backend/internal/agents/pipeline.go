@@ -1,37 +1,50 @@
 package agents
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"example.com/backend/internal/ingest"
+	"example.com/backend/internal/llm"
 	"example.com/backend/internal/markdown"
 	"example.com/backend/internal/repository"
-	"github.com/hashicorp/go-retryablehttp"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 func (p *AgentPool) processPipeline(job Job) error {
-	return p.processPipelineWithURL(job, "https://openrouter.ai/api/v1/chat/completions")
+	provider, model := p.resolveProvider(job)
+	return p.processPipelineWithProvider(job, provider, model)
 }
 
 func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) error {
+	apiKey, model := p.resolveCredentials(job)
+	baseURL := strings.TrimSuffix(strings.TrimSpace(apiURL), "/chat/completions")
+	provider := llm.NewProvider(llm.Config{
+		Type:    "custom",
+		BaseURL: baseURL,
+		APIKey:  apiKey,
+	})
+	return p.processPipelineWithProvider(job, provider, model)
+}
+
+func (p *AgentPool) processPipelineWithProvider(job Job, provider llm.Provider, model string) error {
 	if !job.Settings.Summarizer && !job.Settings.Enricher && !job.Settings.Linker {
 		p.logger.Info("Pipeline skipped: no stages enabled", zap.Int64("article_id", job.ArticleID))
 		return nil
 	}
 
-	apiKey, model := p.resolveCredentials(job)
-	if apiKey == "" {
+	p.mu.RLock()
+	hasInjected := p.provider != nil
+	p.mu.RUnlock()
+
+	apiKey, _ := p.resolveCredentials(job)
+	if provider == nil || (!hasInjected && strings.ToLower(provider.Name()) != "ollama" && apiKey == "") {
 		p.logger.Warn("API key not configured. Agent cannot run pipeline.", zap.Int64("article_id", job.ArticleID))
 		return fmt.Errorf("API key not configured")
 	}
@@ -143,43 +156,9 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) error {
 		}
 	}
 
-	// 4. Assemble dynamic schema, prompt, and payload
+	// 4. Assemble dynamic schema, prompt, and call provider
 	properties, required := buildPipelineSchema(job.Settings)
 	prompt := buildPipelinePrompt(job.Settings, body, candidates, existingVaultTags)
-	bodyJSON, err := buildPipelinePayload(model, prompt, properties, required)
-	if err != nil {
-		p.logger.Error("Pipeline failed to marshal payload", zap.Error(err))
-		return err
-	}
-
-	retryCount := 0
-	retryClient := retryablehttp.NewClient()
-	retryClient.RetryMax = 3
-	retryClient.RetryWaitMin = 1 * time.Second
-	retryClient.RetryWaitMax = 10 * time.Second
-	retryClient.Logger = nil // suppress stdout default logging; logged via zap
-	retryClient.RequestLogHook = func(l retryablehttp.Logger, req *http.Request, retryNumber int) {
-		retryCount = retryNumber
-	}
-	retryClient.HTTPClient.Timeout = 60 * time.Second
-	retryClient.HTTPClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 10 {
-			return fmt.Errorf("stopped after 10 redirects")
-		}
-		if len(via) > 0 {
-			req.Header.Set("Authorization", via[0].Header.Get("Authorization"))
-		}
-		return nil
-	}
-	retryClient.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {
-		if err != nil {
-			return retryablehttp.DefaultRetryPolicy(ctx, resp, err)
-		}
-		if resp != nil && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusPaymentRequired || resp.StatusCode >= 500) {
-			return true, nil
-		}
-		return false, nil
-	}
 
 	startTime := time.Now()
 	p.logger.Info("Pipeline dispatching single unified LLM request",
@@ -211,7 +190,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) error {
 				Model:            model,
 				Status:           status,
 				DurationMs:       time.Since(startTime).Milliseconds(),
-				RetryCount:       retryCount,
+				RetryCount:       0,
 				PromptTokens:     promptTokens,
 				CompletionTokens: completionTokens,
 				TotalTokens:      totalTokens,
@@ -221,37 +200,30 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) error {
 		}
 	}
 
-	req, err := retryablehttp.NewRequestWithContext(context.Background(), http.MethodPost, apiURL, bytes.NewReader(bodyJSON))
-	if err != nil {
-		p.logger.Error("Pipeline failed to create HTTP request", zap.Error(err))
-		recordMetric("failed", 0, 0, 0, err.Error())
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("HTTP-Referer", "https://github.com/gregyjames/readr")
-	req.Header.Set("X-Title", "Readr Pipeline Agent")
-
-	resp, err := retryClient.Do(req)
+	resp, err := provider.Complete(context.Background(), llm.CompletionRequest{
+		Model: model,
+		Messages: []llm.Message{
+			{
+				Role:    llm.RoleUser,
+				Content: prompt,
+			},
+		},
+		JSONMode: true,
+		ResponseSchema: &llm.JSONSchemaConfig{
+			Name:   "unified_pipeline_response",
+			Strict: true,
+			Schema: jsonSchemaField{
+				Type:                 "object",
+				Properties:           properties,
+				Required:             required,
+				AdditionalProperties: false,
+			},
+		},
+	})
 	if err != nil {
 		p.logger.Error("Pipeline LLM request failed", zap.Error(err), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, err.Error())
 		return &ProviderError{Err: fmt.Errorf("pipeline LLM request failed: %w", err)}
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		p.logger.Error("Pipeline failed to read LLM response body", zap.Error(err), zap.Int64("article_id", job.ArticleID))
-		recordMetric("failed", 0, 0, 0, err.Error())
-		return &ProviderError{Err: fmt.Errorf("pipeline failed to read LLM response body: %w", err)}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		p.logger.Error("Pipeline LLM request returned non-200 status", zap.Int("status", resp.StatusCode), zap.String("body", string(respBytes)), zap.Int64("article_id", job.ArticleID))
-		errMsg := fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBytes))
-		recordMetric("failed", 0, 0, 0, errMsg)
-		return &ProviderError{Err: fmt.Errorf("pipeline LLM request returned non-200 status: %s", errMsg)}
 	}
 
 	p.logger.Info("Pipeline received LLM response",
@@ -259,73 +231,30 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) error {
 		zap.Duration("duration", time.Since(startTime)),
 	)
 
-	var llmResp struct {
-		Choices []struct {
-			Message struct {
-				Content interface{} `json:"content"`
-			} `json:"message"`
-			FinishReason string `json:"finish_reason"`
-		} `json:"choices"`
-		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		} `json:"usage"`
-		Error *struct {
-			Message string      `json:"message"`
-			Code    interface{} `json:"code"`
-		} `json:"error"`
-	}
-
-	if err := json.Unmarshal(respBytes, &llmResp); err != nil {
-		p.logger.Error("Pipeline failed to parse LLM response JSON", zap.Error(err), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
-		recordMetric("failed", 0, 0, 0, "JSON parse error: "+err.Error())
-		return &ProviderError{Err: fmt.Errorf("pipeline failed to parse LLM response JSON: %w", err)}
-	}
-
-	if llmResp.Error != nil {
-		p.logger.Error("Pipeline received API error from LLM provider", zap.String("error_message", llmResp.Error.Message), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
-		recordMetric("failed", 0, 0, 0, llmResp.Error.Message)
-		return &ProviderError{Err: fmt.Errorf("pipeline received API error from LLM provider: %s", llmResp.Error.Message)}
-	}
-
-	if len(llmResp.Choices) == 0 {
-		p.logger.Error("Pipeline LLM response contained no choices", zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
-		recordMetric("failed", 0, 0, 0, "no choices returned from LLM provider")
-		return &ProviderError{Err: fmt.Errorf("no choices returned from LLM provider")}
-	}
-
-	rawJSON := extractMessageContent(llmResp.Choices[0].Message.Content)
-	rawJSON = cleanJSONBlock(rawJSON)
-
+	rawJSON := cleanJSONBlock(resp.Content)
 	if rawJSON == "" {
-		p.logger.Error("Pipeline LLM response message content was empty", zap.String("finish_reason", llmResp.Choices[0].FinishReason), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
+		p.logger.Error("Pipeline LLM response message content was empty", zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, "empty message content from LLM provider")
 		return &ProviderError{Err: fmt.Errorf("empty message content from LLM provider")}
 	}
 
 	var pipelineResp UnifiedPipelineResponse
 	if err := json.Unmarshal([]byte(rawJSON), &pipelineResp); err != nil {
-		p.logger.Error("Pipeline failed to unmarshal JSON into UnifiedPipelineResponse", zap.Error(err), zap.String("raw", rawJSON), zap.String("raw_response", string(respBytes)), zap.Int64("article_id", job.ArticleID))
+		p.logger.Error("Pipeline failed to unmarshal JSON into UnifiedPipelineResponse", zap.Error(err), zap.String("raw", rawJSON), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, "schema parse error: "+err.Error())
 		return fmt.Errorf("pipeline failed to unmarshal JSON into UnifiedPipelineResponse: %w", err)
 	}
 
-	// Calculate token analytics (exact from API usage if present, or deterministic estimate)
-	promptTokens := 0
-	completionTokens := 0
-	totalTokens := 0
-	if llmResp.Usage != nil {
-		promptTokens = llmResp.Usage.PromptTokens
-		completionTokens = llmResp.Usage.CompletionTokens
-		totalTokens = llmResp.Usage.TotalTokens
+	promptTokens := len(prompt) / 4
+	completionTokens := len(rawJSON) / 4
+	totalTokens := promptTokens + completionTokens
+	if resp.Usage != nil {
+		promptTokens = resp.Usage.PromptTokens
+		completionTokens = resp.Usage.CompletionTokens
+		totalTokens = resp.Usage.TotalTokens
 		if totalTokens == 0 {
 			totalTokens = promptTokens + completionTokens
 		}
-	} else {
-		promptTokens = len(prompt) / 4
-		completionTokens = len(rawJSON) / 4
-		totalTokens = promptTokens + completionTokens
 	}
 
 	// 5. In-memory transformations

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"example.com/backend/internal/llm"
 	"example.com/backend/internal/repository"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -82,6 +83,13 @@ type AgentPool struct {
 	shutdown             chan struct{}
 	workerWg             sync.WaitGroup
 	runJob               func(Job) error
+	provider             llm.Provider
+}
+
+func (p *AgentPool) SetProvider(provider llm.Provider) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.provider = provider
 }
 
 var Pool *AgentPool
@@ -572,4 +580,66 @@ func (p *AgentPool) resolveCredentials(job Job) (string, string) {
 	}
 
 	return apiKey, model
+}
+
+func (p *AgentPool) resolveProvider(job Job) (llm.Provider, string) {
+	p.mu.RLock()
+	injectedProvider := p.provider
+	p.mu.RUnlock()
+
+	if injectedProvider != nil {
+		_, model := p.resolveCredentials(job)
+		return injectedProvider, model
+	}
+
+	var apiKey, model, providerType, providerBaseURL string
+	candidates := []string{
+		filepath.Join(p.dataDirectory, "settings.json"),
+		"data/settings.json",
+		"../data/settings.json",
+	}
+	for _, cp := range candidates {
+		if data, err := os.ReadFile(cp); err == nil {
+			var s struct {
+				APIKey          string `json:"api_key"`
+				Model           string `json:"model"`
+				ProviderType    string `json:"provider_type"`
+				ProviderBaseURL string `json:"provider_base_url"`
+			}
+			if json.Unmarshal(data, &s) == nil {
+				if s.APIKey != "" {
+					apiKey = cleanAPIKey(s.APIKey)
+				}
+				if s.Model != "" {
+					model = strings.TrimSpace(s.Model)
+				}
+				if s.ProviderType != "" {
+					providerType = strings.TrimSpace(s.ProviderType)
+				}
+				if s.ProviderBaseURL != "" {
+					providerBaseURL = strings.TrimSpace(s.ProviderBaseURL)
+				}
+				if (apiKey != "" || strings.EqualFold(providerType, "ollama")) && model != "" {
+					break
+				}
+			}
+		}
+	}
+
+	if apiKey == "" {
+		apiKey = cleanAPIKey(os.Getenv("OPENROUTER_API_KEY"))
+	}
+	if model == "" {
+		model = "openai/gpt-4o-mini"
+	}
+	if providerType == "" {
+		providerType = "openrouter"
+	}
+
+	provider := llm.NewProvider(llm.Config{
+		Type:    providerType,
+		BaseURL: providerBaseURL,
+		APIKey:  apiKey,
+	})
+	return provider, model
 }
