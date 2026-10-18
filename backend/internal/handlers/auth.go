@@ -159,7 +159,13 @@ func AuthMiddleware(h *HandlerContext) fiber.Handler {
 
 		valid, err := auth.VerifySession(secret, token, time.Now())
 		if err != nil || !valid {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+			cookieToken := strings.Trim(strings.TrimSpace(c.Cookies("readr_session")), "\"'`")
+			if cookieToken != "" && cookieToken != token && !isSessionTokenRevoked(cookieToken) {
+				valid, err = auth.VerifySession(secret, cookieToken, time.Now())
+			}
+			if err != nil || !valid {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+			}
 		}
 
 		return c.Next()
@@ -174,10 +180,18 @@ func RegisterAuth(router fiber.Router, h *HandlerContext) {
 
 		if authConfigured {
 			cookieOrHeaderToken := ExtractSessionToken(c)
-			if cookieOrHeaderToken != "" {
+			if cookieOrHeaderToken != "" && !isSessionTokenRevoked(cookieOrHeaderToken) {
 				valid, err := auth.VerifySession(current.SessionSecret, cookieOrHeaderToken, time.Now())
 				if err == nil && valid {
 					authenticated = true
+				}
+			}
+			if !authenticated {
+				cookieToken := strings.Trim(strings.TrimSpace(c.Cookies("readr_session")), "\"'`")
+				if cookieToken != "" && !isSessionTokenRevoked(cookieToken) {
+					if valid, err := auth.VerifySession(current.SessionSecret, cookieToken, time.Now()); err == nil && valid {
+						authenticated = true
+					}
 				}
 			}
 		}

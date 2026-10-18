@@ -164,4 +164,12 @@ func TestAuthLoginWorkflow(t *testing.T) {
 	protResp, err := app.Test(protReq, fiber.TestConfig{Timeout: 10 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, protResp.StatusCode)
+
+	// Protected access with valid readr_session cookie even if Authorization header carries a non-session key
+	cookieReq := httptest.NewRequest("GET", "/api/protected", nil)
+	cookieReq.Header.Set("Authorization", "Bearer sk-or-v1-provider-key")
+	cookieReq.AddCookie(&http.Cookie{Name: "readr_session", Value: token})
+	cookieResp, err := app.Test(cookieReq, fiber.TestConfig{Timeout: 10 * time.Second})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, cookieResp.StatusCode)
 }
