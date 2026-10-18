@@ -33,11 +33,13 @@ func dispatchArticleJobs(articleID int64, apiKey string, settings ServerSettings
 		return
 	}
 
+	hasCredentials := apiKey != "" || strings.EqualFold(settings.ProviderType, "ollama")
+
 	agents.SubmitJob(agents.Job{
 		ArticleID: articleID,
 		Type:      agents.JobTypePipeline,
 		Settings: agents.PipelineSettings{
-			Summarizer: apiKey != "" && settings.AgentSummarizer,
+			Summarizer: hasCredentials && settings.AgentSummarizer,
 			Enricher:   settings.AgentEnricher,
 			Linker:     settings.AgentLinker,
 		},

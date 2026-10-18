@@ -235,6 +235,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 			"Origin", "Content-Type", "Accept", "Cache-Control", "Pragma",
 			"Authorization", "X-Openrouter-Key", "X-Openrouter-Model",
 			"X-OpenRouter-Key", "X-OpenRouter-Model", "X-Api-Key",
+			"X-Provider-Type", "X-Provider-Base-Url",
 			"X-Agent-Enricher", "X-Agent-Linker", "X-Agent-Summarizer",
 			"X-Request-ID",
 		},
@@ -284,7 +285,7 @@ func setupApp(customDB ...*gorm.DB) *fiber.App {
 	templatesDir := filepath.Join(dataDirectory, "templates")
 	templateRenderer := ingest.NewGonjaTemplateRenderer(templatesDir)
 	ingester.SetTemplateRenderer(templateRenderer)
-	ingester.SetSummarizer(ingest.NewOpenRouterSummarizer())
+	ingester.SetSummarizer(ingest.NewProviderSummarizer())
 
 	chatRepo := chat.NewFileRepository(filepath.Join(dataDirectory, "chats"))
 	articleFetcher := &handlers.ArticleFileFetcher{DataDir: dataDirectory, DB: db}
