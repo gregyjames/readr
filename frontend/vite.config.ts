@@ -8,7 +8,11 @@ const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.BA
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
-    vue(),
+    vue({
+      features: {
+        vapor: true,
+      },
+    }),
     tailwindcss(),
     svgLoader(),
   ],
