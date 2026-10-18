@@ -48,6 +48,10 @@ export async function checkAuthStatus(): Promise<boolean> {
     }
   } catch (err) {
     console.error('Failed to check auth status', err)
+    // If a token was previously stored or auth was already configured, do not assume setup mode
+    if (getStoredToken()) {
+      authState.isAuthConfigured = true
+    }
   } finally {
     authState.isLoaded = true
   }
