@@ -104,6 +104,26 @@ describe('store/auth', () => {
         console.error = errSpy
       }
     })
+
+    it('preserves isAuthConfigured when network error occurs but token exists in localStorage', async () => {
+      localStorage.setItem('readr_token', 'saved-token')
+      const errSpy = console.error
+      console.error = () => {}
+      try {
+        globalThis.fetch = (async () => {
+          throw new Error('Server restarting')
+        }) as typeof fetch
+
+        const result = await checkAuthStatus()
+
+        expect(result).toBe(false)
+        expect(authState.isLoaded).toBe(true)
+        expect(authState.isAuthConfigured).toBe(true)
+        expect(authState.isAuthenticated).toBe(false)
+      } finally {
+        console.error = errSpy
+      }
+    })
   })
 
   describe('login', () => {
