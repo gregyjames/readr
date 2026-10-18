@@ -137,6 +137,9 @@ if (typeof HTMLCanvasElement !== 'undefined') {
 }
 
 // 2. Register Bun loader plugin for .vue SFC files
+// Note: @vue/test-utils 2.x inspects `vm.$.vnode` (VDOM instance) on mounted wrappers,
+// so unit tests compile SFCs in VDOM mode while Vite (`vite.config.ts`) and `vue-tsc`
+// compile `<script setup vapor lang="ts">` components in Vapor mode.
 plugin({
   name: 'vue-sfc-loader',
   setup(build) {
@@ -146,7 +149,14 @@ plugin({
       const id = Math.random().toString(36).substring(2, 8)
       let scriptCode = 'export default {}'
       if (descriptor.script || descriptor.scriptSetup) {
-        const script = compileScript(descriptor, { id, inlineTemplate: true })
+        const script = compileScript(
+          { ...descriptor, vapor: false },
+          {
+            id,
+            inlineTemplate: true,
+            vapor: false,
+          }
+        )
         scriptCode = script.content
       } else if (descriptor.template) {
         const template = compileTemplate({
