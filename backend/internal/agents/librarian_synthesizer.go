@@ -1,19 +1,17 @@
 package agents
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
+	"example.com/backend/internal/llm"
 	"example.com/backend/internal/repository"
 )
 
-func (r *LibrarianRunner) synthesizeCluster(ctx context.Context, cluster ClusterCandidate, apiKey, model, apiURL string) (*MOCSynthesisResponse, error) {
+func (r *LibrarianRunner) synthesizeCluster(ctx context.Context, cluster ClusterCandidate, provider llm.Provider, model string) (*MOCSynthesisResponse, error) {
 	parentCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
@@ -36,198 +34,97 @@ Instructions:
 3. For each article item, provide a 1-sentence contextual summary explaining how it fits into that section.
 4. Output strictly adhering to the JSON schema. Use professional plain text without emojis.`, cluster.Tag, articleListText.String())
 
-	schema := map[string]interface{}{
-		"type": "json_schema",
-		"json_schema": map[string]interface{}{
-			"name":   "moc_synthesis",
-			"strict": true,
-			"schema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"topic_title": map[string]interface{}{
-						"type":        "string",
-						"description": "Clean capitalized topic name (e.g. Distributed Systems)",
-					},
-					"executive_summary": map[string]interface{}{
-						"type":        "string",
-						"description": "2-3 sentence executive synthesis of this topic cluster.",
-					},
-					"sections": map[string]interface{}{
-						"type": "array",
-						"items": map[string]interface{}{
-							"type": "object",
-							"properties": map[string]interface{}{
-								"title": map[string]interface{}{
-									"type": "string",
-								},
+	startTime := time.Now()
+	temp := 0.2
+
+	mocID := int64(0)
+	if cluster.ExistingMOC != nil {
+		mocID = cluster.ExistingMOC.ID
+	}
+
+	mocSynthesisSchema := &llm.JSONSchemaConfig{
+		Name:   "moc_synthesis",
+		Strict: true,
+		Schema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"topic_title": map[string]interface{}{
+					"type":        "string",
+					"description": "Clean capitalized topic name (e.g. Distributed Systems)",
+				},
+				"executive_summary": map[string]interface{}{
+					"type":        "string",
+					"description": "2-3 sentence executive synthesis of this topic cluster.",
+				},
+				"sections": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"title": map[string]interface{}{
+								"type": "string",
+							},
+							"items": map[string]interface{}{
+								"type": "array",
 								"items": map[string]interface{}{
-									"type": "array",
-									"items": map[string]interface{}{
-										"type": "object",
-										"properties": map[string]interface{}{
-											"article_id": map[string]interface{}{
-												"type": "integer",
-											},
-											"context_note": map[string]interface{}{
-												"type": "string",
-											},
+									"type": "object",
+									"properties": map[string]interface{}{
+										"article_id": map[string]interface{}{
+											"type": "integer",
 										},
-										"required":             []string{"article_id", "context_note"},
-										"additionalProperties": false,
+										"context_note": map[string]interface{}{
+											"type": "string",
+										},
 									},
+									"required":             []string{"article_id", "context_note"},
+									"additionalProperties": false,
 								},
 							},
-							"required":             []string{"title", "items"},
-							"additionalProperties": false,
 						},
+						"required":             []string{"title", "items"},
+						"additionalProperties": false,
 					},
 				},
-				"required":             []string{"topic_title", "executive_summary", "sections"},
-				"additionalProperties": false,
 			},
+			"required":             []string{"topic_title", "executive_summary", "sections"},
+			"additionalProperties": false,
 		},
 	}
 
-	reqBody := map[string]interface{}{
-		"model": model,
-		"messages": []map[string]string{
+	resp, err := provider.Complete(ctx, llm.CompletionRequest{
+		Model: model,
+		Messages: []llm.Message{
 			{
-				"role":    "user",
-				"content": prompt,
+				Role:    llm.RoleUser,
+				Content: prompt,
 			},
 		},
-		"response_format": schema,
-		"temperature":     0.2,
-	}
+		Temperature:    &temp,
+		JSONMode:       true,
+		ResponseSchema: mocSynthesisSchema,
+	})
 
-	reqBytes, _ := json.Marshal(reqBody)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(reqBytes))
 	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	httpReq.Header.Set("HTTP-Referer", "https://readr.app")
-	httpReq.Header.Set("X-Title", "Readr Librarian MOC Synthesizer")
-
-	startTime := time.Now()
-	client := &http.Client{Timeout: 25 * time.Second}
-	var resp *http.Response
-	var bodyBytes []byte
-	var lastErr error
-	maxRetries := 3
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		if attempt > 0 {
-			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(backoff):
-			}
-		}
-
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(reqBytes))
-		if err != nil {
-			return nil, err
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-		httpReq.Header.Set("HTTP-Referer", "https://readr.app")
-		httpReq.Header.Set("X-Title", "Readr Librarian MOC Synthesizer")
-
-		resp, err = client.Do(httpReq)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		bodyBytes, err = io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		// Check if status is retryable (429 rate limit or 5xx server errors)
-		if resp.StatusCode == 429 || (resp.StatusCode >= 500 && resp.StatusCode <= 599) {
-			lastErr = fmt.Errorf("openrouter returned retryable status %d: %s", resp.StatusCode, string(bodyBytes))
-			continue
-		}
-
-		if resp.StatusCode != 200 {
-			errMsg := fmt.Sprintf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
-			if r.repo != nil {
-				_ = r.repo.RecordPipelineMetric(context.WithoutCancel(parentCtx), &repository.PipelineMetric{
-					ArticleID:        0,
-					ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
-					Model:            model,
-					Status:           "failed",
-					DurationMs:       time.Since(startTime).Milliseconds(),
-					RetryCount:       attempt,
-					PromptTokens:     len(prompt) / 4,
-					CompletionTokens: 0,
-					TotalTokens:      len(prompt) / 4,
-					ErrorMessage:     errMsg,
-					CreatedAt:        startTime,
-				})
-			}
-			return nil, fmt.Errorf("%s", errMsg)
-		}
-
-		// Success
-		lastErr = nil
-		break
-	}
-
-	if lastErr != nil {
 		if r.repo != nil {
 			_ = r.repo.RecordPipelineMetric(context.WithoutCancel(parentCtx), &repository.PipelineMetric{
-				ArticleID:        0,
+				ArticleID:        mocID,
 				ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
 				Model:            model,
 				Status:           "failed",
 				DurationMs:       time.Since(startTime).Milliseconds(),
-				RetryCount:       maxRetries,
+				RetryCount:       0,
 				PromptTokens:     len(prompt) / 4,
 				CompletionTokens: 0,
 				TotalTokens:      len(prompt) / 4,
-				ErrorMessage:     lastErr.Error(),
+				ErrorMessage:     err.Error(),
 				CreatedAt:        startTime,
 			})
 		}
-		return nil, fmt.Errorf("openrouter request failed after %d attempts: %w", maxRetries, lastErr)
+		return nil, fmt.Errorf("provider request failed: %w", err)
 	}
 
-	var chatResp struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		} `json:"usage"`
-	}
-
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return nil, fmt.Errorf("failed to parse openrouter response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 {
-		return nil, fmt.Errorf("openrouter returned empty choices list")
-	}
-
-	rawContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
-	cleanJSON := rawContent
-	if strings.HasPrefix(cleanJSON, "```") {
-		if idx := strings.Index(cleanJSON, "\n"); idx != -1 {
-			cleanJSON = cleanJSON[idx+1:]
-		}
-		cleanJSON = strings.TrimSuffix(cleanJSON, "```")
-		cleanJSON = strings.TrimSpace(cleanJSON)
-	}
+	rawContent := strings.TrimSpace(resp.Content)
+	cleanJSON := cleanJSONBlock(rawContent)
 
 	var synthesis MOCSynthesisResponse
 	if err := json.Unmarshal([]byte(cleanJSON), &synthesis); err != nil {
@@ -248,25 +145,16 @@ Instructions:
 	}
 	synthesis.Sections = validSections
 
-	promptTokens := 0
-	completionTokens := 0
-	totalTokens := 0
-	if chatResp.Usage != nil {
-		promptTokens = chatResp.Usage.PromptTokens
-		completionTokens = chatResp.Usage.CompletionTokens
-		totalTokens = chatResp.Usage.TotalTokens
+	promptTokens := len(prompt) / 4
+	completionTokens := len(rawContent) / 4
+	totalTokens := promptTokens + completionTokens
+	if resp.Usage != nil {
+		promptTokens = resp.Usage.PromptTokens
+		completionTokens = resp.Usage.CompletionTokens
+		totalTokens = resp.Usage.TotalTokens
 		if totalTokens == 0 {
 			totalTokens = promptTokens + completionTokens
 		}
-	} else {
-		promptTokens = len(prompt) / 4
-		completionTokens = len(rawContent) / 4
-		totalTokens = promptTokens + completionTokens
-	}
-
-	mocID := int64(0)
-	if cluster.ExistingMOC != nil {
-		mocID = cluster.ExistingMOC.ID
 	}
 
 	if r.repo != nil {
@@ -287,7 +175,7 @@ Instructions:
 	return &synthesis, nil
 }
 
-func (r *LibrarianRunner) synthesizeDeltaCluster(ctx context.Context, cluster ClusterCandidate, unlinked []repository.ArticleRecord, existingContent string, apiKey, model, apiURL string) (*MOCDeltaResponse, error) {
+func (r *LibrarianRunner) synthesizeDeltaCluster(ctx context.Context, cluster ClusterCandidate, unlinked []repository.ArticleRecord, existingContent string, provider llm.Provider, model string) (*MOCDeltaResponse, error) {
 	parentCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
@@ -316,138 +204,59 @@ Instructions:
 2. Provide a 1-sentence contextual summary (context_note) explaining how it fits into that section.
 3. Output strictly adhering to the JSON schema. Use professional plain text without emojis.`, cluster.Tag, sectionsList.String(), newArticlesList.String())
 
-	schema := map[string]interface{}{
-		"type": "json_schema",
-		"json_schema": map[string]interface{}{
-			"name":   "moc_delta_placement",
-			"strict": true,
-			"schema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"placements": map[string]interface{}{
-						"type": "array",
-						"items": map[string]interface{}{
-							"type": "object",
-							"properties": map[string]interface{}{
-								"article_id": map[string]interface{}{
-									"type": "integer",
-								},
-								"target_section": map[string]interface{}{
-									"type": "string",
-								},
-								"context_note": map[string]interface{}{
-									"type": "string",
-								},
-							},
-							"required":             []string{"article_id", "target_section", "context_note"},
-							"additionalProperties": false,
-						},
-					},
-				},
-				"required":             []string{"placements"},
-				"additionalProperties": false,
-			},
-		},
-	}
-
-	reqBody := map[string]interface{}{
-		"model": model,
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"content": prompt,
-			},
-		},
-		"response_format": schema,
-		"temperature":     0.2,
-	}
-
-	reqBytes, _ := json.Marshal(reqBody)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(reqBytes))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	httpReq.Header.Set("HTTP-Referer", "https://readr.app")
-	httpReq.Header.Set("X-Title", "Readr Librarian MOC Synthesizer")
-
 	startTime := time.Now()
-	client := &http.Client{Timeout: 25 * time.Second}
-	var resp *http.Response
-	var bodyBytes []byte
-	var lastErr error
-	maxRetries := 3
+	temp := 0.2
 
 	mocID := int64(0)
 	if cluster.ExistingMOC != nil {
 		mocID = cluster.ExistingMOC.ID
 	}
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		if attempt > 0 {
-			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(backoff):
-			}
-		}
-
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(reqBytes))
-		if err != nil {
-			return nil, err
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-		httpReq.Header.Set("HTTP-Referer", "https://readr.app")
-		httpReq.Header.Set("X-Title", "Readr Librarian MOC Synthesizer")
-
-		resp, err = client.Do(httpReq)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		bodyBytes, err = io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		// Check if status is retryable (429 rate limit or 5xx server errors)
-		if resp.StatusCode == 429 || (resp.StatusCode >= 500 && resp.StatusCode <= 599) {
-			lastErr = fmt.Errorf("openrouter returned retryable status %d: %s", resp.StatusCode, string(bodyBytes))
-			continue
-		}
-
-		if resp.StatusCode != 200 {
-			errMsg := fmt.Sprintf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
-			if r.repo != nil {
-				_ = r.repo.RecordPipelineMetric(context.WithoutCancel(parentCtx), &repository.PipelineMetric{
-					ArticleID:        mocID,
-					ArticleTitle:     fmt.Sprintf("[Librarian] MOC - %s", cluster.Tag),
-					Model:            model,
-					Status:           "failed",
-					DurationMs:       time.Since(startTime).Milliseconds(),
-					RetryCount:       attempt,
-					PromptTokens:     len(prompt) / 4,
-					CompletionTokens: 0,
-					TotalTokens:      len(prompt) / 4,
-					ErrorMessage:     errMsg,
-					CreatedAt:        startTime,
-				})
-			}
-			return nil, fmt.Errorf("%s", errMsg)
-		}
-
-		// Success
-		lastErr = nil
-		break
+	mocDeltaSchema := &llm.JSONSchemaConfig{
+		Name:   "moc_delta_placement",
+		Strict: true,
+		Schema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"placements": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"article_id": map[string]interface{}{
+								"type": "integer",
+							},
+							"target_section": map[string]interface{}{
+								"type": "string",
+							},
+							"context_note": map[string]interface{}{
+								"type": "string",
+							},
+						},
+						"required":             []string{"article_id", "target_section", "context_note"},
+						"additionalProperties": false,
+					},
+				},
+			},
+			"required":             []string{"placements"},
+			"additionalProperties": false,
+		},
 	}
 
-	if lastErr != nil {
+	resp, err := provider.Complete(ctx, llm.CompletionRequest{
+		Model: model,
+		Messages: []llm.Message{
+			{
+				Role:    llm.RoleUser,
+				Content: prompt,
+			},
+		},
+		Temperature:    &temp,
+		JSONMode:       true,
+		ResponseSchema: mocDeltaSchema,
+	})
+
+	if err != nil {
 		if r.repo != nil {
 			_ = r.repo.RecordPipelineMetric(context.WithoutCancel(parentCtx), &repository.PipelineMetric{
 				ArticleID:        mocID,
@@ -455,46 +264,19 @@ Instructions:
 				Model:            model,
 				Status:           "failed",
 				DurationMs:       time.Since(startTime).Milliseconds(),
-				RetryCount:       maxRetries,
+				RetryCount:       0,
 				PromptTokens:     len(prompt) / 4,
 				CompletionTokens: 0,
 				TotalTokens:      len(prompt) / 4,
-				ErrorMessage:     lastErr.Error(),
+				ErrorMessage:     err.Error(),
 				CreatedAt:        startTime,
 			})
 		}
-		return nil, fmt.Errorf("openrouter request failed after %d attempts: %w", maxRetries, lastErr)
+		return nil, fmt.Errorf("provider request failed: %w", err)
 	}
 
-	var chatResp struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		} `json:"usage"`
-	}
-
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return nil, fmt.Errorf("failed to parse openrouter response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 {
-		return nil, fmt.Errorf("openrouter returned empty choices list")
-	}
-
-	rawContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
-	cleanJSON := rawContent
-	if strings.HasPrefix(cleanJSON, "```") {
-		if idx := strings.Index(cleanJSON, "\n"); idx != -1 {
-			cleanJSON = cleanJSON[idx+1:]
-		}
-		cleanJSON = strings.TrimSuffix(cleanJSON, "```")
-		cleanJSON = strings.TrimSpace(cleanJSON)
-	}
+	rawContent := strings.TrimSpace(resp.Content)
+	cleanJSON := cleanJSONBlock(rawContent)
 
 	var deltaResp MOCDeltaResponse
 	if err := json.Unmarshal([]byte(cleanJSON), &deltaResp); err != nil {
@@ -510,25 +292,16 @@ Instructions:
 	}
 	deltaResp.Placements = validPlacements
 
-	promptTokens := 0
-	completionTokens := 0
-	totalTokens := 0
-	if chatResp.Usage != nil {
-		promptTokens = chatResp.Usage.PromptTokens
-		completionTokens = chatResp.Usage.CompletionTokens
-		totalTokens = chatResp.Usage.TotalTokens
+	promptTokens := len(prompt) / 4
+	completionTokens := len(rawContent) / 4
+	totalTokens := promptTokens + completionTokens
+	if resp.Usage != nil {
+		promptTokens = resp.Usage.PromptTokens
+		completionTokens = resp.Usage.CompletionTokens
+		totalTokens = resp.Usage.TotalTokens
 		if totalTokens == 0 {
 			totalTokens = promptTokens + completionTokens
 		}
-	} else {
-		promptTokens = len(prompt) / 4
-		completionTokens = len(rawContent) / 4
-		totalTokens = promptTokens + completionTokens
-	}
-
-	mocID = int64(0)
-	if cluster.ExistingMOC != nil {
-		mocID = cluster.ExistingMOC.ID
 	}
 
 	if r.repo != nil {

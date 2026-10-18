@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"example.com/backend/internal/ingest"
+	"example.com/backend/internal/llm"
 	"example.com/backend/internal/repository"
 	"example.com/backend/internal/vault"
 	"go.uber.org/zap"
@@ -49,6 +50,7 @@ type LibrarianRunner struct {
 	lastResult       *LibrarianRunResult
 	mu               sync.Mutex
 	isRunning        bool
+	provider         llm.Provider
 }
 
 func NewLibrarianRunner(logger *zap.Logger, db *gorm.DB, repo repository.Repository, dataDir string, onGraphUpdate func()) *LibrarianRunner {
@@ -63,6 +65,12 @@ func NewLibrarianRunner(logger *zap.Logger, db *gorm.DB, repo repository.Reposit
 		organizer:     vault.NewVaultOrganizer(dataDir, db, logger),
 		onGraphUpdate: onGraphUpdate,
 	}
+}
+
+func (r *LibrarianRunner) SetProvider(p llm.Provider) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.provider = p
 }
 
 func (r *LibrarianRunner) GetStatus(enabled bool, cronExpr string, minClusterSize int, nextRun *time.Time) LibrarianStatus {
@@ -102,10 +110,22 @@ func (r *LibrarianRunner) DetectClusters(ctx context.Context, minSize int) ([]Cl
 }
 
 func (r *LibrarianRunner) RunLibrarian(ctx context.Context, trigger string) (*LibrarianRunResult, error) {
-	return r.RunLibrarianWithURL(ctx, trigger, "https://openrouter.ai/api/v1/chat/completions")
+	provider, model, _, _ := r.getProviderAndSettings()
+	return r.runLibrarianWithProvider(ctx, trigger, provider, model)
 }
 
 func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger string, apiURL string) (*LibrarianRunResult, error) {
+	apiKey, model, _, _ := r.getSettings()
+	baseURL := strings.TrimSuffix(strings.TrimSpace(apiURL), "/chat/completions")
+	provider := llm.NewProvider(llm.Config{
+		Type:    "custom",
+		BaseURL: baseURL,
+		APIKey:  apiKey,
+	})
+	return r.runLibrarianWithProvider(ctx, trigger, provider, model)
+}
+
+func (r *LibrarianRunner) runLibrarianWithProvider(ctx context.Context, trigger string, provider llm.Provider, model string) (*LibrarianRunResult, error) {
 	r.mu.Lock()
 	if r.isRunning {
 		r.mu.Unlock()
@@ -117,7 +137,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	startTime := time.Now()
 	r.logger.Info("Starting Librarian MOC run", zap.String("trigger", trigger))
 
-	apiKey, model, minSize, enabled := r.getSettings()
+	_, _, minSize, enabled := r.getSettings()
 
 	result := &LibrarianRunResult{
 		Status:  "success",
@@ -277,8 +297,12 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				}
 
 				// Synthesize delta
-				if apiKey == "" {
-					r.logger.Warn("OpenRouter API key not configured, skipping delta synthesis for cluster", zap.String("tag", cluster.Tag))
+				r.mu.Lock()
+				hasInjected := r.provider != nil
+				r.mu.Unlock()
+				apiKey, _, _, _ := r.getSettings()
+				if provider == nil || (!hasInjected && strings.ToLower(provider.Name()) != "ollama" && apiKey == "") {
+					r.logger.Warn("AI provider API key not configured, skipping delta synthesis for cluster", zap.String("tag", cluster.Tag))
 					result.Status = "partial (some clusters failed)"
 					result.Errors = append(result.Errors, fmt.Sprintf("tag %s: api key not configured", cluster.Tag))
 					return
@@ -289,7 +313,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 					zap.Int("new_unlinked_notes", len(unlinked)),
 				)
 
-				deltaResp, err := r.synthesizeDeltaCluster(ctx, cluster, unlinked, reconciledContent, apiKey, model, apiURL)
+				deltaResp, err := r.synthesizeDeltaCluster(ctx, cluster, unlinked, reconciledContent, provider, model)
 				if err != nil {
 					r.logger.Error("Failed to synthesize delta MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
 					result.Status = "partial (some clusters failed)"
@@ -326,8 +350,12 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 				result.UpdatedMOCs++
 			} else {
 				// Fresh MOC Synthesis
-				if apiKey == "" {
-					r.logger.Warn("OpenRouter API key not configured, skipping cluster synthesis", zap.String("tag", cluster.Tag))
+				r.mu.Lock()
+				hasInjected := r.provider != nil
+				r.mu.Unlock()
+				apiKey, _, _, _ := r.getSettings()
+				if provider == nil || (!hasInjected && strings.ToLower(provider.Name()) != "ollama" && apiKey == "") {
+					r.logger.Warn("AI provider API key not configured, skipping cluster synthesis", zap.String("tag", cluster.Tag))
 					result.Status = "partial (some clusters failed)"
 					result.Errors = append(result.Errors, fmt.Sprintf("tag %s: api key not configured", cluster.Tag))
 					return
@@ -338,7 +366,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 					zap.Int("article_count", len(cluster.Articles)),
 				)
 
-				synthesis, err := r.synthesizeCluster(ctx, cluster, apiKey, model, apiURL)
+				synthesis, err := r.synthesizeCluster(ctx, cluster, provider, model)
 				if err != nil {
 					r.logger.Error("Failed to synthesize MOC for cluster", zap.String("tag", cluster.Tag), zap.Error(err))
 					result.Status = "partial (some clusters failed)"
@@ -986,4 +1014,48 @@ func (r *LibrarianRunner) getSettings() (apiKey, model string, minClusterSize in
 	}
 
 	return defaults.APIKey, defaults.Model, defaults.MinClusterSize, defaults.Enabled
+}
+
+func (r *LibrarianRunner) getProviderAndSettings() (provider llm.Provider, model string, minClusterSize int, enabled bool) {
+	settingsPath := filepath.Join(r.dataDir, "settings.json")
+	defaults := struct {
+		APIKey          string `json:"api_key"`
+		Model           string `json:"model"`
+		ProviderType    string `json:"provider_type"`
+		ProviderBaseURL string `json:"provider_base_url"`
+		MinClusterSize  int    `json:"librarian_min_cluster_size"`
+		Enabled         bool   `json:"librarian_enabled"`
+	}{
+		Model:          "openai/gpt-4o-mini",
+		ProviderType:   "openrouter",
+		MinClusterSize: 5,
+		Enabled:        true,
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err == nil {
+		_ = json.Unmarshal(data, &defaults)
+	}
+
+	if defaults.MinClusterSize <= 0 {
+		defaults.MinClusterSize = 5
+	}
+	if defaults.ProviderType == "" {
+		defaults.ProviderType = "openrouter"
+	}
+
+	r.mu.Lock()
+	injected := r.provider
+	r.mu.Unlock()
+
+	if injected != nil {
+		return injected, defaults.Model, defaults.MinClusterSize, defaults.Enabled
+	}
+
+	p := llm.NewProvider(llm.Config{
+		Type:    defaults.ProviderType,
+		BaseURL: defaults.ProviderBaseURL,
+		APIKey:  defaults.APIKey,
+	})
+	return p, defaults.Model, defaults.MinClusterSize, defaults.Enabled
 }
