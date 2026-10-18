@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"example.com/backend/internal/auth"
+	"example.com/backend/internal/llm"
 	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 )
@@ -14,6 +16,8 @@ import (
 type ServerSettings struct {
 	APIKey                  string `json:"api_key"`
 	Model                   string `json:"model"`
+	ProviderType            string `json:"provider_type"`
+	ProviderBaseURL         string `json:"provider_base_url"`
 	AgentEnricher           bool   `json:"agent_enricher"`
 	AgentLinker             bool   `json:"agent_linker"`
 	AgentSummarizer         bool   `json:"agent_summarizer"`
@@ -47,9 +51,24 @@ func NewSettingsStore(dataDir string, logger *zap.Logger) *SettingsStore {
 	return s
 }
 
+func defaultBaseURLForProvider(providerType string) string {
+	switch strings.ToLower(providerType) {
+	case "ollama":
+		return "http://localhost:11434/v1"
+	case "openai":
+		return "https://api.openai.com/v1"
+	case "openrouter":
+		return "https://openrouter.ai/api/v1"
+	default:
+		return "https://openrouter.ai/api/v1"
+	}
+}
+
 func (s *SettingsStore) loadFromDisk() ServerSettings {
 	settingsPath := filepath.Join(s.dataDir, "settings.json")
 	defaults := ServerSettings{
+		ProviderType:            "openrouter",
+		ProviderBaseURL:         "https://openrouter.ai/api/v1",
 		Model:                   "openai/gpt-4o-mini",
 		AgentEnricher:           true,
 		AgentLinker:             true,
@@ -88,6 +107,12 @@ func (s *SettingsStore) loadFromDisk() ServerSettings {
 		return defaults
 	}
 	s.loadFailed = false
+	if res.ProviderType == "" {
+		res.ProviderType = "openrouter"
+	}
+	if res.ProviderBaseURL == "" {
+		res.ProviderBaseURL = defaultBaseURLForProvider(res.ProviderType)
+	}
 	if res.Model == "" {
 		res.Model = "openai/gpt-4o-mini"
 	}
@@ -146,6 +171,16 @@ func (s *SettingsStore) Update(fn func(current *ServerSettings) error) (ServerSe
 	return s.settings, nil
 }
 
+func (s *SettingsStore) GetLLMConfig() llm.Config {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return llm.Config{
+		Type:    s.settings.ProviderType,
+		BaseURL: s.settings.ProviderBaseURL,
+		APIKey:  s.settings.APIKey,
+	}
+}
+
 func (s *SettingsStore) ExtractOpenRouterCredentials() (string, string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -158,6 +193,8 @@ func RegisterSettings(router fiber.Router, h *HandlerContext) {
 		return c.JSON(fiber.Map{
 			"api_key":                    fresh.APIKey,
 			"model":                      fresh.Model,
+			"provider_type":              fresh.ProviderType,
+			"provider_base_url":          fresh.ProviderBaseURL,
 			"agent_enricher":             fresh.AgentEnricher,
 			"agent_linker":               fresh.AgentLinker,
 			"agent_summarizer":           fresh.AgentSummarizer,
@@ -182,6 +219,16 @@ func RegisterSettings(router fiber.Router, h *HandlerContext) {
 				current.Model = req.Model
 			} else {
 				current.Model = "openai/gpt-4o-mini"
+			}
+			if req.ProviderType != "" {
+				current.ProviderType = req.ProviderType
+			} else {
+				current.ProviderType = "openrouter"
+			}
+			if req.ProviderBaseURL != "" {
+				current.ProviderBaseURL = req.ProviderBaseURL
+			} else {
+				current.ProviderBaseURL = defaultBaseURLForProvider(current.ProviderType)
 			}
 			current.AgentEnricher = req.AgentEnricher
 			current.AgentLinker = req.AgentLinker
