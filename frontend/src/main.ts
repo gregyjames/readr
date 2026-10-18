@@ -1,4 +1,4 @@
-import { createApp } from 'vue'
+import { createApp, vaporInteropPlugin } from 'vue'
 import axios from 'axios'
 import './style.css'
 import App from './App.vue'
@@ -29,4 +29,4 @@ axios.interceptors.response.use(
   }
 )
 
-createApp(App).use(router).mount('#app')
+createApp(App).use(vaporInteropPlugin).use(router).mount('#app')

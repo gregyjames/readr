@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script setup vapor lang="ts">
 import type { Article } from '../../types/chat'
 
 defineProps<{

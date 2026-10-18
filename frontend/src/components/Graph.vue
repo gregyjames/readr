@@ -1,9 +1,10 @@
-<script setup lang="ts">
+<script setup vapor lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Network } from 'vis-network'
 import GraphZoomControls from './GraphZoomControls.vue'
 import emitter from '../event-bus'
+import { useGraphZoom } from '../composables/useGraphZoom'
 
 const container = ref<HTMLElement | null>(null)
 const router = useRouter()
@@ -125,7 +126,6 @@ const getOptions = (isDark: boolean) => ({
   }
 })
 
-import { useGraphZoom } from '../composables/useGraphZoom'
 const { zoomIn, zoomOut, fitGraph: fitView } = useGraphZoom(() => network)
 
 const getFilteredData = () => {

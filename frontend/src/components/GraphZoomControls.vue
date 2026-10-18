@@ -28,6 +28,6 @@
     </button>
   </div>
 </template>
-<script setup lang="ts">
+<script setup vapor lang="ts">
 defineEmits(['zoom-in', 'zoom-out', 'fit'])
 </script>

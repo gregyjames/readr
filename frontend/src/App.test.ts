@@ -125,4 +125,28 @@ describe('App.vue Root Component', () => {
 
     wrapper.unmount()
   })
+
+  it('compiles SFCs in Vue Vapor mode via <script setup vapor>', async () => {
+    const { parse, compileScript } = await import('@vue/compiler-sfc')
+    const sfcPaths = [
+      new URL('./App.vue', import.meta.url),
+      new URL('./components/Home.vue', import.meta.url),
+      new URL('./components/Article.vue', import.meta.url),
+      new URL('./views/ChatView.vue', import.meta.url),
+      new URL('./views/SettingsView.vue', import.meta.url),
+    ]
+
+    for (const sfcUrl of sfcPaths) {
+      const source = await Bun.file(sfcUrl).text()
+      const { descriptor } = parse(source, { filename: sfcUrl.pathname })
+      expect(descriptor.vapor).toBe(true)
+      const compiled = compileScript(descriptor, {
+        id: 'vapor-check',
+        inlineTemplate: true,
+        vapor: true,
+      })
+      expect(compiled.content).toContain('defineVaporComponent')
+    }
+  })
 })
+

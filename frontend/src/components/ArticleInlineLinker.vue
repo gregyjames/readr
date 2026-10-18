@@ -27,7 +27,7 @@
   </div>
 </template>
 
-<script setup lang="ts">
+<script setup vapor lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 
 const props = defineProps<{

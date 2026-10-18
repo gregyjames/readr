@@ -7,7 +7,7 @@ const sessionFeeds = ref<RssFeed[]>([])
 const sessionTimelines = ref<Record<string, TimelineItem[]>>({})
 </script>
 
-<script setup lang="ts">
+<script setup vapor lang="ts">
 import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { feedsAPI, ingestAPI } from '../services/feeds'

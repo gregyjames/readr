@@ -38,7 +38,7 @@
   </Transition>
 </template>
 
-<script setup lang="ts">
+<script setup vapor lang="ts">
 defineProps<{
   show: boolean
   article: any

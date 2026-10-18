@@ -35,7 +35,7 @@
   </transition>
 </template>
 
-<script setup lang="ts">
+<script setup vapor lang="ts">
 import ArticleStatusRing from './ArticleStatusRing.vue'
 
 defineProps<{

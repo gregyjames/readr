@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script setup vapor lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { settings, saveSettingsToServer, toggleTheme, setViewMode } from '../store/settings'
 import { authState, changePassword, getStoredToken, checkAuthStatus } from '../store/auth'

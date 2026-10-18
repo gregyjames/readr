@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script setup vapor lang="ts">
 import { computed } from 'vue'
 import { mocRingSegments, type MocProgress } from '../utils/moc'
 
