@@ -283,22 +283,27 @@ describe('Views: SettingsView and ChatView', () => {
       expect(wrapper.text()).toContain('AI Provider not configured.')
     })
 
-    it('does not show missing key warning banner when provider is ollama even without key', async () => {
-      settings.provider_type = 'ollama'
-      settings.api_key = ''
-      const router = await setupRouter('/chat')
-      const wrapper = mount(ChatView, {
-        global: {
-          plugins: [router],
-          stubs: {
-            ChatMessageItem: true,
-            MentionDropdown: true,
+    it('does not show missing key warning banner when provider is ollama or custom even without key', async () => {
+      for (const providerType of ['ollama', 'custom'] as const) {
+        settings.provider_type = providerType
+        settings.provider_base_url = 'http://localhost:8000/v1'
+        settings.api_key = ''
+        const router = await setupRouter('/chat')
+        const wrapper = mount(ChatView, {
+          global: {
+            plugins: [router],
+            stubs: {
+              ChatMessageItem: true,
+              MentionDropdown: true,
+            },
           },
-        },
-      })
-      await flushPromises()
+        })
+        await flushPromises()
 
-      expect(wrapper.text()).not.toContain('AI Provider not configured.')
+        expect(wrapper.text()).not.toContain('AI Provider not configured.')
+        wrapper.unmount()
+      }
     })
   })
 })
+

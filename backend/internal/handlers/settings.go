@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"example.com/backend/internal/auth"
@@ -52,16 +51,7 @@ func NewSettingsStore(dataDir string, logger *zap.Logger) *SettingsStore {
 }
 
 func defaultBaseURLForProvider(providerType string) string {
-	switch strings.ToLower(providerType) {
-	case "ollama":
-		return "http://localhost:11434/v1"
-	case "openai":
-		return "https://api.openai.com/v1"
-	case "openrouter":
-		return "https://openrouter.ai/api/v1"
-	default:
-		return "https://openrouter.ai/api/v1"
-	}
+	return llm.DefaultBaseURL(providerType)
 }
 
 func (s *SettingsStore) loadFromDisk() ServerSettings {

@@ -619,21 +619,21 @@ func (p *AgentPool) resolveProvider(job Job) (llm.Provider, string) {
 				if s.ProviderBaseURL != "" {
 					providerBaseURL = strings.TrimSpace(s.ProviderBaseURL)
 				}
-				if (apiKey != "" || strings.EqualFold(providerType, "ollama")) && model != "" {
+				if (apiKey != "" || !llm.RequiresAPIKey(providerType)) && model != "" {
 					break
 				}
 			}
 		}
 	}
 
-	if apiKey == "" {
-		apiKey = cleanAPIKey(os.Getenv("OPENROUTER_API_KEY"))
-	}
 	if model == "" {
 		model = "openai/gpt-4o-mini"
 	}
 	if providerType == "" {
 		providerType = "openrouter"
+	}
+	if apiKey == "" && strings.EqualFold(providerType, "openrouter") {
+		apiKey = cleanAPIKey(os.Getenv("OPENROUTER_API_KEY"))
 	}
 
 	provider := llm.NewProvider(llm.Config{

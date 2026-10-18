@@ -12,6 +12,7 @@ import (
 
 	"example.com/backend/internal/agents"
 	"example.com/backend/internal/ingest"
+	"example.com/backend/internal/llm"
 	"example.com/backend/internal/markdown"
 	"example.com/backend/internal/repository"
 	"example.com/backend/internal/vault"
@@ -33,7 +34,7 @@ func dispatchArticleJobs(articleID int64, apiKey string, settings ServerSettings
 		return
 	}
 
-	hasCredentials := apiKey != "" || strings.EqualFold(settings.ProviderType, "ollama")
+	hasCredentials := apiKey != "" || !llm.RequiresAPIKey(settings.ProviderType)
 
 	agents.SubmitJob(agents.Job{
 		ArticleID: articleID,

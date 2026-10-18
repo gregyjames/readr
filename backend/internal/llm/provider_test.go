@@ -568,3 +568,96 @@ func TestProvider_Complete_ResponseSchema(t *testing.T) {
 		t.Errorf("expected name='test_schema' and strict=true, got: %v", js)
 	}
 }
+
+func TestComplete_RetryAndBackoff(t *testing.T) {
+	attempts := 0
+	mockClient := newMockHTTPClient(func(r *http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(bytes.NewBufferString(`{"error":{"message":"rate limit"}}`)),
+			}, nil
+		}
+		if attempts == 2 {
+			return &http.Response{
+				StatusCode: http.StatusBadGateway,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(bytes.NewBufferString(`{"error":{"message":"bad gateway"}}`)),
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewBufferString(`{"choices":[{"message":{"content":"recovered"}}]}`)),
+		}, nil
+	})
+
+	p := llm.NewProvider(llm.Config{
+		Type:       "openai",
+		APIKey:     "key",
+		HTTPClient: mockClient,
+	})
+
+	resp, err := p.Complete(context.Background(), llm.CompletionRequest{
+		Model:    "gpt-4o-mini",
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("expected Complete to recover after retries, got error: %v", err)
+	}
+	if resp.Content != "recovered" {
+		t.Errorf("expected 'recovered', got %q", resp.Content)
+	}
+	if resp.RetryCount != 2 {
+		t.Errorf("expected RetryCount=2, got %d", resp.RetryCount)
+	}
+	if attempts != 3 {
+		t.Errorf("expected 3 total attempts, got %d", attempts)
+	}
+}
+
+func TestStream_MalformedJSONAndProviderError(t *testing.T) {
+	// 1. Malformed JSON chunk should return an error
+	malformedClient := newMockHTTPClient(func(r *http.Request) (*http.Response, error) {
+		sseData := "data: {not-valid-json\n\ndata: [DONE]\n\n"
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(bytes.NewBufferString(sseData)),
+		}, nil
+	})
+	p1 := llm.NewProvider(llm.Config{
+		Type:       "openai",
+		APIKey:     "key",
+		HTTPClient: malformedClient,
+	})
+	err := p1.Stream(context.Background(), llm.CompletionRequest{Model: "gpt-4o"}, func(chunk string) error {
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "decode stream chunk") {
+		t.Fatalf("expected decode stream chunk error, got: %v", err)
+	}
+
+	// 2. Provider error payload in stream chunk should return an error
+	errPayloadClient := newMockHTTPClient(func(r *http.Request) (*http.Response, error) {
+		sseData := `data: {"error":{"message":"upstream quota exceeded"}}` + "\n\ndata: [DONE]\n\n"
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(bytes.NewBufferString(sseData)),
+		}, nil
+	})
+	p2 := llm.NewProvider(llm.Config{
+		Type:       "openai",
+		APIKey:     "key",
+		HTTPClient: errPayloadClient,
+	})
+	err = p2.Stream(context.Background(), llm.CompletionRequest{Model: "gpt-4o"}, func(chunk string) error {
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "upstream quota exceeded") {
+		t.Fatalf("expected provider stream error containing 'upstream quota exceeded', got: %v", err)
+	}
+}

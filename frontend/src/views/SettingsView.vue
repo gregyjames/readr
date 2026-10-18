@@ -326,7 +326,7 @@ const onProviderTypeChange = () => {
 }
 
 const isProviderConfigured = computed(() => {
-  if (settings.provider_type === 'ollama') return true
+  if (settings.provider_type === 'ollama' || settings.provider_type === 'custom') return true
   return Boolean(settings.api_key?.trim())
 })
 const isKeyConfigured = isProviderConfigured

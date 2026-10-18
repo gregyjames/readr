@@ -1,6 +1,9 @@
 package llm
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // Role represents the role of an entity in a chat conversation.
 type Role string
@@ -43,8 +46,38 @@ type UsageInfo struct {
 
 // CompletionResponse represents the result of a completion.
 type CompletionResponse struct {
-	Content string     `json:"content"`
-	Usage   *UsageInfo `json:"usage,omitempty"`
+	Content    string     `json:"content"`
+	Usage      *UsageInfo `json:"usage,omitempty"`
+	RetryCount int        `json:"retry_count,omitempty"`
+}
+
+// CompletionError wraps an error from Complete along with the number of retries performed.
+type CompletionError struct {
+	Err        error
+	RetryCount int
+}
+
+func (e *CompletionError) Error() string {
+	if e == nil || e.Err == nil {
+		return ""
+	}
+	return e.Err.Error()
+}
+
+func (e *CompletionError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// RetryCountFromError returns the retry count recorded on a CompletionError, or 0 if not present.
+func RetryCountFromError(err error) int {
+	var compErr *CompletionError
+	if errors.As(err, &compErr) && compErr != nil {
+		return compErr.RetryCount
+	}
+	return 0
 }
 
 // ModelInfo describes a model available on the provider.

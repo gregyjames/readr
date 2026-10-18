@@ -31,7 +31,7 @@ const mentionIndex = ref(0)
 const selectedMentionIdx = ref(0)
 
 const isProviderConfigured = computed(() => {
-  if (settings.provider_type === 'ollama') {
+  if (settings.provider_type === 'ollama' || settings.provider_type === 'custom') {
     return Boolean(settings.provider_base_url?.trim())
   }
   return Boolean(settings.api_key?.trim())

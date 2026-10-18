@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"example.com/backend/internal/chat"
 	"example.com/backend/internal/llm"
 	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
@@ -257,4 +258,62 @@ func TestSettingsCustomProviderHTTP_PostAndGet(t *testing.T) {
 
 	assert.Equal(t, "openrouter", store.Get().ProviderType)
 	assert.Equal(t, "https://openrouter.ai/api/v1", store.Get().ProviderBaseURL)
+}
+
+func TestHandleGetModels_HeaderKeyClearingAndURLValidation(t *testing.T) {
+	var receivedAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"test-model","name":"Test Model"}]}`))
+	}))
+	defer upstream.Close()
+
+	tempDir := t.TempDir()
+	store := NewSettingsStore(tempDir, zap.NewNop())
+	_, err := store.Update(func(s *ServerSettings) error {
+		s.ProviderType = "openrouter"
+		s.ProviderBaseURL = "https://openrouter.ai/api/v1"
+		s.APIKey = "sk-stored-secret"
+		return nil
+	})
+	require.NoError(t, err)
+
+	app := fiber.New()
+	api := app.Group("/api")
+	hCtx := &HandlerContext{
+		DataDir:       tempDir,
+		Logger:        zap.NewNop(),
+		SettingsStore: store,
+		ChatService:   chat.NewService(nil, nil),
+	}
+	RegisterChat(api, hCtx)
+
+	// 1. Overriding X-Provider-Base-Url without X-OpenRouter-Key must clear the stored API key
+	req1 := httptest.NewRequest("GET", "/api/models", nil)
+	req1.Header.Set("X-Provider-Type", "ollama")
+	req1.Header.Set("X-Provider-Base-Url", upstream.URL)
+	resp1, err := app.Test(req1)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp1.StatusCode)
+	assert.Equal(t, "", receivedAuth, "stored API key must not be sent when provider/base URL headers change")
+
+	// 2. Providing X-OpenRouter-Key explicitly with overridden base URL uses only the request key
+	req2 := httptest.NewRequest("GET", "/api/models", nil)
+	req2.Header.Set("X-Provider-Type", "custom")
+	req2.Header.Set("X-Provider-Base-Url", upstream.URL)
+	req2.Header.Set("X-OpenRouter-Key", "sk-request-key")
+	resp2, err := app.Test(req2)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+	assert.Equal(t, "Bearer sk-request-key", receivedAuth)
+
+	// 3. Disallowed scheme or link-local metadata IP in X-Provider-Base-Url returns 400
+	for _, badURL := range []string{"file:///etc/passwd", "http://169.254.169.254/latest/meta-data"} {
+		badReq := httptest.NewRequest("GET", "/api/models", nil)
+		badReq.Header.Set("X-Provider-Base-Url", badURL)
+		badResp, err := app.Test(badReq)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusBadRequest, badResp.StatusCode, "expected 400 for %s", badURL)
+	}
 }

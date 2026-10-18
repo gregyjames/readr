@@ -26,7 +26,7 @@ func (p *AgentPool) processPipelineWithURL(job Job, apiURL string) error {
 	apiKey, model := p.resolveCredentials(job)
 	baseURL := strings.TrimSuffix(strings.TrimSpace(apiURL), "/chat/completions")
 	provider := llm.NewProvider(llm.Config{
-		Type:    "custom",
+		Type:    "openrouter",
 		BaseURL: baseURL,
 		APIKey:  apiKey,
 	})
@@ -44,7 +44,7 @@ func (p *AgentPool) processPipelineWithProvider(job Job, provider llm.Provider, 
 	p.mu.RUnlock()
 
 	apiKey, _ := p.resolveCredentials(job)
-	if provider == nil || (!hasInjected && strings.ToLower(provider.Name()) != "ollama" && apiKey == "") {
+	if provider == nil || (!hasInjected && llm.RequiresAPIKey(provider.Name()) && apiKey == "") {
 		p.logger.Warn("API key not configured. Agent cannot run pipeline.", zap.Int64("article_id", job.ArticleID))
 		return fmt.Errorf("API key not configured")
 	}
@@ -181,6 +181,7 @@ func (p *AgentPool) processPipelineWithProvider(job Job, provider llm.Provider, 
 		metricID = initialMetric.ID
 	}
 
+	retryCount := 0
 	recordMetric := func(status string, promptTokens, completionTokens, totalTokens int, errMsg string) {
 		if repo != nil {
 			_ = repo.RecordPipelineMetric(context.Background(), &repository.PipelineMetric{
@@ -190,7 +191,7 @@ func (p *AgentPool) processPipelineWithProvider(job Job, provider llm.Provider, 
 				Model:            model,
 				Status:           status,
 				DurationMs:       time.Since(startTime).Milliseconds(),
-				RetryCount:       0,
+				RetryCount:       retryCount,
 				PromptTokens:     promptTokens,
 				CompletionTokens: completionTokens,
 				TotalTokens:      totalTokens,
@@ -200,7 +201,10 @@ func (p *AgentPool) processPipelineWithProvider(job Job, provider llm.Provider, 
 		}
 	}
 
-	resp, err := provider.Complete(context.Background(), llm.CompletionRequest{
+	completeCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	resp, err := provider.Complete(completeCtx, llm.CompletionRequest{
 		Model: model,
 		Messages: []llm.Message{
 			{
@@ -221,10 +225,12 @@ func (p *AgentPool) processPipelineWithProvider(job Job, provider llm.Provider, 
 		},
 	})
 	if err != nil {
+		retryCount = llm.RetryCountFromError(err)
 		p.logger.Error("Pipeline LLM request failed", zap.Error(err), zap.Int64("article_id", job.ArticleID))
 		recordMetric("failed", 0, 0, 0, err.Error())
 		return &ProviderError{Err: fmt.Errorf("pipeline LLM request failed: %w", err)}
 	}
+	retryCount = resp.RetryCount
 
 	p.logger.Info("Pipeline received LLM response",
 		zap.Int64("article_id", job.ArticleID),

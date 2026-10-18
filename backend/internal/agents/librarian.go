@@ -118,7 +118,7 @@ func (r *LibrarianRunner) RunLibrarianWithURL(ctx context.Context, trigger strin
 	apiKey, model, _, _ := r.getSettings()
 	baseURL := strings.TrimSuffix(strings.TrimSpace(apiURL), "/chat/completions")
 	provider := llm.NewProvider(llm.Config{
-		Type:    "custom",
+		Type:    "openrouter",
 		BaseURL: baseURL,
 		APIKey:  apiKey,
 	})
@@ -301,7 +301,7 @@ func (r *LibrarianRunner) runLibrarianWithProvider(ctx context.Context, trigger 
 				hasInjected := r.provider != nil
 				r.mu.Unlock()
 				apiKey, _, _, _ := r.getSettings()
-				if provider == nil || (!hasInjected && strings.ToLower(provider.Name()) != "ollama" && apiKey == "") {
+				if provider == nil || (!hasInjected && llm.RequiresAPIKey(provider.Name()) && apiKey == "") {
 					r.logger.Warn("AI provider API key not configured, skipping delta synthesis for cluster", zap.String("tag", cluster.Tag))
 					result.Status = "partial (some clusters failed)"
 					result.Errors = append(result.Errors, fmt.Sprintf("tag %s: api key not configured", cluster.Tag))
@@ -354,7 +354,7 @@ func (r *LibrarianRunner) runLibrarianWithProvider(ctx context.Context, trigger 
 				hasInjected := r.provider != nil
 				r.mu.Unlock()
 				apiKey, _, _, _ := r.getSettings()
-				if provider == nil || (!hasInjected && strings.ToLower(provider.Name()) != "ollama" && apiKey == "") {
+				if provider == nil || (!hasInjected && llm.RequiresAPIKey(provider.Name()) && apiKey == "") {
 					r.logger.Warn("AI provider API key not configured, skipping cluster synthesis", zap.String("tag", cluster.Tag))
 					result.Status = "partial (some clusters failed)"
 					result.Errors = append(result.Errors, fmt.Sprintf("tag %s: api key not configured", cluster.Tag))
