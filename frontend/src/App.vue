@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script setup vapor lang="ts">
 import BookmarkIcon from './assets/book.svg'
 import HomeIcon from './assets/home.svg'
 import AddIcon from './assets/add.svg'

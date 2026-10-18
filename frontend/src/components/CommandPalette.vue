@@ -100,7 +100,7 @@
   </transition>
 </template>
 
-<script setup lang="ts">
+<script setup vapor lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMagicKeys, watchDebounced } from '@vueuse/core'
