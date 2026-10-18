@@ -17,13 +17,14 @@
   </aside>
 </template>
 
-<script setup lang="ts">
+<script setup vapor lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import axios from 'axios';
 import { Network } from 'vis-network';
 import GraphZoomControls from './GraphZoomControls.vue';
 import emitter from '../event-bus';
+import { useGraphZoom } from '../composables/useGraphZoom';
 
 const props = defineProps<{
   articleId: string | number;
@@ -43,7 +44,6 @@ function getNumericId(): number {
   return parseInt(clean, 10);
 }
 
-import { useGraphZoom } from '../composables/useGraphZoom'
 const { zoomIn, zoomOut, fitGraph: fitView } = useGraphZoom(() => network)
 
 
