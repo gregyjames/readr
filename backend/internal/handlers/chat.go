@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"example.com/backend/internal/chat"
+	"example.com/backend/internal/llm"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -86,29 +87,41 @@ func RegisterChat(router fiber.Router, h *HandlerContext) {
 		return c.JSON(fiber.Map{"status": "success"})
 	})
 
-	router.Get("/models", func(c fiber.Ctx) error {
-		apiKey, _ := h.SettingsStore.ExtractOpenRouterCredentials()
-
+	handleGetModels := func(c fiber.Ctx) error {
 		if h.ChatService == nil {
 			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Chat service unavailable"})
 		}
 
-		data, err := h.ChatService.FetchModels(c.Context(), apiKey)
+		llmCfg := h.SettingsStore.GetLLMConfig()
+		if pType := strings.TrimSpace(c.Get("X-Provider-Type")); pType != "" {
+			llmCfg.Type = pType
+		}
+		if baseURL := strings.TrimSpace(c.Get("X-Provider-Base-Url")); baseURL != "" {
+			llmCfg.BaseURL = baseURL
+		}
+		if apiKey := strings.TrimSpace(c.Get("X-OpenRouter-Key")); apiKey != "" {
+			llmCfg.APIKey = apiKey
+		}
+
+		provider := llm.NewProvider(llmCfg)
+		models, err := h.ChatService.GetModels(c.Context(), provider)
 		if err != nil {
 			if h.Logger != nil {
-				h.Logger.Error("Failed to fetch models from OpenRouter", zap.Error(err))
+				h.Logger.Error("Failed to fetch models from provider", zap.Error(err))
 			}
-			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Failed to fetch models from OpenRouter"})
+			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Failed to fetch models from provider"})
 		}
-		c.Set("Content-Type", "application/json")
-		return c.Send(data)
-	})
+		return c.JSON(fiber.Map{"data": models})
+	}
+	router.Get("/models", handleGetModels)
+	router.Get("/chat/models", handleGetModels)
 
 	router.Post("/chats/:id/message", func(c fiber.Ctx) error {
-		apiKey, _ := h.SettingsStore.ExtractOpenRouterCredentials()
-		if apiKey == "" {
+		llmCfg := h.SettingsStore.GetLLMConfig()
+		if strings.ToLower(llmCfg.Type) != "ollama" && strings.TrimSpace(llmCfg.APIKey) == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "API key required in settings.json to use chat"})
 		}
+		provider := llm.NewProvider(llmCfg)
 
 		var req struct {
 			Role          chat.MessageRole  `json:"role"`
@@ -140,7 +153,7 @@ func RegisterChat(router fiber.Router, h *HandlerContext) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
-			err := h.ChatService.StreamMessage(ctx, sessionID, apiKey, req.Model, req.ExpandContext, msg, func(chunk string) error {
+			err := h.ChatService.StreamMessage(ctx, sessionID, provider, req.Model, req.ExpandContext, msg, func(chunk string) error {
 				data, _ := json.Marshal(fiber.Map{"text": chunk})
 				if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
 					return err

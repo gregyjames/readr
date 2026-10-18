@@ -1,27 +1,48 @@
 package chat
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"example.com/backend/internal/llm"
 )
 
-type roundTripFunc func(req *http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
+type mockProvider struct {
+	name           string
+	completeFunc   func(ctx context.Context, req llm.CompletionRequest) (*llm.CompletionResponse, error)
+	streamFunc     func(ctx context.Context, req llm.CompletionRequest, onChunk func(chunk string) error) error
+	listModelsFunc func(ctx context.Context) ([]llm.ModelInfo, error)
 }
 
-func newMockHTTPClient(fn roundTripFunc) *http.Client {
-	return &http.Client{
-		Transport: fn,
+func (m *mockProvider) Name() string {
+	if m.name != "" {
+		return m.name
 	}
+	return "mock"
+}
+
+func (m *mockProvider) Complete(ctx context.Context, req llm.CompletionRequest) (*llm.CompletionResponse, error) {
+	if m.completeFunc != nil {
+		return m.completeFunc(ctx, req)
+	}
+	return &llm.CompletionResponse{Content: "mock content"}, nil
+}
+
+func (m *mockProvider) Stream(ctx context.Context, req llm.CompletionRequest, onChunk func(chunk string) error) error {
+	if m.streamFunc != nil {
+		return m.streamFunc(ctx, req, onChunk)
+	}
+	return nil
+}
+
+func (m *mockProvider) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
+	if m.listModelsFunc != nil {
+		return m.listModelsFunc(ctx)
+	}
+	return []llm.ModelInfo{{ID: "mock-model", Name: "Mock Model"}}, nil
 }
 
 type mockArticleFetcher struct {
@@ -44,20 +65,20 @@ func (m *mockArticleFetcher) GetLinkedArticles(ctx context.Context, id int64) ([
 	return nil, nil
 }
 
-func TestService_StreamMessage_MissingAPIKey(t *testing.T) {
+func TestService_StreamMessage_MissingProvider(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewFileRepository(tmpDir)
 	svc := NewService(repo, nil)
 
-	err := svc.StreamMessage(context.Background(), "session-1", "", "", false, Message{
+	err := svc.StreamMessage(context.Background(), "session-1", nil, "", false, Message{
 		Role:    RoleUser,
 		Content: "Hello",
 	}, nil)
 
 	if err == nil {
-		t.Fatal("expected error for missing API key, got nil")
+		t.Fatal("expected error for missing provider, got nil")
 	}
-	if !strings.Contains(err.Error(), "missing OpenRouter API key") {
+	if !strings.Contains(err.Error(), "no LLM provider configured") && !strings.Contains(err.Error(), "missing LLM provider") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -71,45 +92,21 @@ func TestService_StreamMessage_Success(t *testing.T) {
 		},
 	}
 
-	var receivedReq openRouterRequest
-	var receivedAuthHeader, receivedReferer, receivedTitle, receivedContentType string
+	var capturedReq llm.CompletionRequest
+	mockP := &mockProvider{
+		streamFunc: func(ctx context.Context, req llm.CompletionRequest, onChunk func(chunk string) error) error {
+			capturedReq = req
+			chunks := []string{"Hello", " there,", " world!"}
+			for _, c := range chunks {
+				if err := onChunk(c); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
 
-	mockClient := newMockHTTPClient(func(req *http.Request) (*http.Response, error) {
-		receivedAuthHeader = req.Header.Get("Authorization")
-		receivedReferer = req.Header.Get("HTTP-Referer")
-		receivedTitle = req.Header.Get("X-Title")
-		receivedContentType = req.Header.Get("Content-Type")
-
-		body, err := io.ReadAll(req.Body)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(body, &receivedReq); err != nil {
-			return nil, err
-		}
-
-		sseData := strings.Join([]string{
-			`data: {"choices":[{"delta":{"content":"Hello"}}]}`,
-			``,
-			`data: {"choices":[{"delta":{"content":" there,"}}]}`,
-			``,
-			`: comment line to ignore`,
-			``,
-			`data: {"choices":[{"delta":{"content":" world!"}}]}`,
-			``,
-			`data: [DONE]`,
-			``,
-		}, "\n")
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-			Body:       io.NopCloser(strings.NewReader(sseData)),
-		}, nil
-	})
-
-	svc := NewService(repo, fetcher)
-	svc.SetHTTPClient(mockClient)
+	svc := NewService(repo, fetcher, mockP)
 
 	var streamedChunks []string
 	onChunk := func(chunk string) error {
@@ -127,49 +124,28 @@ func TestService_StreamMessage_Success(t *testing.T) {
 
 	ctx := context.Background()
 	sessionID := "session-abc"
-	err := svc.StreamMessage(ctx, sessionID, "test-api-key", "anthropic/claude-3.5-sonnet", false, userMsg, onChunk)
+	err := svc.StreamMessage(ctx, sessionID, nil, "anthropic/claude-3.5-sonnet", false, userMsg, onChunk)
 	if err != nil {
 		t.Fatalf("StreamMessage failed: %v", err)
 	}
 
-	// Verify Headers
-	if receivedAuthHeader != "Bearer test-api-key" {
-		t.Errorf("expected Authorization Bearer test-api-key, got %q", receivedAuthHeader)
+	// Verify Request payload delegated to Provider
+	if capturedReq.Model != "anthropic/claude-3.5-sonnet" {
+		t.Errorf("expected model anthropic/claude-3.5-sonnet, got %q", capturedReq.Model)
 	}
-	if receivedReferer != "https://github.com/gregyjames/readr" {
-		t.Errorf("expected HTTP-Referer header, got %q", receivedReferer)
-	}
-	if receivedTitle != "Readr Chat" {
-		t.Errorf("expected X-Title header, got %q", receivedTitle)
-	}
-	if receivedContentType != "application/json" {
-		t.Errorf("expected Content-Type application/json, got %q", receivedContentType)
+	if len(capturedReq.Messages) != 1 {
+		t.Fatalf("expected 1 message in payload, got %d", len(capturedReq.Messages))
 	}
 
-	// Verify Request payload
-	if !receivedReq.Stream {
-		t.Errorf("expected stream to be true")
+	firstMsg := capturedReq.Messages[0]
+	if firstMsg.Role != llm.RoleUser {
+		t.Errorf("expected user role, got %s", firstMsg.Role)
 	}
-	if receivedReq.Model != "anthropic/claude-3.5-sonnet" {
-		t.Errorf("expected model anthropic/claude-3.5-sonnet, got %q", receivedReq.Model)
+	if !strings.Contains(firstMsg.Content, `id="101"`) || !strings.Contains(firstMsg.Content, `title="Go Concurrency"`) {
+		t.Errorf("expected payload content to contain article context, got %q", firstMsg.Content)
 	}
-	if len(receivedReq.Messages) != 1 {
-		t.Fatalf("expected 1 message in payload, got %d", len(receivedReq.Messages))
-	}
-
-	firstMsgMap, ok := receivedReq.Messages[0].(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected message to be map[string]interface{}, got %T", receivedReq.Messages[0])
-	}
-	firstMsgContent, ok := firstMsgMap["content"].(string)
-	if !ok {
-		t.Fatalf("expected message content to be string")
-	}
-	if !strings.Contains(firstMsgContent, `id="101"`) || !strings.Contains(firstMsgContent, `title="Go Concurrency"`) {
-		t.Errorf("expected payload content to contain article context, got %q", firstMsgContent)
-	}
-	if !strings.Contains(firstMsgContent, "Tell me about Go") {
-		t.Errorf("expected payload content to contain user request, got %q", firstMsgContent)
+	if !strings.Contains(firstMsg.Content, "Tell me about Go") {
+		t.Errorf("expected payload content to contain user request, got %q", firstMsg.Content)
 	}
 
 	// Verify streamed chunks
@@ -211,7 +187,6 @@ func TestService_StreamMessage_MultiTurnAndLongTitle(t *testing.T) {
 	ctx := context.Background()
 	sessionID := "multi-turn-session"
 
-	// Pre-populate session
 	initialSession := &ChatSession{
 		ID:        sessionID,
 		Title:     "Initial Conversation",
@@ -226,35 +201,32 @@ func TestService_StreamMessage_MultiTurnAndLongTitle(t *testing.T) {
 		t.Fatalf("failed to save initial session: %v", err)
 	}
 
-	var receivedReq openRouterRequest
-	mockClient := newMockHTTPClient(func(req *http.Request) (*http.Response, error) {
-		body, _ := io.ReadAll(req.Body)
-		_ = json.Unmarshal(body, &receivedReq)
+	var capturedReq llm.CompletionRequest
+	mockP := &mockProvider{
+		streamFunc: func(ctx context.Context, req llm.CompletionRequest, onChunk func(chunk string) error) error {
+			capturedReq = req
+			if onChunk != nil {
+				_ = onChunk("Sure, here is the answer.")
+			}
+			return nil
+		},
+	}
 
-		sseData := "data: {\"choices\":[{\"delta\":{\"content\":\"Sure, here is the answer.\"}}]}\n\ndata: [DONE]\n\n"
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-			Body:       io.NopCloser(strings.NewReader(sseData)),
-		}, nil
-	})
-
-	svc := NewService(repo, nil)
-	svc.SetHTTPClient(mockClient)
+	svc := NewService(repo, nil, mockP)
 
 	longUserMsg := Message{
 		Role:    RoleUser,
 		Content: "This is a very long message that definitely exceeds thirty characters in length.",
 	}
 
-	err := svc.StreamMessage(ctx, sessionID, "key", "", false, longUserMsg, nil)
+	err := svc.StreamMessage(ctx, sessionID, nil, "", false, longUserMsg, nil)
 	if err != nil {
 		t.Fatalf("StreamMessage failed: %v", err)
 	}
 
-	// Verify all 3 turns were sent to OpenRouter
-	if len(receivedReq.Messages) != 3 {
-		t.Fatalf("expected 3 messages sent to API, got %d", len(receivedReq.Messages))
+	// Verify all 3 turns were sent to Provider
+	if len(capturedReq.Messages) != 3 {
+		t.Fatalf("expected 3 messages sent to API, got %d", len(capturedReq.Messages))
 	}
 
 	// Verify session saved has 4 messages and retained original title
@@ -277,21 +249,20 @@ func TestService_StreamMessage_TitleTruncationNewSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewFileRepository(tmpDir)
 
-	mockClient := newMockHTTPClient(func(req *http.Request) (*http.Response, error) {
-		sseData := "data: {\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}\n\ndata: [DONE]\n\n"
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-			Body:       io.NopCloser(strings.NewReader(sseData)),
-		}, nil
-	})
+	mockP := &mockProvider{
+		streamFunc: func(ctx context.Context, req llm.CompletionRequest, onChunk func(chunk string) error) error {
+			if onChunk != nil {
+				_ = onChunk("OK")
+			}
+			return nil
+		},
+	}
 
-	svc := NewService(repo, nil)
-	svc.SetHTTPClient(mockClient)
+	svc := NewService(repo, nil, mockP)
 
 	longMsg := "This is a very long message that definitely exceeds thirty characters in length."
 	sessionID := "truncated-title-session"
-	err := svc.StreamMessage(context.Background(), sessionID, "key", "", false, Message{
+	err := svc.StreamMessage(context.Background(), sessionID, nil, "", false, Message{
 		Role:    RoleUser,
 		Content: longMsg,
 	}, nil)
@@ -315,7 +286,6 @@ func TestService_StreamMessage_PreCreatedNewChatTitleUpdate(t *testing.T) {
 	ctx := context.Background()
 	sessionID := "pre-created-session"
 
-	// Pre-created via POST /api/chats with title "New Chat"
 	initialSession := &ChatSession{
 		ID:        sessionID,
 		Title:     "New Chat",
@@ -327,19 +297,18 @@ func TestService_StreamMessage_PreCreatedNewChatTitleUpdate(t *testing.T) {
 		t.Fatalf("failed to save initial session: %v", err)
 	}
 
-	mockClient := newMockHTTPClient(func(req *http.Request) (*http.Response, error) {
-		sseData := "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\ndata: [DONE]\n\n"
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-			Body:       io.NopCloser(strings.NewReader(sseData)),
-		}, nil
-	})
+	mockP := &mockProvider{
+		streamFunc: func(ctx context.Context, req llm.CompletionRequest, onChunk func(chunk string) error) error {
+			if onChunk != nil {
+				_ = onChunk("Answer")
+			}
+			return nil
+		},
+	}
 
-	svc := NewService(repo, nil)
-	svc.SetHTTPClient(mockClient)
+	svc := NewService(repo, nil, mockP)
 
-	err := svc.StreamMessage(ctx, sessionID, "key", "", false, Message{
+	err := svc.StreamMessage(ctx, sessionID, nil, "", false, Message{
 		Role:    RoleUser,
 		Content: "how do i do this?",
 	}, nil)
@@ -373,19 +342,18 @@ func TestService_StreamMessage_AttachmentOnlyTitle(t *testing.T) {
 		t.Fatalf("failed to save initial session: %v", err)
 	}
 
-	mockClient := newMockHTTPClient(func(req *http.Request) (*http.Response, error) {
-		sseData := "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\ndata: [DONE]\n\n"
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-			Body:       io.NopCloser(strings.NewReader(sseData)),
-		}, nil
-	})
+	mockP := &mockProvider{
+		streamFunc: func(ctx context.Context, req llm.CompletionRequest, onChunk func(chunk string) error) error {
+			if onChunk != nil {
+				_ = onChunk("Answer")
+			}
+			return nil
+		},
+	}
 
-	svc := NewService(repo, nil)
-	svc.SetHTTPClient(mockClient)
+	svc := NewService(repo, nil, mockP)
 
-	err := svc.StreamMessage(ctx, sessionID, "key", "", false, Message{
+	err := svc.StreamMessage(ctx, sessionID, nil, "", false, Message{
 		Role:    RoleUser,
 		Content: "",
 		Attachments: []Attachment{
@@ -406,29 +374,27 @@ func TestService_StreamMessage_AttachmentOnlyTitle(t *testing.T) {
 	}
 }
 
-func TestService_StreamMessage_ServerError(t *testing.T) {
+func TestService_StreamMessage_ProviderError(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewFileRepository(tmpDir)
 
-	mockClient := newMockHTTPClient(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusUnauthorized,
-			Body:       io.NopCloser(bytes.NewReader([]byte("Unauthorized"))),
-		}, nil
-	})
+	mockP := &mockProvider{
+		streamFunc: func(ctx context.Context, req llm.CompletionRequest, onChunk func(chunk string) error) error {
+			return errors.New("provider error (HTTP 401): Unauthorized")
+		},
+	}
 
-	svc := NewService(repo, nil)
-	svc.SetHTTPClient(mockClient)
+	svc := NewService(repo, nil, mockP)
 
-	err := svc.StreamMessage(context.Background(), "session-err", "bad-key", "", false, Message{
+	err := svc.StreamMessage(context.Background(), "session-err", nil, "", false, Message{
 		Role:    RoleUser,
 		Content: "Hi",
 	}, nil)
 
 	if err == nil {
-		t.Fatal("expected error for HTTP 401, got nil")
+		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "openrouter error (HTTP 401)") {
+	if !strings.Contains(err.Error(), "provider error (HTTP 401)") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -437,24 +403,20 @@ func TestService_StreamMessage_CallbackError(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewFileRepository(tmpDir)
 
-	mockClient := newMockHTTPClient(func(req *http.Request) (*http.Response, error) {
-		sseData := "data: {\"choices\":[{\"delta\":{\"content\":\"Chunk 1\"}}]}\n\n"
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-			Body:       io.NopCloser(strings.NewReader(sseData)),
-		}, nil
-	})
-
-	svc := NewService(repo, nil)
-	svc.SetHTTPClient(mockClient)
-
 	expectedErr := errors.New("client connection closed")
+	mockP := &mockProvider{
+		streamFunc: func(ctx context.Context, req llm.CompletionRequest, onChunk func(chunk string) error) error {
+			return onChunk("Chunk 1")
+		},
+	}
+
+	svc := NewService(repo, nil, mockP)
+
 	onChunk := func(chunk string) error {
 		return expectedErr
 	}
 
-	err := svc.StreamMessage(context.Background(), "session-cb-err", "key", "", false, Message{
+	err := svc.StreamMessage(context.Background(), "session-cb-err", nil, "", false, Message{
 		Role:    RoleUser,
 		Content: "Hi",
 	}, onChunk)
@@ -464,55 +426,22 @@ func TestService_StreamMessage_CallbackError(t *testing.T) {
 	}
 }
 
-func TestService_StreamMessage_RequestFailure(t *testing.T) {
-	tmpDir := t.TempDir()
-	repo := NewFileRepository(tmpDir)
-
-	networkErr := errors.New("network failure")
-	mockClient := newMockHTTPClient(func(req *http.Request) (*http.Response, error) {
-		return nil, networkErr
-	})
-
-	svc := NewService(repo, nil)
-	svc.SetHTTPClient(mockClient)
-
-	err := svc.StreamMessage(context.Background(), "session-req-err", "key", "", false, Message{
-		Role:    RoleUser,
-		Content: "Hi",
-	}, nil)
-
-	if err == nil {
-		t.Fatal("expected request error, got nil")
-	}
-	if !strings.Contains(err.Error(), "openrouter request failed") {
-		t.Errorf("unexpected error message: %v", err)
-	}
-}
-
 func TestService_StreamMessage_1HopExpansion(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewFileRepository(tmpDir)
 
 	var receivedPrompt string
-	mockClient := newMockHTTPClient(func(req *http.Request) (*http.Response, error) {
-		var reqBody struct {
-			Messages []struct {
-				Role    string `json:"role"`
-				Content string `json:"content"`
-			} `json:"messages"`
-		}
-		json.NewDecoder(req.Body).Decode(&reqBody)
-		if len(reqBody.Messages) > 0 {
-			receivedPrompt = reqBody.Messages[0].Content
-		}
-
-		sseData := "data: {\"choices\":[{\"delta\":{\"content\":\"Expanded answer\"}}]}\n\ndata: [DONE]\n\n"
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-			Body:       io.NopCloser(strings.NewReader(sseData)),
-		}, nil
-	})
+	mockP := &mockProvider{
+		streamFunc: func(ctx context.Context, req llm.CompletionRequest, onChunk func(chunk string) error) error {
+			if len(req.Messages) > 0 {
+				receivedPrompt = req.Messages[0].Content
+			}
+			if onChunk != nil {
+				_ = onChunk("Expanded answer")
+			}
+			return nil
+		},
+	}
 
 	mockFetcher := &mockExpansionFetcher{
 		articles: map[int64]string{
@@ -524,8 +453,7 @@ func TestService_StreamMessage_1HopExpansion(t *testing.T) {
 		},
 	}
 
-	svc := NewService(repo, mockFetcher)
-	svc.SetHTTPClient(mockClient)
+	svc := NewService(repo, mockFetcher, mockP)
 
 	userMsg := Message{
 		Role:    RoleUser,
@@ -535,7 +463,7 @@ func TestService_StreamMessage_1HopExpansion(t *testing.T) {
 		},
 	}
 
-	err := svc.StreamMessage(context.Background(), "session-exp", "key", "", true, userMsg, nil)
+	err := svc.StreamMessage(context.Background(), "session-exp", nil, "", true, userMsg, nil)
 	if err != nil {
 		t.Fatalf("StreamMessage with expansion failed: %v", err)
 	}
@@ -567,28 +495,29 @@ func (m *mockExpansionFetcher) GetLinkedArticles(ctx context.Context, id int64) 
 	return nil, nil
 }
 
-func TestService_FetchModels(t *testing.T) {
+func TestService_GetModels(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewFileRepository(tmpDir)
 
-	mockClient := newMockHTTPClient(func(req *http.Request) (*http.Response, error) {
-		if req.Header.Get("Authorization") != "Bearer test-key" {
-			t.Errorf("expected Bearer test-key, got %s", req.Header.Get("Authorization"))
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"openai/gpt-4o"}]}`)),
-		}, nil
-	})
-
-	svc := NewService(repo, nil)
-	svc.SetHTTPClient(mockClient)
-
-	data, err := svc.FetchModels(context.Background(), "test-key")
-	if err != nil {
-		t.Fatalf("FetchModels failed: %v", err)
+	mockP := &mockProvider{
+		listModelsFunc: func(ctx context.Context) ([]llm.ModelInfo, error) {
+			return []llm.ModelInfo{
+				{ID: "openai/gpt-4o", Name: "GPT-4o"},
+				{ID: "anthropic/claude-3.5-sonnet", Name: "Claude 3.5 Sonnet"},
+			}, nil
+		},
 	}
-	if !strings.Contains(string(data), "openai/gpt-4o") {
-		t.Errorf("unexpected response: %s", string(data))
+
+	svc := NewService(repo, nil, mockP)
+
+	models, err := svc.GetModels(context.Background())
+	if err != nil {
+		t.Fatalf("GetModels failed: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("expected 2 models, got %d", len(models))
+	}
+	if models[0].ID != "openai/gpt-4o" || models[1].ID != "anthropic/claude-3.5-sonnet" {
+		t.Errorf("unexpected models returned: %+v", models)
 	}
 }
