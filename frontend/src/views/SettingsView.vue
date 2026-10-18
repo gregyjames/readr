@@ -292,7 +292,44 @@ interface ModelItem {
 const showKey = ref(false)
 const savedMessage = ref('')
 
-const isKeyConfigured = computed(() => Boolean(settings.api_key?.trim()))
+const defaultBaseUrls: Record<string, string> = {
+  openrouter: 'https://openrouter.ai/api/v1',
+  ollama: 'http://localhost:11434/v1',
+  openai: 'https://api.openai.com/v1',
+  custom: 'http://localhost:8000/v1',
+}
+
+const defaultModels: Record<string, string> = {
+  openrouter: 'openai/gpt-4o-mini',
+  ollama: 'llama3.2',
+  openai: 'gpt-4o-mini',
+  custom: 'gpt-4o-mini',
+}
+
+const onProviderTypeChange = () => {
+  const t = settings.provider_type
+  const defUrl = defaultBaseUrls[t]
+  if (defUrl) {
+    const isKnownDefault = Object.values(defaultBaseUrls).includes(settings.provider_base_url || '')
+    if (!settings.provider_base_url || isKnownDefault) {
+      settings.provider_base_url = defUrl
+    }
+  }
+  const defModel = defaultModels[t]
+  if (defModel) {
+    const isKnownDefaultModel = Object.values(defaultModels).includes(settings.model || '')
+    if (!settings.model || isKnownDefaultModel) {
+      settings.model = defModel
+    }
+  }
+  fetchModels()
+}
+
+const isProviderConfigured = computed(() => {
+  if (settings.provider_type === 'ollama') return true
+  return Boolean(settings.api_key?.trim())
+})
+const isKeyConfigured = isProviderConfigured
 
 
 const isLoadingModels = ref(false)
@@ -346,8 +383,18 @@ const fetchModels = async () => {
   isLoadingModels.value = true
   try {
     const headers: Record<string, string> = {}
+    const token = getStoredToken()
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+    if (settings.provider_type?.trim()) {
+      headers['X-Provider-Type'] = settings.provider_type.trim()
+    }
+    if (settings.provider_base_url?.trim()) {
+      headers['X-Provider-Base-Url'] = settings.provider_base_url.trim()
+    }
     if (settings.api_key?.trim()) {
-      headers['Authorization'] = `Bearer ${settings.api_key.trim()}`
+      headers['X-OpenRouter-Key'] = settings.api_key.trim()
     }
     const res = await fetch('/api/models', { headers })
     if (res.ok) {
@@ -362,7 +409,7 @@ const fetchModels = async () => {
       }
     }
   } catch (err) {
-    console.error('Failed to load OpenRouter models:', err)
+    console.error('Failed to load AI models:', err)
   } finally {
     isLoadingModels.value = false
   }
@@ -564,7 +611,7 @@ const executeLibrarian = async () => {
       <div>
         <h1 class="text-xl font-semibold tracking-tight text-gray-900 dark:text-gray-100 font-['Outfit']">Settings</h1>
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          Configure OpenRouter AI models, pipeline enrichment agents, and telemetry diagnostics.
+          Configure AI providers and models, pipeline enrichment agents, and telemetry diagnostics.
         </p>
       </div>
 
@@ -611,31 +658,71 @@ const executeLibrarian = async () => {
       <!-- Section Title & Status -->
       <div class="flex items-center justify-between pb-4 border-b border-gray-100 dark:border-white/[0.06]">
         <div>
-          <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">OpenRouter Integration</h2>
+          <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">AI Provider Integration</h2>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
             Required for background document parsing, auto-tagging, and chat.
           </p>
         </div>
         <span 
           class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-xs font-mono"
-          :class="isKeyConfigured ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20'"
+          :class="isProviderConfigured ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20'"
         >
-          <span class="w-1.5 h-1.5 rounded-full" :class="isKeyConfigured ? 'bg-emerald-500' : 'bg-amber-500'"></span>
-          {{ isKeyConfigured ? 'Connected' : 'Missing Key' }}
+          <span class="w-1.5 h-1.5 rounded-full" :class="isProviderConfigured ? 'bg-emerald-500' : 'bg-amber-500'"></span>
+          {{ isProviderConfigured ? 'Connected' : 'Missing Key' }}
         </span>
+      </div>
+
+      <!-- Provider Type Dropdown -->
+      <div class="space-y-2">
+        <label for="provider-type" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+          Provider Type
+        </label>
+        <select
+          id="provider-type"
+          v-model="settings.provider_type"
+          @change="onProviderTypeChange"
+          class="w-full px-4 py-3 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-xl focus:bg-white dark:focus:bg-[#1a1a1a] focus:border-gray-300 dark:focus:border-gray-600 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-800 focus:outline-none transition-all text-gray-900 dark:text-gray-100 text-sm"
+        >
+          <option value="openrouter">OpenRouter (Cloud)</option>
+          <option value="ollama">Ollama (Local)</option>
+          <option value="openai">OpenAI (Cloud)</option>
+          <option value="custom">Custom (OpenAI-compatible)</option>
+        </select>
+      </div>
+
+      <!-- Provider Base URL -->
+      <div class="space-y-2">
+        <label for="provider-base-url" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+          Base URL
+        </label>
+        <input
+          id="provider-base-url"
+          v-model="settings.provider_base_url"
+          type="text"
+          :placeholder="defaultBaseUrls[settings.provider_type] || 'http://localhost:8000/v1'"
+          class="w-full px-4 py-3 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-xl focus:bg-white dark:focus:bg-[#1a1a1a] focus:border-gray-300 dark:focus:border-gray-600 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-800 focus:outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-600 text-gray-900 dark:text-gray-100 text-sm font-mono"
+        />
+        <p class="text-xs text-gray-400 dark:text-gray-500">
+          Endpoint for chat completions and model listing.
+        </p>
       </div>
 
       <!-- Key Input Field -->
       <div class="space-y-2">
-        <label for="api-key" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-          OpenRouter API Key
-        </label>
+        <div class="flex items-center justify-between">
+          <label for="api-key" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            API Key
+          </label>
+          <span v-if="settings.provider_type === 'ollama'" class="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+            Optional for local Ollama
+          </span>
+        </div>
         <div class="relative">
           <input
             id="api-key"
             v-model="settings.api_key"
             :type="showKey ? 'text' : 'password'"
-            placeholder="sk-or-v1-..."
+            :placeholder="settings.provider_type === 'ollama' ? 'Optional (not required for Ollama)' : 'sk-...'"
             class="w-full pl-4 pr-12 py-3 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-xl focus:bg-white dark:focus:bg-[#1a1a1a] focus:border-gray-300 dark:focus:border-gray-600 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-800 focus:outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-600 text-gray-900 dark:text-gray-100 text-sm font-mono"
           />
           <button
@@ -657,7 +744,12 @@ const executeLibrarian = async () => {
           </button>
         </div>
         <p class="text-xs text-gray-400 dark:text-gray-500">
-          Your key is saved locally in your browser's local storage and never exposed on our public servers.
+          <span v-if="settings.provider_type === 'ollama'">
+            Local Ollama instances do not require an API key by default.
+          </span>
+          <span v-else>
+            Your key is saved locally in your browser's local storage and synced to your private server settings.
+          </span>
         </p>
       </div>
 
@@ -723,7 +815,7 @@ const executeLibrarian = async () => {
                 v-if="filteredModels.length === 0" 
                 class="p-4 text-center text-xs text-gray-400 dark:text-gray-500"
               >
-                {{ isLoadingModels ? 'Loading OpenRouter models...' : 'No matching models found.' }}
+                {{ isLoadingModels ? 'Loading models...' : 'No matching models found. You can enter a model identifier manually below.' }}
               </div>
               <button
                 v-for="m in filteredModels"
@@ -747,6 +839,23 @@ const executeLibrarian = async () => {
               </button>
             </div>
           </div>
+        </div>
+
+        <!-- Manual Model Override Input -->
+        <div class="pt-2">
+          <label for="manual-model-input" class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+            Manual Model Override
+          </label>
+          <input
+            id="manual-model-input"
+            v-model="settings.model"
+            type="text"
+            placeholder="e.g. llama3.2, mistral:latest, or custom model ID"
+            class="w-full px-3 py-2 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-xl focus:bg-white dark:focus:bg-[#1a1a1a] focus:border-gray-300 dark:focus:border-gray-600 focus:outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-600 text-gray-900 dark:text-gray-100 text-xs font-mono"
+          />
+          <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
+            Directly specify any model identifier supported by your configured provider.
+          </p>
         </div>
       </div>
 
@@ -935,25 +1044,25 @@ const executeLibrarian = async () => {
       </div>
 
       <!-- Info Box -->
-      <div class="mt-6 p-4 rounded-2xl bg-gray-50 dark:bg-[#161616] border border-gray-200/50 dark:border-gray-800/50 text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-        <p class="font-medium text-gray-800 dark:text-gray-200 mb-1">Need an API key?</p>
+      <div class="mt-6 p-4 rounded-2xl bg-gray-50 dark:bg-[#161616] border border-gray-200/50 dark:border-gray-800/50 text-xs text-gray-600 dark:text-gray-400 leading-relaxed space-y-1.5">
+        <p class="font-medium text-gray-800 dark:text-gray-200 mb-1">Supported AI Providers</p>
         <p>
-          Get one directly from 
-          <a
-            href="https://openrouter.ai/keys"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="text-emerald-600 dark:text-emerald-400 hover:underline font-medium inline-flex items-center gap-0.5"
-          >
-            OpenRouter.ai
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-              <polyline points="15 3 21 3 21 9"></polyline>
-              <line x1="10" y1="14" x2="21" y2="3"></line>
-            </svg>
-          </a>.
-          OpenRouter provides access to 200+ models like Claude 3.5 Sonnet, GPT-4o, DeepSeek R1, and Llama 3.3.
+          Readr supports any OpenAI-compatible provider:
         </p>
+        <ul class="list-disc list-inside space-y-1 text-gray-600 dark:text-gray-400">
+          <li>
+            <strong class="text-gray-700 dark:text-gray-300">OpenRouter:</strong> Universal gateway to Claude, GPT-4o, DeepSeek, and open models. API keys at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" class="text-emerald-600 dark:text-emerald-400 hover:underline">openrouter.ai</a>.
+          </li>
+          <li>
+            <strong class="text-gray-700 dark:text-gray-300">Ollama:</strong> Run private open-source models (Llama 3.2, Mistral, Qwen) 100% locally with zero fees and no API keys required. Learn more at <a href="https://ollama.com" target="_blank" rel="noopener noreferrer" class="text-emerald-600 dark:text-emerald-400 hover:underline">ollama.com</a>.
+          </li>
+          <li>
+            <strong class="text-gray-700 dark:text-gray-300">OpenAI:</strong> Direct access to OpenAI models. API keys at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" class="text-emerald-600 dark:text-emerald-400 hover:underline">platform.openai.com</a>.
+          </li>
+          <li>
+            <strong class="text-gray-700 dark:text-gray-300">Custom:</strong> Any local or self-hosted endpoint compatible with the OpenAI API specification (e.g. vLLM, LM Studio, LocalAI).
+          </li>
+        </ul>
       </div>
     </div>
 
@@ -1196,7 +1305,7 @@ const executeLibrarian = async () => {
           </template>
           <template v-else-if="librarianResult.status === 'skipped (no api key)'">
             <p class="font-semibold">Librarian Skipped</p>
-            <p>No OpenRouter API key configured. Please add an API key in General Settings to enable MOC synthesis.</p>
+            <p>No AI provider API key configured. Please add an API key in General Settings to enable MOC synthesis.</p>
           </template>
           <template v-else-if="librarianResult.status === 'skipped (disabled)'">
             <p class="font-semibold">Librarian Skipped</p>
@@ -1641,7 +1750,7 @@ const executeLibrarian = async () => {
               </span>
             </h2>
             <p class="text-xs text-gray-400 dark:text-gray-500">
-              Auto-refreshing queue telemetry and OpenRouter execution analytics.
+              Auto-refreshing queue telemetry and LLM execution analytics.
             </p>
           </div>
         </div>
