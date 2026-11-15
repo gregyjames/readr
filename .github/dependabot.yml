@@ -4,7 +4,7 @@ updates:
   - package-ecosystem: "bun"
     directory: "/frontend"
     schedule:
-      interval: "daily"
+      interval: "monthly"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
@@ -23,7 +23,7 @@ updates:
   - package-ecosystem: "gomod"
     directory: "/backend"
     schedule:
-      interval: "daily"
+      interval: "monthly"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
@@ -42,7 +42,7 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
@@ -58,7 +58,7 @@ updates:
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
     open-pull-requests-limit: 3
     labels:
       - "dependencies"
